@@ -7,6 +7,8 @@ class MemorySearchPageModel {
     required this.pageSize,
     required this.total,
     required this.totalPages,
+    this.isOfflineFallback = false,
+    this.offlineMessage,
   });
 
   final List<MemorySearchResultModel> items;
@@ -14,6 +16,8 @@ class MemorySearchPageModel {
   final int pageSize;
   final int total;
   final int totalPages;
+  final bool isOfflineFallback;
+  final String? offlineMessage;
 
   factory MemorySearchPageModel.empty({int pageSize = 20}) {
     return MemorySearchPageModel(
@@ -22,6 +26,8 @@ class MemorySearchPageModel {
       pageSize: pageSize,
       total: 0,
       totalPages: 1,
+      isOfflineFallback: false,
+      offlineMessage: null,
     );
   }
 }

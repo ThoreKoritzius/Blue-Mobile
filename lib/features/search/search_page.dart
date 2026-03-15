@@ -7,8 +7,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/config/app_config.dart';
 import '../../core/utils/date_format.dart';
 import '../../data/models/memory_search_result_model.dart';
+import '../../data/models/person_model.dart';
 import '../../data/repositories/search_repository.dart';
 import '../../providers.dart';
+import '../persons/person_detail_page.dart';
 
 class SearchPage extends ConsumerStatefulWidget {
   const SearchPage({super.key});
@@ -28,6 +30,8 @@ class _TabSearchState {
     required this.loadingMore,
     required this.error,
     required this.hasRequested,
+    required this.isOfflineFallback,
+    required this.offlineMessage,
   });
 
   final int page;
@@ -39,6 +43,8 @@ class _TabSearchState {
   final bool loadingMore;
   final String error;
   final bool hasRequested;
+  final bool isOfflineFallback;
+  final String? offlineMessage;
 
   factory _TabSearchState.empty({required int pageSize}) {
     return _TabSearchState(
@@ -51,6 +57,8 @@ class _TabSearchState {
       loadingMore: false,
       error: '',
       hasRequested: false,
+      isOfflineFallback: false,
+      offlineMessage: null,
     );
   }
 
@@ -64,6 +72,8 @@ class _TabSearchState {
     bool? loadingMore,
     String? error,
     bool? hasRequested,
+    bool? isOfflineFallback,
+    String? offlineMessage,
   }) {
     return _TabSearchState(
       page: page ?? this.page,
@@ -75,9 +85,13 @@ class _TabSearchState {
       loadingMore: loadingMore ?? this.loadingMore,
       error: error ?? this.error,
       hasRequested: hasRequested ?? this.hasRequested,
+      isOfflineFallback: isOfflineFallback ?? this.isOfflineFallback,
+      offlineMessage: offlineMessage ?? this.offlineMessage,
     );
   }
 }
+
+enum _SearchFacet { place, people, tags, text }
 
 class _SearchPageState extends ConsumerState<SearchPage>
     with SingleTickerProviderStateMixin {
@@ -93,6 +107,14 @@ class _SearchPageState extends ConsumerState<SearchPage>
   Timer? _debounce;
   int _queryGeneration = 0;
   String _activeQuery = '';
+  bool _peopleLoading = false;
+  List<PersonModel> _peopleHits = const [];
+  Set<_SearchFacet> _selectedFacets = {
+    _SearchFacet.place,
+    _SearchFacet.people,
+    _SearchFacet.tags,
+    _SearchFacet.text,
+  };
   late Map<MemorySearchMode, _TabSearchState> _tabStates;
 
   @override
@@ -152,6 +174,8 @@ class _SearchPageState extends ConsumerState<SearchPage>
     if (query.isEmpty) {
       setState(() {
         _activeQuery = '';
+        _peopleHits = const [];
+        _peopleLoading = false;
         _tabStates = {
           MemorySearchMode.days: _TabSearchState.empty(pageSize: _daysPageSize),
           MemorySearchMode.images: _TabSearchState.empty(
@@ -164,6 +188,8 @@ class _SearchPageState extends ConsumerState<SearchPage>
 
     setState(() {
       _activeQuery = query;
+      _peopleHits = const [];
+      _peopleLoading = query.length >= 2;
       _tabStates = {
         MemorySearchMode.days: _TabSearchState.empty(pageSize: _daysPageSize),
         MemorySearchMode.images: _TabSearchState.empty(
@@ -174,6 +200,84 @@ class _SearchPageState extends ConsumerState<SearchPage>
 
     _runSearch(
       query,
+      mode: _activeMode,
+      reset: true,
+      generation: _queryGeneration,
+    );
+    _runPeopleSearch(query, generation: _queryGeneration);
+  }
+
+  Future<void> _runPeopleSearch(String query, {required int generation}) async {
+    if (query.length < 2) {
+      if (!mounted || generation != _queryGeneration) return;
+      setState(() {
+        _peopleHits = const [];
+        _peopleLoading = false;
+      });
+      return;
+    }
+    try {
+      final people = await ref
+          .read(personRepositoryProvider)
+          .search(query, first: 8);
+      if (!mounted || generation != _queryGeneration || query != _activeQuery) {
+        return;
+      }
+      setState(() {
+        _peopleHits = people;
+        _peopleLoading = false;
+      });
+    } catch (_) {
+      if (!mounted || generation != _queryGeneration || query != _activeQuery) {
+        return;
+      }
+      setState(() {
+        _peopleHits = const [];
+        _peopleLoading = false;
+      });
+    }
+  }
+
+  List<String> get _selectedColumns {
+    final columns = <String>['date'];
+    if (_selectedFacets.contains(_SearchFacet.place)) {
+      columns.addAll(['place', 'country']);
+    }
+    if (_selectedFacets.contains(_SearchFacet.people)) {
+      columns.add('names');
+    }
+    if (_selectedFacets.contains(_SearchFacet.tags)) {
+      columns.addAll(['keywords', 'image_tags']);
+    }
+    if (_selectedFacets.contains(_SearchFacet.text)) {
+      columns.addAll(['description', 'food', 'sport', 'path']);
+    }
+    return columns.toSet().toList();
+  }
+
+  void _toggleFacet(_SearchFacet facet) {
+    final next = {..._selectedFacets};
+    if (next.contains(facet)) {
+      if (next.length == 1) return;
+      next.remove(facet);
+    } else {
+      next.add(facet);
+    }
+    setState(() {
+      _selectedFacets = next;
+    });
+    if (_activeQuery.isEmpty) return;
+    _queryGeneration += 1;
+    setState(() {
+      _tabStates = {
+        MemorySearchMode.days: _TabSearchState.empty(pageSize: _daysPageSize),
+        MemorySearchMode.images: _TabSearchState.empty(
+          pageSize: _imagesPageSize,
+        ),
+      };
+    });
+    _runSearch(
+      _activeQuery,
       mode: _activeMode,
       reset: true,
       generation: _queryGeneration,
@@ -201,6 +305,8 @@ class _SearchPageState extends ConsumerState<SearchPage>
           loadingMore: !reset,
           error: '',
           hasRequested: true,
+          isOfflineFallback: false,
+          offlineMessage: null,
         ),
       };
     });
@@ -213,6 +319,7 @@ class _SearchPageState extends ConsumerState<SearchPage>
             mode: mode,
             page: nextPage,
             pageSize: currentState.pageSize,
+            columns: _selectedColumns,
           );
       if (!mounted ||
           requestGeneration != _queryGeneration ||
@@ -234,6 +341,8 @@ class _SearchPageState extends ConsumerState<SearchPage>
             loadingMore: false,
             error: '',
             hasRequested: true,
+            isOfflineFallback: page.isOfflineFallback,
+            offlineMessage: page.offlineMessage,
           ),
         };
       });
@@ -252,6 +361,8 @@ class _SearchPageState extends ConsumerState<SearchPage>
             loadingMore: false,
             error: error.toString().replaceFirst('Exception: ', ''),
             hasRequested: true,
+            isOfflineFallback: false,
+            offlineMessage: null,
           ),
         };
       });
@@ -266,9 +377,9 @@ class _SearchPageState extends ConsumerState<SearchPage>
       return;
     }
     if (!controller.hasClients) return;
-    final remaining =
-        controller.position.maxScrollExtent - controller.position.pixels;
-    if (remaining < 280) {
+    final remaining = controller.position.extentAfter;
+    final threshold = controller.position.viewportDimension * 1.25;
+    if (remaining < threshold) {
       _runSearch(_activeQuery, mode: mode, reset: false);
     }
   }
@@ -326,18 +437,18 @@ class _SearchPageState extends ConsumerState<SearchPage>
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
             child: DecoratedBox(
               decoration: BoxDecoration(
-                color: const Color(0xFFEAF1FB),
+                color: theme.colorScheme.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(18),
               ),
               child: TabBar(
                 controller: _tabController,
                 indicator: BoxDecoration(
-                  color: Colors.white,
+                  color: theme.colorScheme.surface,
                   borderRadius: BorderRadius.circular(16),
                 ),
                 indicatorSize: TabBarIndicatorSize.tab,
-                labelColor: const Color(0xFF163E73),
-                unselectedLabelColor: const Color(0xFF6982A1),
+                labelColor: theme.colorScheme.onSurface,
+                unselectedLabelColor: theme.colorScheme.onSurfaceVariant,
                 dividerColor: Colors.transparent,
                 tabs: [
                   Tab(
@@ -356,29 +467,85 @@ class _SearchPageState extends ConsumerState<SearchPage>
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
             child: Row(
               children: [
                 Expanded(
-                  child: Text(
-                    _activeQuery.isEmpty
-                        ? 'Search by date, place, people, tags, or diary text.'
-                        : '${activeState.total} matches in ${_activeMode == MemorySearchMode.days ? 'days' : 'images'}',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: const Color(0xFF526A88),
-                      fontWeight: FontWeight.w600,
+                  child: SizedBox(
+                    height: 34,
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      children: [
+                        _buildFacetChip(theme, 'Places', _SearchFacet.place),
+                        const SizedBox(width: 8),
+                        _buildFacetChip(theme, 'People', _SearchFacet.people),
+                        const SizedBox(width: 8),
+                        _buildFacetChip(theme, 'Tags', _SearchFacet.tags),
+                        const SizedBox(width: 8),
+                        _buildFacetChip(theme, 'Text', _SearchFacet.text),
+                      ],
                     ),
                   ),
                 ),
-                if (activeState.loading)
-                  const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                const SizedBox(width: 12),
+                Text(
+                  _activeQuery.isEmpty ? '' : '${activeState.total}',
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w700,
                   ),
+                ),
+                if (activeState.loading) ...[
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: theme.colorScheme.primary,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
+          if (_activeQuery.isNotEmpty) _buildPeopleHitsSection(theme),
+          if (activeState.isOfflineFallback &&
+              (activeState.offlineMessage?.isNotEmpty ?? false))
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE9F1FF),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.offline_bolt_rounded,
+                        size: 16,
+                        color: Color(0xFF1F4F96),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          activeState.offlineMessage!,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: const Color(0xFF1F4F96),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           Expanded(
             child: TabBarView(
               controller: _tabController,
@@ -397,6 +564,98 @@ class _SearchPageState extends ConsumerState<SearchPage>
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildFacetChip(ThemeData theme, String label, _SearchFacet facet) {
+    final selected = _selectedFacets.contains(facet);
+    return FilterChip(
+      label: Text(label),
+      selected: selected,
+      showCheckmark: false,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
+      selectedColor: theme.colorScheme.secondaryContainer,
+      backgroundColor: theme.colorScheme.surfaceContainerHighest,
+      labelStyle: TextStyle(
+        color: selected
+            ? theme.colorScheme.onSecondaryContainer
+            : theme.colorScheme.onSurfaceVariant,
+        fontWeight: FontWeight.w700,
+      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+      onSelected: (_) => _toggleFacet(facet),
+    );
+  }
+
+  Widget _buildPeopleHitsSection(ThemeData theme) {
+    if (_peopleLoading) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+        child: LinearProgressIndicator(
+          minHeight: 2,
+          color: theme.colorScheme.primary,
+          backgroundColor: theme.colorScheme.surfaceContainerHighest,
+        ),
+      );
+    }
+    if (_peopleHits.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: SizedBox(
+        height: 42,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: _peopleHits.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          itemBuilder: (context, index) {
+            final person = _peopleHits[index];
+            final initials = [
+              if (person.firstName.trim().isNotEmpty)
+                person.firstName.trim()[0].toUpperCase(),
+              if (person.lastName.trim().isNotEmpty)
+                person.lastName.trim()[0].toUpperCase(),
+            ].join();
+            return ActionChip(
+              avatar: CircleAvatar(
+                radius: 12,
+                backgroundColor: theme.colorScheme.primary,
+                child: Text(
+                  initials.isEmpty ? '?' : initials,
+                  style: TextStyle(
+                    color: theme.colorScheme.onPrimary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              label: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 140),
+                child: Text(
+                  person.displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              backgroundColor: theme.colorScheme.surfaceContainerHighest,
+              side: BorderSide(color: theme.colorScheme.outlineVariant),
+              labelStyle: TextStyle(
+                color: theme.colorScheme.onSurface,
+                fontWeight: FontWeight.w700,
+              ),
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => PersonDetailPage(person: person),
+                  ),
+                );
+              },
+            );
+          },
+        ),
       ),
     );
   }
@@ -434,9 +693,30 @@ class _SearchPageState extends ConsumerState<SearchPage>
         itemCount: state.items.length + (state.loadingMore ? 1 : 0),
         itemBuilder: (context, index) {
           if (index >= state.items.length) {
-            return const Padding(
+            return Padding(
               padding: EdgeInsets.symmetric(vertical: 18),
-              child: Center(child: CircularProgressIndicator()),
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                ),
+              ),
             );
           }
           return _SearchResultCard(
@@ -460,7 +740,22 @@ class _SearchPageState extends ConsumerState<SearchPage>
       itemCount: state.items.length + (state.loadingMore ? 2 : 0),
       itemBuilder: (context, index) {
         if (index >= state.items.length) {
-          return const _ImageTileSkeleton();
+          return DecoratedBox(
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Center(
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.2,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+              ),
+            ),
+          );
         }
         return _ImageSearchTile(
           item: state.items[index],
@@ -502,10 +797,13 @@ class _SearchBlankState extends StatelessWidget {
             Container(
               width: 88,
               height: 88,
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 gradient: LinearGradient(
-                  colors: [Color(0xFFE7F0FF), Color(0xFFDCE8FF)],
+                  colors: [
+                    Theme.of(context).colorScheme.surfaceContainerHighest,
+                    Theme.of(context).colorScheme.surfaceContainer,
+                  ],
                 ),
               ),
               child: Icon(
@@ -513,7 +811,7 @@ class _SearchBlankState extends StatelessWidget {
                     ? Icons.auto_stories_rounded
                     : Icons.photo_library_rounded,
                 size: 42,
-                color: const Color(0xFF2156A3),
+                color: Theme.of(context).colorScheme.primary,
               ),
             ),
             const SizedBox(height: 18),
@@ -529,9 +827,9 @@ class _SearchBlankState extends StatelessWidget {
                   ? 'Find diary entries by date, place, people, tags, or text.'
                   : 'Find matching images and jump straight to the related day.',
               textAlign: TextAlign.center,
-              style: Theme.of(
-                context,
-              ).textTheme.bodyLarge?.copyWith(color: const Color(0xFF60738F)),
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
           ],
         ),
@@ -560,14 +858,14 @@ class _SearchEmptyState extends StatelessWidget {
               height: 90,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(28),
-                color: const Color(0xFFF1F5FA),
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
               ),
               child: Icon(
                 isDays
                     ? Icons.event_busy_outlined
                     : Icons.image_search_outlined,
                 size: 42,
-                color: const Color(0xFF6F85A2),
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
             ),
             const SizedBox(height: 18),
@@ -581,9 +879,9 @@ class _SearchEmptyState extends StatelessWidget {
             Text(
               'Nothing matched "$query". Try a broader place, person, or tag.',
               textAlign: TextAlign.center,
-              style: Theme.of(
-                context,
-              ).textTheme.bodyLarge?.copyWith(color: const Color(0xFF60738F)),
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
           ],
         ),
@@ -610,7 +908,7 @@ class _SearchErrorState extends StatelessWidget {
               message,
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: const Color(0xFF932F2F),
+                color: Theme.of(context).colorScheme.error,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -815,7 +1113,9 @@ class _SearchResultCard extends StatelessWidget {
                     errorWidget: (_, __, ___) => Container(
                       width: 78,
                       height: 78,
-                      color: const Color(0xFFEAF0F8),
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.surfaceContainerHighest,
                       child: const Icon(Icons.image_not_supported_outlined),
                     ),
                   ),
@@ -828,7 +1128,7 @@ class _SearchResultCard extends StatelessWidget {
                     Text(
                       item.date.isEmpty ? 'Unknown date' : item.date,
                       style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        color: const Color(0xFF19447B),
+                        color: Theme.of(context).colorScheme.primary,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
@@ -862,12 +1162,19 @@ class _SearchResultCard extends StatelessWidget {
                                   vertical: 4,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFFEAF1FB),
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.surfaceContainerHighest,
                                   borderRadius: BorderRadius.circular(999),
                                 ),
                                 child: Text(
                                   entry,
-                                  style: Theme.of(context).textTheme.labelSmall,
+                                  style: Theme.of(context).textTheme.labelSmall
+                                      ?.copyWith(
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.onSurfaceVariant,
+                                      ),
                                 ),
                               ),
                             )
@@ -918,7 +1225,9 @@ class _ImageSearchTile extends StatelessWidget {
                     httpHeaders: authHeaders,
                     fit: BoxFit.cover,
                     errorWidget: (_, __, ___) => Container(
-                      color: const Color(0xFFEAF0F8),
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.surfaceContainerHighest,
                       child: const Icon(Icons.image_not_supported_outlined),
                     ),
                   ),

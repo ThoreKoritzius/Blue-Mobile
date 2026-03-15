@@ -2,10 +2,19 @@ import 'package:blue_mobile/data/models/story_day_model.dart';
 import 'package:blue_mobile/core/config/app_config.dart';
 import 'package:blue_mobile/core/network/auth_token_store.dart';
 import 'package:blue_mobile/core/network/graphql_service.dart';
+import 'package:blue_mobile/data/cache/person_cache_store.dart';
 import 'package:blue_mobile/data/models/chat_event_model.dart';
 import 'package:blue_mobile/data/models/chat_response_model.dart';
+import 'package:blue_mobile/data/models/run_detail_model.dart';
+import 'package:blue_mobile/data/models/run_model.dart';
 import 'package:blue_mobile/data/models/memory_search_result_model.dart';
+import 'package:blue_mobile/data/models/person_model.dart';
+import 'package:blue_mobile/data/models/story_day_page_model.dart';
 import 'package:blue_mobile/data/repositories/day_repository.dart';
+import 'package:blue_mobile/data/repositories/person_repository.dart';
+import 'package:blue_mobile/data/repositories/runs_repository.dart';
+import 'package:blue_mobile/data/repositories/search_repository.dart';
+import 'package:blue_mobile/data/repositories/stories_repository.dart';
 import 'package:blue_mobile/features/chat/chat_parsing.dart';
 import 'package:google_polyline_algorithm/google_polyline_algorithm.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -156,6 +165,8 @@ void main() {
           },
         },
       }),
+      const _FakeStoriesRepository(),
+      const _FakeRunsRepository(),
     );
 
     final payload = await repo.getDayCorePayload('2026-03-14');
@@ -166,6 +177,74 @@ void main() {
     expect(payload.events, isEmpty);
     expect(payload.detailsLoaded, isFalse);
   });
+
+  test(
+    'MemorySearchRepository falls back to cached day search offline',
+    () async {
+      final repo = MemorySearchRepository(
+        _ThrowingGraphqlService(),
+        _FakeStoriesRepository(
+          cachedRecentDays: const [
+            StoryDayModel(
+              date: '2026-03-14',
+              place: 'Berlin',
+              names: 'Alex;Sam',
+              description: 'Great run by the river',
+              food: 'Pasta',
+              sport: 'Running',
+              highlightImage: '',
+              keywords: 'travel;run',
+              country: 'DE',
+            ),
+          ],
+        ),
+      );
+
+      final page = await repo.searchMemories(
+        'river',
+        mode: MemorySearchMode.days,
+        page: 1,
+        pageSize: 24,
+        columns: const ['description', 'place'],
+      );
+
+      expect(page.isOfflineFallback, isTrue);
+      expect(page.items.single.date, '2026-03-14');
+      expect(page.offlineMessage, contains('10 years'));
+    },
+  );
+
+  test(
+    'GraphqlPersonRepository falls back to cached person detail offline',
+    () async {
+      final cachedPerson = PersonModel(
+        id: 7,
+        firstName: 'Alex',
+        lastName: 'Meyer',
+        birthDate: '',
+        deathDate: '',
+        relation: 'Friend',
+        profession: 'Designer',
+        studyProgram: '',
+        languages: 'de;en',
+        email: '',
+        phone: '',
+        address: '',
+        notes: 'Met in Berlin',
+        biography: 'Long-time friend',
+      );
+      final repo = GraphqlPersonRepository(
+        _ThrowingGraphqlService(),
+        _FakePersonCacheStore(cachedPeople: [cachedPerson]),
+      );
+
+      final payload = await repo.loadDetail(cachedPerson);
+
+      expect(payload.person.displayName, 'Alex Meyer');
+      expect(payload.faces, isEmpty);
+      expect(payload.images, isEmpty);
+    },
+  );
 }
 
 class _FakeGraphqlService extends GraphqlService {
@@ -180,4 +259,128 @@ class _FakeGraphqlService extends GraphqlService {
   }) async {
     return payload;
   }
+}
+
+class _FakeStoriesRepository implements StoriesRepository {
+  const _FakeStoriesRepository({this.cachedRecentDays = const []});
+
+  final List<StoryDayModel> cachedRecentDays;
+
+  @override
+  Future<void> cacheDay(StoryDayModel model) async {}
+
+  @override
+  Future<StoryDayModel?> getCachedDay(String day) async {
+    for (final story in cachedRecentDays) {
+      if (story.date == day) return story;
+    }
+    return null;
+  }
+
+  @override
+  Future<List<StoryDayModel>> getCachedRecentDays({int limit = 400}) async =>
+      cachedRecentDays.take(limit).toList();
+
+  @override
+  Future<StoryDayModel> getDay(String day) async => StoryDayModel.empty(day);
+
+  @override
+  Future<List<StoryDayModel>> listStories({int first = 500}) async => const [];
+
+  @override
+  Future<StoryDayPageModel> listStoriesPage({int first = 120, String? after}) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> saveDay(StoryDayModel model) async {}
+
+  @override
+  Future<void> warmRecentCache({int limit = 3650}) async {}
+}
+
+class _FakeRunsRepository implements RunsRepository {
+  const _FakeRunsRepository();
+
+  @override
+  Future<void> cacheRuns(List<RunModel> runs) async {}
+
+  @override
+  Future<RunDetailModel> detail(String runId) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<List<RunModel>> getCachedRuns({int limit = 2000}) async => const [];
+
+  @override
+  Future<List<RunModel>> listRuns({int first = 2000}) async => const [];
+
+  @override
+  Future<({RunDetailModel summary, RunDetailModel detail})> loadDetailBundle(
+    String runId,
+  ) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<List<RunModel>> monthlyRuns({int first = 2000}) async => const [];
+
+  @override
+  Future<List<RunModel>> runsForDate(String date, {int first = 50}) async =>
+      const [];
+
+  @override
+  Future<RunDetailModel> summary(String runId) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<void> warmRecentCache({int limitDays = 3650}) async {}
+}
+
+class _ThrowingGraphqlService extends GraphqlService {
+  _ThrowingGraphqlService() : super(AuthTokenStore());
+
+  @override
+  Future<Map<String, dynamic>> query(
+    String document, {
+    Map<String, dynamic> variables = const {},
+  }) async {
+    throw Exception('offline');
+  }
+}
+
+class _FakePersonCacheStore extends PersonCacheStore {
+  _FakePersonCacheStore({this.cachedPeople = const []});
+
+  final List<PersonModel> cachedPeople;
+
+  @override
+  Future<PersonModel?> readPerson(int id) async {
+    for (final person in cachedPeople) {
+      if (person.id == id) return person;
+    }
+    return null;
+  }
+
+  @override
+  Future<List<PersonModel>> readAllPersons() async => cachedPeople;
+
+  @override
+  Future<List<PersonModel>> readPopular({int limit = 12}) async =>
+      cachedPeople.take(limit).toList();
+
+  @override
+  Future<List<PersonModel>> search(String query, {int limit = 12}) async =>
+      cachedPeople.take(limit).toList();
+
+  @override
+  Future<void> upsertPeople(List<PersonModel> people) async {}
+
+  @override
+  Future<void> upsertPerson(PersonModel person) async {}
+
+  @override
+  Future<void> writePopular(List<PersonModel> people) async {}
 }

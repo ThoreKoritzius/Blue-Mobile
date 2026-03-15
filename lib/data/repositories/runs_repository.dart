@@ -1,12 +1,16 @@
+import '../cache/run_cache_store.dart';
 import '../../core/network/graphql_service.dart';
 import '../graphql/documents.dart';
 import '../models/run_detail_model.dart';
 import '../models/run_model.dart';
 
 abstract class RunsRepository {
+  Future<void> cacheRuns(List<RunModel> runs);
+  Future<List<RunModel>> getCachedRuns({int limit = 2000});
   Future<List<RunModel>> listRuns({int first = 2000});
   Future<List<RunModel>> runsForDate(String date, {int first = 50});
   Future<List<RunModel>> monthlyRuns({int first = 2000});
+  Future<void> warmRecentCache({int limitDays = RunCacheStore.maxCachedDays});
   Future<({RunDetailModel summary, RunDetailModel detail})> loadDetailBundle(
     String runId,
   );
@@ -15,65 +19,116 @@ abstract class RunsRepository {
 }
 
 class GraphqlRunsRepository implements RunsRepository {
-  GraphqlRunsRepository(this._gql);
+  GraphqlRunsRepository(this._gql, this._cacheStore);
 
   final GraphqlService _gql;
+  final RunCacheStore _cacheStore;
+
+  @override
+  Future<void> cacheRuns(List<RunModel> runs) {
+    return _cacheStore.upsertRuns(runs);
+  }
+
+  @override
+  Future<List<RunModel>> getCachedRuns({int limit = 2000}) async {
+    final runs = await _cacheStore.readAllRuns();
+    return runs.take(limit).toList();
+  }
 
   @override
   Future<List<RunModel>> listRuns({int first = 2000}) async {
-    final response = await _gql.query(
-      GqlDocuments.runsList,
-      variables: {'first': first},
-    );
-    final edges =
-        (((response['runs'] as Map<String, dynamic>)['list']
-                as Map<String, dynamic>)['edges']
-            as List<dynamic>? ??
-        const []);
+    try {
+      final response = await _gql.query(
+        GqlDocuments.runsList,
+        variables: {'first': first},
+      );
+      final edges =
+          (((response['runs'] as Map<String, dynamic>)['list']
+                  as Map<String, dynamic>)['edges']
+              as List<dynamic>? ??
+          const []);
 
-    return edges
-        .map((item) => (item as Map<String, dynamic>)['node'])
-        .whereType<Map<String, dynamic>>()
-        .map(RunModel.fromJson)
-        .toList();
+      final runs = edges
+          .map((item) => (item as Map<String, dynamic>)['node'])
+          .whereType<Map<String, dynamic>>()
+          .map(RunModel.fromJson)
+          .toList();
+      await _cacheStore.upsertRuns(runs);
+      return runs;
+    } catch (_) {
+      final cached = await _cacheStore.readAllRuns();
+      if (cached.isNotEmpty) return cached.take(first).toList();
+      rethrow;
+    }
   }
 
   @override
   Future<List<RunModel>> runsForDate(String date, {int first = 50}) async {
-    final response = await _gql.query(
-      GqlDocuments.runsByDate,
-      variables: {'date': date, 'first': first},
-    );
-    final edges =
-        (((response['runs'] as Map<String, dynamic>)['byDate']
-                as Map<String, dynamic>)['edges']
-            as List<dynamic>? ??
-        const []);
+    try {
+      final response = await _gql.query(
+        GqlDocuments.runsByDate,
+        variables: {'date': date, 'first': first},
+      );
+      final edges =
+          (((response['runs'] as Map<String, dynamic>)['byDate']
+                  as Map<String, dynamic>)['edges']
+              as List<dynamic>? ??
+          const []);
 
-    return edges
-        .map((item) => (item as Map<String, dynamic>)['node'])
-        .whereType<Map<String, dynamic>>()
-        .map(RunModel.fromJson)
-        .toList();
+      final runs = edges
+          .map((item) => (item as Map<String, dynamic>)['node'])
+          .whereType<Map<String, dynamic>>()
+          .map(RunModel.fromJson)
+          .toList();
+      await _cacheStore.upsertRuns(runs);
+      return runs;
+    } catch (_) {
+      final cached = await _cacheStore.readRunsForDate(date);
+      if (cached.isNotEmpty) return cached.take(first).toList();
+      rethrow;
+    }
   }
 
   @override
   Future<List<RunModel>> monthlyRuns({int first = 2000}) async {
-    final response = await _gql.query(
-      GqlDocuments.runsMonthly,
-      variables: {'first': first},
-    );
-    final edges =
-        (((response['runs'] as Map<String, dynamic>)['monthly']
-                as Map<String, dynamic>)['edges']
-            as List<dynamic>? ??
-        const []);
+    try {
+      final response = await _gql.query(
+        GqlDocuments.runsMonthly,
+        variables: {'first': first},
+      );
+      final edges =
+          (((response['runs'] as Map<String, dynamic>)['monthly']
+                  as Map<String, dynamic>)['edges']
+              as List<dynamic>? ??
+          const []);
 
-    return edges
-        .map((item) => (item as Map<String, dynamic>)['node'])
-        .whereType<Map<String, dynamic>>()
-        .map(RunModel.fromJson)
-        .toList();
+      final runs = edges
+          .map((item) => (item as Map<String, dynamic>)['node'])
+          .whereType<Map<String, dynamic>>()
+          .map(RunModel.fromJson)
+          .toList();
+      await _cacheStore.upsertRuns(runs);
+      return runs;
+    } catch (_) {
+      final cached = await _cacheStore.readAllRuns();
+      if (cached.isNotEmpty) return cached.take(first).toList();
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> warmRecentCache({
+    int limitDays = RunCacheStore.maxCachedDays,
+  }) async {
+    final lastWarmAt = await _cacheStore.readLastWarmAt();
+    if (lastWarmAt != null &&
+        DateTime.now().toUtc().difference(lastWarmAt) <
+            const Duration(minutes: 20)) {
+      return;
+    }
+    final runs = await listRuns(first: limitDays * 4);
+    await _cacheStore.upsertRuns(runs);
+    await _cacheStore.writeLastWarmAt(DateTime.now().toUtc());
   }
 
   @override

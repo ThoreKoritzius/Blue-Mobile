@@ -70,6 +70,20 @@ class StoryDayModel {
     };
   }
 
+  Map<String, dynamic> toJson() {
+    return {
+      'date': date,
+      'place': place,
+      'names': names,
+      'description': description,
+      'food': food,
+      'sport': sport,
+      'highlight_image': highlightImage,
+      'keywords': keywords,
+      'country': country,
+    };
+  }
+
   factory StoryDayModel.empty(String date) => StoryDayModel(
     date: date,
     place: '',

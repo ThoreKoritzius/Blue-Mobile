@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -9,11 +11,33 @@ import '../map/map_page.dart';
 import '../runs/runs_page.dart';
 import '../search/search_page.dart';
 
-class HomeShell extends ConsumerWidget {
+class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<HomeShell> createState() => _HomeShellState();
+}
+
+class _HomeShellState extends ConsumerState<HomeShell> {
+  @override
+  void initState() {
+    super.initState();
+    Future<void>.microtask(() async {
+      try {
+        await Future.wait([
+          ref.read(storiesRepositoryProvider).warmRecentCache(limit: 3650),
+          ref.read(runsRepositoryProvider).warmRecentCache(limitDays: 3650),
+          ref.read(personRepositoryProvider).popular(first: 24),
+        ]);
+      } catch (_) {
+        // Startup cache warming should not block the shell.
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ref = this.ref;
     final tabIndex = ref.watch(selectedTabProvider);
     final dayAccent = ref.watch(dayAppBarAccentProvider);
     final appBarBase = tabIndex == 0

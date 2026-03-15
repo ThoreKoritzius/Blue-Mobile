@@ -97,6 +97,25 @@ class PersonModel {
     };
   }
 
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'vorname': firstName,
+      'nachname': lastName,
+      'geburtsdatum': birthDate,
+      'todesdatum': deathDate,
+      'relation': relation,
+      'beruf': profession,
+      'studiengang': studyProgram,
+      'sprachen': languages,
+      'mail': email,
+      'telefon': phone,
+      'adresse': address,
+      'wichtiges': notes,
+      'lebenslauf': biography,
+    };
+  }
+
   factory PersonModel.fromJson(Map<String, dynamic> json) {
     int parseId(Object? value) {
       if (value is int) return value;

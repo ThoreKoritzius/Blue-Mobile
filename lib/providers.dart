@@ -6,6 +6,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/network/auth_token_store.dart';
 import 'core/network/graphql_service.dart';
+import 'data/cache/story_cache_store.dart';
+import 'data/cache/run_cache_store.dart';
+import 'data/cache/person_cache_store.dart';
 import 'data/models/auth_session.dart';
 import 'data/repositories/auth_repository.dart';
 import 'data/repositories/calendar_repository.dart';
@@ -32,6 +35,16 @@ final authTokenStoreProvider = Provider<AuthTokenStore>(
   (ref) => AuthTokenStore(),
 );
 
+final storyCacheStoreProvider = Provider<StoryCacheStore>(
+  (ref) => StoryCacheStore(),
+);
+
+final runCacheStoreProvider = Provider<RunCacheStore>((ref) => RunCacheStore());
+
+final personCacheStoreProvider = Provider<PersonCacheStore>(
+  (ref) => PersonCacheStore(),
+);
+
 final graphqlServiceProvider = Provider<GraphqlService>((ref) {
   final tokenStore = ref.watch(authTokenStoreProvider);
   return GraphqlService(tokenStore);
@@ -45,7 +58,10 @@ final authRepositoryProvider = Provider<AuthRepository>((ref) {
 });
 
 final storiesRepositoryProvider = Provider<StoriesRepository>((ref) {
-  return GraphqlStoriesRepository(ref.watch(graphqlServiceProvider));
+  return GraphqlStoriesRepository(
+    ref.watch(graphqlServiceProvider),
+    ref.watch(storyCacheStoreProvider),
+  );
 });
 
 final filesRepositoryProvider = Provider<FilesRepository>((ref) {
@@ -53,7 +69,10 @@ final filesRepositoryProvider = Provider<FilesRepository>((ref) {
 });
 
 final runsRepositoryProvider = Provider<RunsRepository>((ref) {
-  return GraphqlRunsRepository(ref.watch(graphqlServiceProvider));
+  return GraphqlRunsRepository(
+    ref.watch(graphqlServiceProvider),
+    ref.watch(runCacheStoreProvider),
+  );
 });
 
 final calendarRepositoryProvider = Provider<CalendarRepository>((ref) {
@@ -65,11 +84,18 @@ final chatRepositoryProvider = Provider<ChatRepository>((ref) {
 });
 
 final dayRepositoryProvider = Provider<DayRepository>((ref) {
-  return GraphqlDayRepository(ref.watch(graphqlServiceProvider));
+  return GraphqlDayRepository(
+    ref.watch(graphqlServiceProvider),
+    ref.watch(storiesRepositoryProvider),
+    ref.watch(runsRepositoryProvider),
+  );
 });
 
 final personRepositoryProvider = Provider<PersonRepository>((ref) {
-  return GraphqlPersonRepository(ref.watch(graphqlServiceProvider));
+  return GraphqlPersonRepository(
+    ref.watch(graphqlServiceProvider),
+    ref.watch(personCacheStoreProvider),
+  );
 });
 
 final mapRepositoryProvider = Provider<MapRepository>((ref) {
@@ -81,7 +107,10 @@ final mapRepositoryProvider = Provider<MapRepository>((ref) {
 });
 
 final searchRepositoryProvider = Provider<SearchRepository>((ref) {
-  return MemorySearchRepository(ref.watch(graphqlServiceProvider));
+  return MemorySearchRepository(
+    ref.watch(graphqlServiceProvider),
+    ref.watch(storiesRepositoryProvider),
+  );
 });
 
 final authControllerProvider =

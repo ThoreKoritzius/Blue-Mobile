@@ -15,6 +15,16 @@ class RunModel {
 
   double get distanceKm => distance / 1000;
 
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'start_date_local': startDateLocal,
+      'distance': distance,
+      'summary_polyline': summaryPolyline,
+    };
+  }
+
   factory RunModel.fromJson(Map<String, dynamic> json) {
     return RunModel(
       id: (json['id'] ?? '').toString(),

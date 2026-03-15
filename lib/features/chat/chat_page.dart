@@ -10,6 +10,7 @@ import '../../core/utils/date_format.dart';
 import '../../data/models/chat_attachment_model.dart';
 import '../../data/models/chat_event_model.dart';
 import '../../data/models/chat_response_model.dart';
+import '../../data/models/story_day_model.dart';
 import '../../providers.dart';
 import 'chat_parsing.dart';
 
@@ -28,6 +29,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   bool _sending = false;
   bool _autoScroll = true;
   final Set<String> _expandedDetailIds = <String>{};
+  final Map<String, StoryDayModel?> _dayPreviewCache =
+      <String, StoryDayModel?>{};
+  final Map<String, Future<StoryDayModel?>> _dayPreviewFutures =
+      <String, Future<StoryDayModel?>>{};
 
   @override
   void initState() {
@@ -253,6 +258,36 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _send();
   }
 
+  Future<StoryDayModel?> _loadDayPreview(String date) {
+    final cached = _dayPreviewCache[date];
+    if (cached != null) {
+      return Future.value(cached);
+    }
+    final existing = _dayPreviewFutures[date];
+    if (existing != null) return existing;
+
+    final future = () async {
+      try {
+        final story = await ref.read(storiesRepositoryProvider).getDay(date);
+        _dayPreviewCache[date] = story;
+        return story;
+      } catch (_) {
+        _dayPreviewCache[date] = null;
+        return null;
+      } finally {
+        _dayPreviewFutures.remove(date);
+      }
+    }();
+
+    _dayPreviewFutures[date] = future;
+    return future;
+  }
+
+  void _openDayFromChat(String date) {
+    ref.read(selectedDateProvider.notifier).state = parseYmd(date);
+    ref.read(selectedTabProvider.notifier).state = 0;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -455,6 +490,21 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     ? ' '
                     : item.text,
                 selectable: false,
+                sizedImageBuilder: (config) => Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: SizedBox(
+                    width: config.width,
+                    height: config.height,
+                    child: _InlineChatImage(
+                      imageUrl: _resolveChatImageUrl(config.uri.toString()),
+                      headers: _authHeaders(),
+                      onTap: () => _showImagePreview(
+                        context,
+                        ChatAttachmentImage(path: config.uri.toString()),
+                      ),
+                    ),
+                  ),
+                ),
                 styleSheet: MarkdownStyleSheet(
                   p: theme.textTheme.bodyLarge?.copyWith(
                     color: textColor,
@@ -503,54 +553,35 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             ],
             if (item.dates.isNotEmpty) ...[
               const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: item.dates
-                    .map(
-                      (date) => ActionChip(
-                        label: Text(date),
-                        onPressed: () {
-                          ref.read(selectedDateProvider.notifier).state =
-                              parseYmd(date);
-                          ref.read(selectedTabProvider.notifier).state = 0;
-                        },
-                      ),
-                    )
-                    .toList(),
-              ),
-            ],
-            if (item.images.isNotEmpty) ...[
-              const SizedBox(height: 12),
               SizedBox(
-                height: 88,
+                height: 124,
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
-                  itemCount: item.images.length,
+                  itemCount: item.dates.length,
                   separatorBuilder: (_, __) => const SizedBox(width: 10),
                   itemBuilder: (context, index) {
-                    final image = item.images[index];
-                    return GestureDetector(
-                      onTap: () => _showImagePreview(context, image),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(14),
-                        child: SizedBox(
-                          width: 88,
-                          child: CachedNetworkImage(
-                            imageUrl: AppConfig.imageUrlFromPath(image.path),
-                            fit: BoxFit.cover,
-                            httpHeaders: _authHeaders(),
-                            errorWidget: (_, __, ___) => Container(
-                              color: colorScheme.surfaceContainerHighest,
-                              child: const Icon(Icons.broken_image_outlined),
-                            ),
-                          ),
-                        ),
-                      ),
+                    final date = item.dates[index];
+                    return FutureBuilder<StoryDayModel?>(
+                      future: _loadDayPreview(date),
+                      builder: (context, snapshot) {
+                        return _DayMemoryCard(
+                          date: date,
+                          story: snapshot.data,
+                          loading:
+                              snapshot.connectionState ==
+                              ConnectionState.waiting,
+                          headers: _authHeaders(),
+                          onTap: () => _openDayFromChat(date),
+                        );
+                      },
                     );
                   },
                 ),
               ),
+            ],
+            if (item.images.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _buildInlineImageGallery(context, theme, item.images),
             ],
             if (item.toolCalls.isNotEmpty) ...[
               const SizedBox(height: 10),
@@ -713,7 +744,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           child: ClipRRect(
             borderRadius: BorderRadius.circular(24),
             child: CachedNetworkImage(
-              imageUrl: AppConfig.imageUrlFromPath(image.path),
+              imageUrl: _resolveChatImageUrl(image.path),
               fit: BoxFit.contain,
               httpHeaders: _authHeaders(),
               errorWidget: (_, __, ___) => Container(
@@ -739,6 +770,49 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       if (gatewayToken != null && gatewayToken.isNotEmpty)
         'X-Gateway-Session': gatewayToken,
     };
+  }
+
+  String _resolveChatImageUrl(String rawPath) {
+    if (rawPath.startsWith('http://') || rawPath.startsWith('https://')) {
+      return rawPath;
+    }
+    return AppConfig.imageUrlFromPath(rawPath);
+  }
+
+  Widget _buildInlineImageGallery(
+    BuildContext context,
+    ThemeData theme,
+    List<ChatAttachmentImage> images,
+  ) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final single = images.length == 1;
+        final tileWidth = single
+            ? constraints.maxWidth
+            : (constraints.maxWidth - 10) / 2;
+        final tileHeight = single ? 190.0 : tileWidth;
+
+        return Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: images
+              .map(
+                (image) => SizedBox(
+                  width: tileWidth,
+                  height: tileHeight,
+                  child: _InlineChatImage(
+                    imageUrl: _resolveChatImageUrl(
+                      image.previewPath ?? image.path,
+                    ),
+                    headers: _authHeaders(),
+                    onTap: () => _showImagePreview(context, image),
+                  ),
+                ),
+              )
+              .toList(),
+        );
+      },
+    );
   }
 }
 
@@ -852,6 +926,186 @@ class _TypingDotState extends State<_TypingDot>
           ),
         );
       },
+    );
+  }
+}
+
+class _DayMemoryCard extends StatelessWidget {
+  const _DayMemoryCard({
+    required this.date,
+    required this.story,
+    required this.loading,
+    required this.headers,
+    required this.onTap,
+  });
+
+  final String date;
+  final StoryDayModel? story;
+  final bool loading;
+  final Map<String, String> headers;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final previewUrl = _heroPreviewUrl();
+    final place = [
+      story?.place.trim() ?? '',
+      story?.country.trim() ?? '',
+    ].where((part) => part.isNotEmpty).join(', ');
+
+    return SizedBox(
+      width: 168,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(20),
+          child: Ink(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x16000000),
+                  blurRadius: 18,
+                  offset: Offset(0, 10),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (previewUrl != null)
+                    CachedNetworkImage(
+                      imageUrl: previewUrl,
+                      fit: BoxFit.cover,
+                      httpHeaders: headers,
+                      errorWidget: (_, __, ___) => _fallback(),
+                    )
+                  else
+                    _fallback(),
+                  if (loading)
+                    Container(color: Colors.white.withValues(alpha: 0.28)),
+                  Container(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color(0x14000000),
+                          Color(0x22000000),
+                          Color(0xC40C1728),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 14,
+                    right: 14,
+                    bottom: 14,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          date,
+                          style: Theme.of(context).textTheme.titleSmall
+                              ?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                              ),
+                        ),
+                        if (place.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            place,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(
+                                  color: Colors.white.withValues(alpha: 0.88),
+                                  height: 1.3,
+                                ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _fallback() {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF9CB7D8), Color(0xFFD8E6F6)],
+        ),
+      ),
+    );
+  }
+
+  String? _heroPreviewUrl() {
+    final highlight = story?.highlightImage.trim() ?? '';
+    if (highlight.isEmpty || story == null) return null;
+    if (!highlight.contains('/') && story!.date.isNotEmpty) {
+      return '${AppConfig.backendUrl}/api/images/${story!.date}/compressed/$highlight';
+    }
+    return AppConfig.imageUrlFromPath(highlight, date: story!.date);
+  }
+}
+
+class _InlineChatImage extends StatelessWidget {
+  const _InlineChatImage({
+    required this.imageUrl,
+    required this.headers,
+    required this.onTap,
+  });
+
+  final String imageUrl;
+  final Map<String, String> headers;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Ink(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x12000000),
+                blurRadius: 14,
+                offset: Offset(0, 8),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(18),
+            child: CachedNetworkImage(
+              imageUrl: imageUrl,
+              fit: BoxFit.cover,
+              httpHeaders: headers,
+              errorWidget: (_, __, ___) => Container(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                child: const Icon(Icons.broken_image_outlined),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

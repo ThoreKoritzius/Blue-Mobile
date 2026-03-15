@@ -163,6 +163,27 @@ class _DayPageState extends ConsumerState<DayPage> {
       return;
     }
 
+    final persisted = await ref
+        .read(dayRepositoryProvider)
+        .getCachedDayCorePayload(day);
+    if (persisted != null) {
+      _cachePut(day, persisted);
+      if (_isActiveRequest(requestId, day)) {
+        _applyVisiblePayload(
+          persisted,
+          detailsLoaded: persisted.detailsLoaded,
+          clearStatus: true,
+        );
+        setState(() {
+          _loading = false;
+          _transitioningDay = false;
+          _detailsLoading = true;
+        });
+      }
+      unawaited(_refreshDate(normalized, requestId));
+      return;
+    }
+
     setState(() {
       _loading = _current == null;
       _transitioningDay = _current != null;
