@@ -12,13 +12,17 @@ class BlueMobileApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final auth = ref.watch(authControllerProvider);
+    final themeMode = ref.watch(themeModeProvider);
     final session = auth.valueOrNull;
     final initialLoading = auth.isLoading && session == null && !auth.hasError;
+    ref.read(themeModeProvider.notifier).initialize();
 
     return MaterialApp(
       title: 'Blue Mobile',
       debugShowCheckedModeBanner: false,
-      theme: buildAppTheme(),
+      theme: buildAppTheme(brightness: Brightness.light),
+      darkTheme: buildAppTheme(brightness: Brightness.dark),
+      themeMode: themeMode,
       home: initialLoading
           ? const Scaffold(body: Center(child: CircularProgressIndicator()))
           : (session != null

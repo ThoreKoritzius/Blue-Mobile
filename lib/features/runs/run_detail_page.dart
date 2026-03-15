@@ -25,19 +25,24 @@ class RunDetailPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     final routePoints = _decodePolylinePoints();
     final bounds = _computeBounds(routePoints);
     final stats = _buildStats();
     final noteLines = _buildNoteLines();
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF4F8FD),
+      backgroundColor: colorScheme.surface,
       body: CustomScrollView(
         slivers: [
           SliverAppBar(
             pinned: true,
             expandedHeight: 320,
-            backgroundColor: const Color(0xFF133864),
+            backgroundColor: isDark
+                ? colorScheme.surfaceContainerHighest
+                : const Color(0xFF133864),
             foregroundColor: Colors.white,
             flexibleSpace: FlexibleSpaceBar(
               titlePadding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
@@ -57,18 +62,23 @@ class RunDetailPage extends StatelessWidget {
                     imageUrl: AppConfig.runImageUrl(run.id),
                     httpHeaders: headers,
                     fit: BoxFit.cover,
-                    errorWidget: (_, __, ___) =>
-                        Container(color: const Color(0xFF163B68)),
+                    errorWidget: (_, __, ___) => Container(
+                      color: isDark
+                          ? colorScheme.surfaceContainerHighest
+                          : const Color(0xFF163B68),
+                    ),
                   ),
                   Container(
-                    decoration: const BoxDecoration(
+                    decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
                         colors: [
                           Color(0x22000000),
                           Color(0x33000000),
-                          Color(0xCC0A1A30),
+                          isDark
+                              ? const Color(0xE608111D)
+                              : const Color(0xCC0A1A30),
                         ],
                       ),
                     ),
@@ -130,7 +140,7 @@ class RunDetailPage extends StatelessWidget {
                                   line,
                                   style: Theme.of(context).textTheme.bodyLarge
                                       ?.copyWith(
-                                        color: const Color(0xFF203248),
+                                        color: colorScheme.onSurface,
                                         height: 1.4,
                                       ),
                                 ),
@@ -286,15 +296,17 @@ class _RouteMapCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
     final tileConfig = AppConfig.mapTileConfig('light');
     return Container(
       height: 280,
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
-        boxShadow: const [
+        boxShadow: [
           BoxShadow(
-            color: Color(0x18000000),
+            color: isDark ? const Color(0x28000000) : const Color(0x18000000),
             blurRadius: 24,
             offset: Offset(0, 12),
           ),
@@ -370,14 +382,22 @@ class _StatCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     return Container(
       width: 132,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
+        gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFFF9FBFF), Color(0xFFEFF5FF)],
+          colors: isDark
+              ? [
+                  colorScheme.surfaceContainerHighest,
+                  colorScheme.surfaceContainer,
+                ]
+              : [const Color(0xFFF9FBFF), const Color(0xFFEFF5FF)],
         ),
         borderRadius: BorderRadius.circular(18),
       ),
@@ -386,16 +406,16 @@ class _StatCard extends StatelessWidget {
         children: [
           Text(
             value,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            style: theme.textTheme.titleMedium?.copyWith(
               fontWeight: FontWeight.w800,
-              color: const Color(0xFF173B73),
+              color: colorScheme.primary,
             ),
           ),
           const SizedBox(height: 6),
           Text(
             label,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: const Color(0xFF627898),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -412,17 +432,18 @@ class _HeroBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.14),
+        color: colorScheme.surface.withValues(alpha: 0.2),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
+        border: Border.all(color: colorScheme.outline.withValues(alpha: 0.22)),
       ),
       child: Text(
         label,
         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-          color: Colors.white,
+          color: colorScheme.onSurface,
           fontWeight: FontWeight.w700,
         ),
       ),

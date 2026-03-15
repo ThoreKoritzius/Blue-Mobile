@@ -256,13 +256,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
 
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [Color(0xFFF7FAFF), Color(0xFFEDF4FD)],
+          colors: isDark
+              ? [const Color(0xFF08111D), const Color(0xFF0F1B2C)]
+              : [const Color(0xFFF7FAFF), const Color(0xFFEDF4FD)],
         ),
       ),
       child: Column(
@@ -285,11 +289,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             child: Container(
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
               decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.92),
-                border: const Border(top: BorderSide(color: Color(0xFFD8E4F5))),
-                boxShadow: const [
+                color: colorScheme.surface.withValues(
+                  alpha: isDark ? 0.96 : 0.92,
+                ),
+                border: Border(
+                  top: BorderSide(color: colorScheme.outlineVariant),
+                ),
+                boxShadow: [
                   BoxShadow(
-                    color: Color(0x12000000),
+                    color: isDark
+                        ? const Color(0x28000000)
+                        : const Color(0x12000000),
                     blurRadius: 18,
                     offset: Offset(0, -4),
                   ),
@@ -341,6 +351,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   Widget _buildEmptyState(ThemeData theme) {
+    final colorScheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 28),
@@ -351,12 +363,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               width: 74,
               height: 74,
               decoration: BoxDecoration(
-                color: const Color(0xFFDCEBFF),
+                color: isDark
+                    ? colorScheme.primary.withValues(alpha: 0.18)
+                    : const Color(0xFFDCEBFF),
                 borderRadius: BorderRadius.circular(24),
               ),
-              child: const Icon(
+              child: Icon(
                 Icons.auto_awesome_outlined,
-                color: Color(0xFF174EA6),
+                color: colorScheme.primary,
                 size: 36,
               ),
             ),
@@ -365,14 +379,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               'Ask about your days',
               style: theme.textTheme.headlineSmall?.copyWith(
                 fontWeight: FontWeight.w800,
-                color: const Color(0xFF163968),
               ),
             ),
             const SizedBox(height: 8),
             Text(
               'Memories, runs, places, photos.',
               style: theme.textTheme.bodyLarge?.copyWith(
-                color: const Color(0xFF5E7392),
+                color: colorScheme.onSurfaceVariant,
               ),
               textAlign: TextAlign.center,
             ),
@@ -388,8 +401,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _UiMessage item,
   ) {
     final isUser = item.role == 'user';
-    final bubbleColor = isUser ? const Color(0xFF174EA6) : Colors.white;
-    final textColor = isUser ? Colors.white : const Color(0xFF162A44);
+    final colorScheme = theme.colorScheme;
+    final bubbleColor = isUser
+        ? colorScheme.primary
+        : colorScheme.surfaceContainer;
+    final textColor = isUser ? colorScheme.onPrimary : colorScheme.onSurface;
     final borderRadius = BorderRadius.only(
       topLeft: const Radius.circular(24),
       topRight: const Radius.circular(24),
@@ -408,12 +424,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         decoration: BoxDecoration(
           color: bubbleColor,
           borderRadius: borderRadius,
-          border: isUser ? null : Border.all(color: const Color(0xFFDCE6F5)),
+          border: isUser ? null : Border.all(color: colorScheme.outlineVariant),
           boxShadow: isUser
               ? const []
-              : const [
+              : [
                   BoxShadow(
-                    color: Color(0x12000000),
+                    color: theme.brightness == Brightness.dark
+                        ? const Color(0x22000000)
+                        : const Color(0x12000000),
                     blurRadius: 16,
                     offset: Offset(0, 6),
                   ),
@@ -443,16 +461,18 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     height: 1.5,
                   ),
                   code: theme.textTheme.bodyMedium?.copyWith(
-                    color: const Color(0xFF0D356C),
-                    backgroundColor: const Color(0xFFEAF2FF),
+                    color: colorScheme.primary,
+                    backgroundColor: colorScheme.primary.withValues(
+                      alpha: 0.14,
+                    ),
                   ),
                   blockquote: theme.textTheme.bodyMedium?.copyWith(
-                    color: const Color(0xFF4A678F),
+                    color: colorScheme.onSurfaceVariant,
                   ),
                   listBullet: theme.textTheme.bodyLarge?.copyWith(
                     color: textColor,
                   ),
-                  a: const TextStyle(color: Color(0xFF2B67C7)),
+                  a: TextStyle(color: colorScheme.primary),
                 ),
                 onTapLink: (text, href, title) {},
               ),
@@ -463,7 +483,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               Text(
                 item.statuses.last.summary,
                 style: theme.textTheme.bodySmall?.copyWith(
-                  color: const Color(0xFF5A7392),
+                  color: colorScheme.onSurfaceVariant,
                   fontStyle: FontStyle.italic,
                 ),
               ),
@@ -521,7 +541,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                             fit: BoxFit.cover,
                             httpHeaders: _authHeaders(),
                             errorWidget: (_, __, ___) => Container(
-                              color: const Color(0xFFEFF4FB),
+                              color: colorScheme.surfaceContainerHighest,
                               child: const Icon(Icons.broken_image_outlined),
                             ),
                           ),
@@ -545,7 +565,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFFECEC),
+                  color: theme.brightness == Brightness.dark
+                      ? const Color(0xFF3A1619)
+                      : const Color(0xFFFFECEC),
                   borderRadius: BorderRadius.circular(14),
                 ),
                 child: Column(
@@ -554,7 +576,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     Text(
                       item.errorText!,
                       style: theme.textTheme.bodyMedium?.copyWith(
-                        color: const Color(0xFF912F2F),
+                        color: theme.brightness == Brightness.dark
+                            ? const Color(0xFFFFCDD2)
+                            : const Color(0xFF912F2F),
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -598,7 +622,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 Text(
                   'Searched≈${call.searchedCount ?? '?'} returned=${call.rowCount ?? '?'}',
                   style: theme.textTheme.bodySmall?.copyWith(
-                    color: const Color(0xFF4F6E97),
+                    color: theme.colorScheme.onSurfaceVariant,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -606,7 +630,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 Icon(
                   expanded ? Icons.expand_less : Icons.expand_more,
                   size: 16,
-                  color: const Color(0xFF4F6E97),
+                  color: theme.colorScheme.onSurfaceVariant,
                 ),
               ],
             ),
@@ -617,9 +641,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             margin: const EdgeInsets.only(top: 4, bottom: 4),
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: const Color(0xFFF8FAFD),
+              color: theme.colorScheme.surfaceContainerHigh,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFDCE6F5)),
+              border: Border.all(color: theme.colorScheme.outlineVariant),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -648,10 +672,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         children: [
           Text(
             label,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w700,
-              color: Color(0xFF5A7392),
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
           ),
           const SizedBox(height: 4),
@@ -659,15 +683,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             width: double.infinity,
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: const Color(0xFFFFFFFF),
+              color: Theme.of(context).colorScheme.surface,
               borderRadius: BorderRadius.circular(10),
             ),
             child: SelectableText(
               value,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12,
                 height: 1.4,
-                color: Color(0xFF18324F),
+                color: Theme.of(context).colorScheme.onSurface,
               ),
             ),
           ),
@@ -694,7 +718,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               httpHeaders: _authHeaders(),
               errorWidget: (_, __, ___) => Container(
                 height: 260,
-                color: Colors.white,
+                color: Theme.of(context).colorScheme.surface,
                 child: const Center(child: Icon(Icons.broken_image_outlined)),
               ),
             ),
@@ -819,8 +843,10 @@ class _TypingDotState extends State<_TypingDot>
           child: Container(
             width: 7,
             height: 7,
-            decoration: const BoxDecoration(
-              color: Color(0xFF5A79A8),
+            decoration: BoxDecoration(
+              color: Theme.of(
+                context,
+              ).colorScheme.primary.withValues(alpha: 0.78),
               shape: BoxShape.circle,
             ),
           ),

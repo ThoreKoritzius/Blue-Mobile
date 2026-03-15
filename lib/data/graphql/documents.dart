@@ -36,9 +36,14 @@ query StoriesDay($day: String!) {
 ''';
 
   static const storiesList = r'''
-query StoriesList($first: Int!) {
+query StoriesList($first: Int!, $after: String) {
   stories {
-    list(first: $first) {
+    list(first: $first, after: $after) {
+      totalCount
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
       edges {
         node
       }

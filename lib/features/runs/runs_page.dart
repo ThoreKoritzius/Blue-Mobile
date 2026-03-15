@@ -63,6 +63,9 @@ class _RunsPageState extends ConsumerState<RunsPage> {
       return const Center(child: CircularProgressIndicator());
     }
 
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     final totalKm = _runs.fold<double>(0, (sum, item) => sum + item.distanceKm);
 
     return ListView(
@@ -93,14 +96,24 @@ class _RunsPageState extends ConsumerState<RunsPage> {
                     margin: const EdgeInsets.only(bottom: 10),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(20),
-                      gradient: const LinearGradient(
+                      gradient: LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
-                        colors: [Color(0xFFFFFFFF), Color(0xFFF4F8FF)],
+                        colors: isDark
+                            ? [
+                                colorScheme.surfaceContainerHighest,
+                                colorScheme.surfaceContainer,
+                              ]
+                            : [
+                                const Color(0xFFFFFFFF),
+                                const Color(0xFFF4F8FF),
+                              ],
                       ),
-                      boxShadow: const [
+                      boxShadow: [
                         BoxShadow(
-                          color: Color(0x12000000),
+                          color: isDark
+                              ? const Color(0x24000000)
+                              : const Color(0x12000000),
                           blurRadius: 16,
                           offset: Offset(0, 10),
                         ),
@@ -116,12 +129,14 @@ class _RunsPageState extends ConsumerState<RunsPage> {
                         width: 48,
                         height: 48,
                         decoration: BoxDecoration(
-                          color: const Color(0xFFE7F0FF),
+                          color: isDark
+                              ? colorScheme.primary.withValues(alpha: 0.18)
+                              : const Color(0xFFE7F0FF),
                           borderRadius: BorderRadius.circular(16),
                         ),
-                        child: const Icon(
+                        child: Icon(
                           Icons.directions_run,
-                          color: Color(0xFF174EA6),
+                          color: colorScheme.primary,
                         ),
                       ),
                       title: Text(
@@ -141,16 +156,24 @@ class _RunsPageState extends ConsumerState<RunsPage> {
                         height: 52,
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(14),
-                          gradient: const LinearGradient(
+                          gradient: LinearGradient(
                             begin: Alignment.topLeft,
                             end: Alignment.bottomRight,
-                            colors: [Color(0xFFEAF2FF), Color(0xFFD8E7FF)],
+                            colors: isDark
+                                ? [
+                                    colorScheme.surfaceContainerHigh,
+                                    colorScheme.surfaceContainerHighest,
+                                  ]
+                                : [
+                                    const Color(0xFFEAF2FF),
+                                    const Color(0xFFD8E7FF),
+                                  ],
                           ),
                         ),
                         alignment: Alignment.center,
-                        child: const Icon(
+                        child: Icon(
                           Icons.route_rounded,
-                          color: Color(0xFF5D7391),
+                          color: colorScheme.onSurfaceVariant,
                         ),
                       ),
                     ),
@@ -185,11 +208,12 @@ class _MetricCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Container(
       width: 110,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: colorScheme.surfaceContainer,
         borderRadius: BorderRadius.circular(14),
       ),
       child: Column(

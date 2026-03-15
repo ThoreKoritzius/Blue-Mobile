@@ -70,6 +70,11 @@ class HomeShell extends ConsumerWidget {
             icon: const Icon(Icons.search_rounded),
           ),
           IconButton(
+            tooltip: 'Settings',
+            onPressed: () => _showSettingsSheet(context, ref),
+            icon: const Icon(Icons.settings_outlined),
+          ),
+          IconButton(
             tooltip: 'Logout',
             onPressed: () =>
                 ref.read(authControllerProvider.notifier).signOut(),
@@ -121,5 +126,66 @@ class HomeShell extends ConsumerWidget {
         .withLightness(0.42);
     final softened = rotated.toColor();
     return Color.lerp(softened, source, 0.18) ?? softened;
+  }
+
+  void _showSettingsSheet(BuildContext context, WidgetRef ref) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return Consumer(
+          builder: (context, ref, _) {
+            final themeMode = ref.watch(themeModeProvider);
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Settings',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Appearance',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 8),
+                    SegmentedButton<ThemeMode>(
+                      segments: const [
+                        ButtonSegment<ThemeMode>(
+                          value: ThemeMode.dark,
+                          icon: Icon(Icons.dark_mode_outlined),
+                          label: Text('Dark'),
+                        ),
+                        ButtonSegment<ThemeMode>(
+                          value: ThemeMode.light,
+                          icon: Icon(Icons.light_mode_outlined),
+                          label: Text('Light'),
+                        ),
+                      ],
+                      selected: {themeMode},
+                      onSelectionChanged: (selection) {
+                        final mode = selection.first;
+                        ref.read(themeModeProvider.notifier).setThemeMode(mode);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Dark mode is the default for new installs.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 }

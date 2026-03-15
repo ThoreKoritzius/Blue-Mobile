@@ -6,16 +6,20 @@ class AuthTokenStore {
   static const _tokenKey = 'blue_mobile_access_token';
   static const _gatewayTokenKey = 'blue_mobile_gateway_token';
   static const _usernameKey = 'blue_mobile_username';
+  static const _themeModeKey = 'blue_mobile_theme_mode';
   final FlutterSecureStorage _storage;
   String? _cachedToken;
   String? _cachedGatewayToken;
   String? _cachedUsername;
+  String? _cachedThemeMode;
 
   String? peekToken() => _cachedToken;
 
   String? peekGatewayToken() => _cachedGatewayToken;
 
   String? peekUsername() => _cachedUsername;
+
+  String? peekThemeMode() => _cachedThemeMode;
 
   Future<String?> readToken() async {
     _cachedToken = await _storage.read(key: _tokenKey);
@@ -32,6 +36,11 @@ class AuthTokenStore {
     return _cachedUsername;
   }
 
+  Future<String?> readThemeMode() async {
+    _cachedThemeMode = await _storage.read(key: _themeModeKey);
+    return _cachedThemeMode;
+  }
+
   Future<void> writeToken(String token) async {
     _cachedToken = token;
     await _storage.write(key: _tokenKey, value: token);
@@ -45,6 +54,11 @@ class AuthTokenStore {
   Future<void> writeUsername(String username) async {
     _cachedUsername = username;
     await _storage.write(key: _usernameKey, value: username);
+  }
+
+  Future<void> writeThemeMode(String themeMode) async {
+    _cachedThemeMode = themeMode;
+    await _storage.write(key: _themeModeKey, value: themeMode);
   }
 
   Future<void> clearToken() async {

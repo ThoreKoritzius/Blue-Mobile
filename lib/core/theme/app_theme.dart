@@ -1,48 +1,73 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-ThemeData buildAppTheme() {
-  const base = Color(0xFF123B72);
-  const accent = Color(0xFF2F6FDE);
-  const paper = Color(0xFFF4F8FD);
-
-  final textTheme = GoogleFonts.dmSansTextTheme();
+ThemeData buildAppTheme({required Brightness brightness}) {
+  final isDark = brightness == Brightness.dark;
+  const lightBase = Color(0xFF123B72);
+  const lightAccent = Color(0xFF2F6FDE);
+  const lightPaper = Color(0xFFF4F8FD);
+  const darkBase = Color(0xFF8AB4FF);
+  const darkAccent = Color(0xFF4E8DFF);
+  const darkPaper = Color(0xFF08111D);
+  final base = isDark ? darkBase : lightBase;
+  final accent = isDark ? darkAccent : lightAccent;
+  final paper = isDark ? darkPaper : lightPaper;
+  final card = isDark ? const Color(0xFF101B2A) : Colors.white;
+  final inputFill = isDark ? const Color(0xFF132033) : Colors.white;
+  final chipBackground = isDark
+      ? const Color(0xFF182840)
+      : const Color(0xFFE8F0FF);
+  final chipSelected = isDark
+      ? const Color(0xFF22395A)
+      : const Color(0xFFD7E6FF);
+  final colorScheme = ColorScheme.fromSeed(
+    seedColor: base,
+    secondary: accent,
+    surface: paper,
+    brightness: brightness,
+  );
+  final textTheme =
+      GoogleFonts.dmSansTextTheme(
+        ThemeData(brightness: brightness).textTheme,
+      ).apply(
+        bodyColor: colorScheme.onSurface,
+        displayColor: colorScheme.onSurface,
+      );
 
   return ThemeData(
     useMaterial3: true,
-    colorScheme: ColorScheme.fromSeed(
-      seedColor: base,
-      secondary: accent,
-      surface: paper,
-      brightness: Brightness.light,
-    ),
+    colorScheme: colorScheme,
     scaffoldBackgroundColor: paper,
     textTheme: textTheme,
     appBarTheme: AppBarTheme(
       backgroundColor: paper,
-      foregroundColor: base,
+      foregroundColor: colorScheme.onSurface,
       elevation: 0,
       titleTextStyle: textTheme.titleLarge?.copyWith(
         fontWeight: FontWeight.w700,
-        color: base,
+        color: colorScheme.onSurface,
       ),
     ),
     cardTheme: CardThemeData(
-      color: Colors.white,
+      color: card,
       elevation: 0,
       margin: const EdgeInsets.all(0),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: Colors.white,
+      fillColor: inputFill,
+      labelStyle: TextStyle(color: colorScheme.onSurfaceVariant),
+      hintStyle: TextStyle(color: colorScheme.onSurfaceVariant),
+      prefixIconColor: colorScheme.onSurfaceVariant,
+      suffixIconColor: colorScheme.onSurfaceVariant,
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
         borderSide: BorderSide.none,
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
-        borderSide: const BorderSide(color: accent, width: 1.2),
+        borderSide: BorderSide(color: accent, width: 1.2),
       ),
     ),
     filledButtonTheme: FilledButtonThemeData(
@@ -53,8 +78,8 @@ ThemeData buildAppTheme() {
       ),
     ),
     chipTheme: ChipThemeData(
-      backgroundColor: const Color(0xFFE8F0FF),
-      selectedColor: const Color(0xFFD7E6FF),
+      backgroundColor: chipBackground,
+      selectedColor: chipSelected,
       deleteIconColor: base,
       labelStyle: textTheme.bodyMedium?.copyWith(
         color: base,

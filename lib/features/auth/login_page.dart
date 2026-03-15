@@ -99,14 +99,31 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   Widget build(BuildContext context) {
     final uiState = ref.watch(authUiStateProvider);
     final shownError = uiState.errorMessage ?? '';
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final topColor = isDark ? const Color(0xFF08111D) : const Color(0xFFEEF4EA);
+    final bottomColor = isDark
+        ? const Color(0xFF122033)
+        : const Color(0xFFF7F8F5);
+    final helperColor = colorScheme.onSurfaceVariant;
+    final errorBackground = isDark
+        ? const Color(0xFF3A1619)
+        : const Color(0xFFFFEBEE);
+    final errorBorder = isDark
+        ? const Color(0xFFE57373)
+        : const Color(0xFFE53935);
+    final errorText = isDark
+        ? const Color(0xFFFFCDD2)
+        : const Color(0xFFB71C1C);
 
     return Scaffold(
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Color(0xFFEEF4EA), Color(0xFFF7F8F5)],
+            colors: [topColor, bottomColor],
           ),
         ),
         child: Center(
@@ -129,9 +146,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                       const SizedBox(height: 8),
                       Text(
                         AppConfig.authModeDescription,
-                        style: Theme.of(
-                          context,
-                        ).textTheme.bodySmall?.copyWith(color: Colors.black54),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: helperColor,
+                        ),
                       ),
                       const SizedBox(height: 16),
                       FilledButton.tonalIcon(
@@ -189,14 +206,14 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                         Container(
                           padding: const EdgeInsets.all(10),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFFFEBEE),
-                            border: Border.all(color: const Color(0xFFE53935)),
+                            color: errorBackground,
+                            border: Border.all(color: errorBorder),
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: Text(
                             shownError,
-                            style: const TextStyle(
-                              color: Color(0xFFB71C1C),
+                            style: TextStyle(
+                              color: errorText,
                               fontWeight: FontWeight.w600,
                             ),
                           ),

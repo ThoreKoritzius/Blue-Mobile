@@ -61,7 +61,7 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      backgroundColor: const Color(0xFFF7FAFE),
+      backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
@@ -101,16 +101,19 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     if (_loading && _payload == null) {
-      return const Scaffold(
-        backgroundColor: Color(0xFFF4F8FD),
-        body: Center(child: CircularProgressIndicator()),
+      return Scaffold(
+        backgroundColor: colorScheme.surface,
+        body: const Center(child: CircularProgressIndicator()),
       );
     }
 
     if (_error != null && _payload == null) {
       return Scaffold(
-        backgroundColor: const Color(0xFFF4F8FD),
+        backgroundColor: colorScheme.surface,
         body: Center(
           child: Padding(
             padding: const EdgeInsets.all(24),
@@ -130,15 +133,15 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
       length: 2,
       initialIndex: 1,
       child: Scaffold(
-        backgroundColor: const Color(0xFFF4F8FD),
+        backgroundColor: colorScheme.surface,
         body: NestedScrollView(
           headerSliverBuilder: (context, innerBoxIsScrolled) {
             return [
               SliverAppBar(
                 pinned: true,
                 expandedHeight: 248,
-                backgroundColor: const Color(0xFFF4F8FD),
-                foregroundColor: const Color(0xFF173B68),
+                backgroundColor: colorScheme.surface,
+                foregroundColor: colorScheme.onSurface,
                 actions: [
                   IconButton(
                     onPressed: _saving ? null : _editPerson,
@@ -156,11 +159,16 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
                 ],
                 flexibleSpace: FlexibleSpaceBar(
                   background: Container(
-                    decoration: const BoxDecoration(
+                    decoration: BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
-                        colors: [Color(0xFFF6FAFF), Color(0xFFE7F0FB)],
+                        colors: isDark
+                            ? [
+                                colorScheme.surfaceContainerHighest,
+                                colorScheme.surfaceContainer,
+                              ]
+                            : const [Color(0xFFF6FAFF), Color(0xFFE7F0FB)],
                       ),
                     ),
                     child: SafeArea(
@@ -189,7 +197,7 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
                                         .textTheme
                                         .headlineSmall
                                         ?.copyWith(
-                                          color: const Color(0xFF15365E),
+                                          color: colorScheme.onSurface,
                                           fontWeight: FontWeight.w900,
                                         ),
                                   ),
@@ -203,7 +211,7 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
                                           .textTheme
                                           .titleMedium
                                           ?.copyWith(
-                                            color: const Color(0xFF5A7495),
+                                            color: colorScheme.onSurfaceVariant,
                                             fontWeight: FontWeight.w600,
                                           ),
                                     ),
@@ -236,27 +244,27 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
                 bottom: PreferredSize(
                   preferredSize: const Size.fromHeight(64),
                   child: Container(
-                    color: const Color(0xFFF4F8FD),
+                    color: colorScheme.surface,
                     padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: colorScheme.surfaceContainer,
                         borderRadius: BorderRadius.circular(18),
-                        boxShadow: const [
+                        boxShadow: [
                           BoxShadow(
-                            color: Color(0x120F3058),
+                            color: Colors.black.withValues(alpha: 0.12),
                             blurRadius: 20,
                             offset: Offset(0, 8),
                           ),
                         ],
                       ),
-                      child: const TabBar(
+                      child: TabBar(
                         dividerColor: Colors.transparent,
-                        labelColor: Color(0xFF173B68),
-                        unselectedLabelColor: Color(0xFF7B92AD),
-                        indicatorColor: Color(0xFF174EA6),
+                        labelColor: colorScheme.onSurface,
+                        unselectedLabelColor: colorScheme.onSurfaceVariant,
+                        indicatorColor: colorScheme.primary,
                         indicatorWeight: 3,
-                        tabs: [
+                        tabs: const [
                           Tab(text: 'Overview'),
                           Tab(text: 'Gallery'),
                         ],
@@ -311,8 +319,8 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
                       padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
                       child: Text(
                         person.biography.trim(),
-                        style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          color: const Color(0xFF213349),
+                        style: theme.textTheme.bodyLarge?.copyWith(
+                          color: colorScheme.onSurface,
                           height: 1.5,
                         ),
                       ),
@@ -463,11 +471,15 @@ class _PhotosTab extends StatelessWidget {
                         httpHeaders: headers,
                         fit: BoxFit.cover,
                         errorWidget: (_, __, ___) => Container(
-                          color: const Color(0xFFD9E7FA),
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.surfaceContainerHighest,
                           alignment: Alignment.center,
-                          child: const Icon(
+                          child: Icon(
                             Icons.image_not_supported_outlined,
-                            color: Color(0xFF40658E),
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
                           ),
                         ),
                       ),
@@ -679,6 +691,7 @@ class _PersonEditorSheetState extends State<_PersonEditorSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
     return Padding(
       padding: EdgeInsets.fromLTRB(18, 18, 18, 24 + bottomInset),
@@ -690,7 +703,7 @@ class _PersonEditorSheetState extends State<_PersonEditorSheet> {
               'Edit person',
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                 fontWeight: FontWeight.w800,
-                color: const Color(0xFF173B68),
+                color: colorScheme.onSurface,
               ),
             ),
             const SizedBox(height: 18),
@@ -844,16 +857,17 @@ class _ProfileAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Container(
       width: 116,
       height: 116,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: const Color(0xFFD9E7FA),
-        border: Border.all(color: Colors.white, width: 4),
-        boxShadow: const [
+        color: colorScheme.surfaceContainerHighest,
+        border: Border.all(color: colorScheme.surface, width: 4),
+        boxShadow: [
           BoxShadow(
-            color: Color(0x180F3058),
+            color: Colors.black.withValues(alpha: 0.16),
             blurRadius: 24,
             offset: Offset(0, 12),
           ),
@@ -902,15 +916,18 @@ class _HeroBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     final maxWidth = MediaQuery.sizeOf(context).width * 0.46;
     return ConstrainedBox(
       constraints: BoxConstraints(maxWidth: maxWidth.clamp(120.0, 220.0)),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: const Color(0xFFDCE9FA),
+          color: colorScheme.secondaryContainer,
           borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: const Color(0xFFC5D9F4)),
+          border: Border.all(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.45),
+          ),
         ),
         child: Text(
           label,
@@ -918,7 +935,7 @@ class _HeroBadge extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
           softWrap: false,
           style: Theme.of(context).textTheme.labelLarge?.copyWith(
-            color: const Color(0xFF1A4D90),
+            color: colorScheme.onSecondaryContainer,
             fontWeight: FontWeight.w700,
           ),
         ),
@@ -935,11 +952,12 @@ class _StatCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Container(
       width: 154,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFF2F7FF),
+        color: colorScheme.surfaceContainer,
         borderRadius: BorderRadius.circular(18),
       ),
       child: Column(
@@ -948,7 +966,7 @@ class _StatCard extends StatelessWidget {
           Text(
             label,
             style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              color: const Color(0xFF5C7698),
+              color: colorScheme.onSurfaceVariant,
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -956,7 +974,7 @@ class _StatCard extends StatelessWidget {
           Text(
             value,
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              color: const Color(0xFF173B68),
+              color: colorScheme.onSurface,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -974,6 +992,7 @@ class _InfoRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -982,7 +1001,7 @@ class _InfoRow extends StatelessWidget {
           child: Text(
             label,
             style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              color: const Color(0xFF5C7698),
+              color: colorScheme.onSurfaceVariant,
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -992,7 +1011,7 @@ class _InfoRow extends StatelessWidget {
           child: Text(
             value,
             style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-              color: const Color(0xFF203248),
+              color: colorScheme.onSurface,
               height: 1.4,
             ),
           ),

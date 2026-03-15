@@ -429,129 +429,310 @@ class _DayPageState extends ConsumerState<DayPage> {
     var focusedDay = DateUtils.dateOnly(initialDate);
     var selectedDay = DateUtils.dateOnly(initialDate);
     final now = DateUtils.dateOnly(DateTime.now());
+    final years = List<int>.generate(
+      now.year - 2005 + 2,
+      (index) => 2005 + index,
+    );
+    const monthNames = <String>[
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
 
-    return showDialog<DateTime>(
+    return showModalBottomSheet<DateTime>(
       context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
       builder: (context) {
+        final theme = Theme.of(context);
+        final colorScheme = theme.colorScheme;
         return StatefulBuilder(
           builder: (context, setDialogState) {
-            return Dialog(
-              backgroundColor: Colors.transparent,
-              insetPadding: const EdgeInsets.symmetric(
-                horizontal: 20,
-                vertical: 24,
-              ),
-              child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(28),
-                  gradient: const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [Color(0xFFF7FAFF), Color(0xFFEAF2FF)],
-                  ),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x24000000),
-                      blurRadius: 32,
-                      offset: Offset(0, 18),
-                    ),
-                  ],
-                ),
-                padding: const EdgeInsets.fromLTRB(20, 20, 20, 14),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Choose date',
-                                style: Theme.of(context).textTheme.titleLarge
-                                    ?.copyWith(fontWeight: FontWeight.w800),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'Calendar',
-                                style: Theme.of(context).textTheme.bodyMedium
-                                    ?.copyWith(color: Colors.black54),
-                              ),
-                            ],
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: () => Navigator.of(context).pop(),
-                          icon: const Icon(Icons.close),
-                        ),
+            return SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(30),
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        colorScheme.surfaceContainerHighest,
+                        colorScheme.surfaceContainer,
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    TableCalendar<void>(
-                      firstDay: DateTime(2005),
-                      lastDay: now.add(const Duration(days: 365)),
-                      focusedDay: focusedDay,
-                      currentDay: now,
-                      selectedDayPredicate: (day) =>
-                          isSameDay(day, selectedDay),
-                      headerStyle: const HeaderStyle(
-                        titleCentered: true,
-                        formatButtonVisible: false,
-                      ),
-                      calendarStyle: CalendarStyle(
-                        todayDecoration: BoxDecoration(
-                          color: const Color(0xFFE3EEFF),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        selectedDecoration: BoxDecoration(
-                          color: const Color(0xFF174EA6),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        weekendTextStyle: const TextStyle(
-                          color: Color(0xFF4D6B97),
-                        ),
-                        outsideTextStyle: const TextStyle(
-                          color: Color(0xFF9DAAC0),
-                        ),
-                        defaultTextStyle: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      daysOfWeekStyle: const DaysOfWeekStyle(
-                        weekendStyle: TextStyle(color: Color(0xFF4D6B97)),
-                      ),
-                      onDaySelected: (selected, focused) {
-                        setDialogState(() {
-                          selectedDay = DateUtils.dateOnly(selected);
-                          focusedDay = DateUtils.dateOnly(focused);
-                        });
-                      },
-                      onPageChanged: (focused) {
-                        setDialogState(() {
-                          focusedDay = DateUtils.dateOnly(focused);
-                        });
-                      },
+                    border: Border.all(
+                      color: colorScheme.outlineVariant.withValues(alpha: 0.38),
                     ),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton(
-                        onPressed: () => Navigator.of(context).pop(selectedDay),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0xFF174EA6),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(18),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.22),
+                        blurRadius: 36,
+                        offset: const Offset(0, 18),
+                      ),
+                    ],
+                  ),
+                  padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Jump to date',
+                                  style: theme.textTheme.titleLarge?.copyWith(
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  DateFormat(
+                                    'EEEE, d MMMM y',
+                                  ).format(selectedDay),
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            icon: const Icon(Icons.close_rounded),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: FilledButton.tonalIcon(
+                              onPressed: () {
+                                setDialogState(() {
+                                  selectedDay = now;
+                                  focusedDay = now;
+                                });
+                              },
+                              icon: const Icon(Icons.today_rounded),
+                              label: const Text('Today'),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: FilledButton.tonalIcon(
+                              onPressed: () {
+                                final target = DateUtils.dateOnly(
+                                  selectedDay.subtract(const Duration(days: 1)),
+                                );
+                                setDialogState(() {
+                                  selectedDay = target;
+                                  focusedDay = target;
+                                });
+                              },
+                              icon: const Icon(Icons.chevron_left_rounded),
+                              label: const Text('Prev'),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: FilledButton.tonalIcon(
+                              onPressed: () {
+                                final target = DateUtils.dateOnly(
+                                  selectedDay.add(const Duration(days: 1)),
+                                );
+                                setDialogState(() {
+                                  selectedDay = target;
+                                  focusedDay = target;
+                                });
+                              },
+                              icon: const Icon(Icons.chevron_right_rounded),
+                              label: const Text('Next'),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: DropdownButtonFormField<int>(
+                              value: focusedDay.month,
+                              decoration: const InputDecoration(
+                                labelText: 'Month',
+                              ),
+                              items: List.generate(
+                                12,
+                                (index) => DropdownMenuItem<int>(
+                                  value: index + 1,
+                                  child: Text(monthNames[index]),
+                                ),
+                              ),
+                              onChanged: (value) {
+                                if (value == null) return;
+                                final daysInMonth = DateUtils.getDaysInMonth(
+                                  focusedDay.year,
+                                  value,
+                                );
+                                final adjusted = DateTime(
+                                  focusedDay.year,
+                                  value,
+                                  selectedDay.day.clamp(1, daysInMonth),
+                                );
+                                setDialogState(() {
+                                  focusedDay = DateUtils.dateOnly(adjusted);
+                                  selectedDay = DateUtils.dateOnly(adjusted);
+                                });
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: DropdownButtonFormField<int>(
+                              value: focusedDay.year,
+                              decoration: const InputDecoration(
+                                labelText: 'Year',
+                              ),
+                              items: years
+                                  .map(
+                                    (year) => DropdownMenuItem<int>(
+                                      value: year,
+                                      child: Text('$year'),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged: (value) {
+                                if (value == null) return;
+                                final daysInMonth = DateUtils.getDaysInMonth(
+                                  value,
+                                  focusedDay.month,
+                                );
+                                final adjusted = DateTime(
+                                  value,
+                                  focusedDay.month,
+                                  selectedDay.day.clamp(1, daysInMonth),
+                                );
+                                setDialogState(() {
+                                  focusedDay = DateUtils.dateOnly(adjusted);
+                                  selectedDay = DateUtils.dateOnly(adjusted);
+                                });
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      Container(
+                        decoration: BoxDecoration(
+                          color: colorScheme.surface,
+                          borderRadius: BorderRadius.circular(24),
+                        ),
+                        padding: const EdgeInsets.fromLTRB(6, 8, 6, 6),
+                        child: TableCalendar<void>(
+                          firstDay: DateTime(2005),
+                          lastDay: now.add(const Duration(days: 365)),
+                          focusedDay: focusedDay,
+                          currentDay: now,
+                          selectedDayPredicate: (day) =>
+                              isSameDay(day, selectedDay),
+                          availableCalendarFormats: const {
+                            CalendarFormat.month: 'Month',
+                          },
+                          calendarFormat: CalendarFormat.month,
+                          headerVisible: false,
+                          daysOfWeekHeight: 28,
+                          rowHeight: 44,
+                          calendarStyle: CalendarStyle(
+                            todayDecoration: BoxDecoration(
+                              color: colorScheme.secondaryContainer,
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            todayTextStyle: TextStyle(
+                              color: colorScheme.onSecondaryContainer,
+                              fontWeight: FontWeight.w800,
+                            ),
+                            selectedDecoration: BoxDecoration(
+                              color: colorScheme.primary,
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            selectedTextStyle: TextStyle(
+                              color: colorScheme.onPrimary,
+                              fontWeight: FontWeight.w900,
+                            ),
+                            weekendTextStyle: TextStyle(
+                              color: colorScheme.onSurface,
+                              fontWeight: FontWeight.w700,
+                            ),
+                            outsideTextStyle: TextStyle(
+                              color: colorScheme.onSurfaceVariant.withValues(
+                                alpha: 0.52,
+                              ),
+                            ),
+                            defaultTextStyle: TextStyle(
+                              color: colorScheme.onSurface,
+                              fontWeight: FontWeight.w700,
+                            ),
+                            cellMargin: const EdgeInsets.all(3),
+                          ),
+                          daysOfWeekStyle: DaysOfWeekStyle(
+                            weekdayStyle: TextStyle(
+                              color: colorScheme.onSurfaceVariant,
+                              fontWeight: FontWeight.w700,
+                            ),
+                            weekendStyle: TextStyle(
+                              color: colorScheme.onSurfaceVariant,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          onDaySelected: (selected, focused) {
+                            setDialogState(() {
+                              selectedDay = DateUtils.dateOnly(selected);
+                              focusedDay = DateUtils.dateOnly(focused);
+                            });
+                          },
+                          onPageChanged: (focused) {
+                            setDialogState(() {
+                              focusedDay = DateUtils.dateOnly(focused);
+                            });
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton(
+                          onPressed: () =>
+                              Navigator.of(context).pop(selectedDay),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: colorScheme.primary,
+                            foregroundColor: colorScheme.onPrimary,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(18),
+                            ),
+                          ),
+                          child: Text(
+                            'Open ${DateFormat('d MMMM y').format(selectedDay)}',
                           ),
                         ),
-                        child: Text(
-                          'Open ${DateFormat('d MMMM y').format(selectedDay)}',
-                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             );
@@ -874,6 +1055,7 @@ class _DayPageState extends ConsumerState<DayPage> {
     await showDialog<void>(
       context: context,
       builder: (context) {
+        final colorScheme = Theme.of(context).colorScheme;
         return Dialog(
           insetPadding: const EdgeInsets.all(18),
           backgroundColor: Colors.transparent,
@@ -883,8 +1065,13 @@ class _DayPageState extends ConsumerState<DayPage> {
             httpHeaders: _authHeaders(),
             errorWidget: (_, __, ___) => Container(
               height: 260,
-              color: Colors.white,
-              child: const Center(child: Icon(Icons.broken_image_outlined)),
+              color: colorScheme.surfaceContainerHighest,
+              child: Center(
+                child: Icon(
+                  Icons.broken_image_outlined,
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
             ),
           ),
         );
@@ -1283,6 +1470,8 @@ class _DayPageState extends ConsumerState<DayPage> {
   }
 
   Widget _buildOverviewCard(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
@@ -1290,16 +1479,23 @@ class _DayPageState extends ConsumerState<DayPage> {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            Color.lerp(_heroAccent, Colors.white, 0.9) ??
-                const Color(0xFFF8FBFF),
-            Colors.white,
-          ],
+          colors: isDark
+              ? [
+                  Color.lerp(_heroAccent, colorScheme.surface, 0.86) ??
+                      colorScheme.surfaceContainer,
+                  colorScheme.surfaceContainerHighest,
+                ]
+              : [
+                  Color.lerp(_heroAccent, Colors.white, 0.9) ??
+                      const Color(0xFFF8FBFF),
+                  Colors.white,
+                ],
         ),
         border: Border.all(
-          color:
-              Color.lerp(_heroAccent, Colors.white, 0.78) ??
-              const Color(0xFFD9E4F2),
+          color: isDark
+              ? colorScheme.outlineVariant.withValues(alpha: 0.55)
+              : (Color.lerp(_heroAccent, Colors.white, 0.78) ??
+                    const Color(0xFFD9E4F2)),
         ),
       ),
       child: SingleChildScrollView(
@@ -1431,11 +1627,12 @@ class _DayPageState extends ConsumerState<DayPage> {
   }
 
   Widget _buildLoadingTile() {
+    final colorScheme = Theme.of(context).colorScheme;
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFF2F7FF),
+        color: colorScheme.surfaceContainer,
         borderRadius: BorderRadius.circular(18),
       ),
       child: Row(
@@ -1444,7 +1641,7 @@ class _DayPageState extends ConsumerState<DayPage> {
             height: 42,
             width: 42,
             decoration: BoxDecoration(
-              color: const Color(0xFFDCE8FA),
+              color: colorScheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(14),
             ),
           ),
@@ -1455,7 +1652,7 @@ class _DayPageState extends ConsumerState<DayPage> {
                 Container(
                   height: 12,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFD9E6F7),
+                    color: colorScheme.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(999),
                   ),
                 ),
@@ -1467,7 +1664,7 @@ class _DayPageState extends ConsumerState<DayPage> {
                     child: Container(
                       height: 10,
                       decoration: BoxDecoration(
-                        color: const Color(0xFFE3ECF9),
+                        color: colorScheme.surfaceContainerHigh,
                         borderRadius: BorderRadius.circular(999),
                       ),
                     ),
@@ -1491,6 +1688,7 @@ class _DayPageState extends ConsumerState<DayPage> {
     required Color chipColor,
     required Color textColor,
   }) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1508,8 +1706,8 @@ class _DayPageState extends ConsumerState<DayPage> {
             FilledButton(
               onPressed: onAdd,
               style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF174EA6),
-                foregroundColor: Colors.white,
+                backgroundColor: colorScheme.primary,
+                foregroundColor: colorScheme.onPrimary,
                 padding: const EdgeInsets.symmetric(
                   horizontal: 18,
                   vertical: 16,
@@ -1551,6 +1749,7 @@ class _DayPageState extends ConsumerState<DayPage> {
   }
 
   Widget _buildPeopleEditor(BuildContext context, List<String> items) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1568,15 +1767,15 @@ class _DayPageState extends ConsumerState<DayPage> {
             children: items
                 .map(
                   (item) => InputChip(
-                    backgroundColor: const Color(0xFFE8F0FF),
-                    labelStyle: const TextStyle(
-                      color: Color(0xFF1D4F91),
+                    backgroundColor: colorScheme.secondaryContainer,
+                    labelStyle: TextStyle(
+                      color: colorScheme.onSecondaryContainer,
                       fontWeight: FontWeight.w700,
                     ),
                     side: BorderSide.none,
                     label: Text(item),
                     onPressed: () => _openPersonFromName(item),
-                    deleteIconColor: const Color(0xFF1D4F91),
+                    deleteIconColor: colorScheme.onSecondaryContainer,
                     onDeleted: () => _removePerson(item),
                   ),
                 )
@@ -1587,6 +1786,7 @@ class _DayPageState extends ConsumerState<DayPage> {
   }
 
   Widget _buildRunTile(BuildContext context, RunModel run) {
+    final colorScheme = Theme.of(context).colorScheme;
     return InkWell(
       borderRadius: BorderRadius.circular(18),
       onTap: () => _openRunDetail(run),
@@ -1594,7 +1794,7 @@ class _DayPageState extends ConsumerState<DayPage> {
         margin: const EdgeInsets.only(bottom: 10),
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: const Color(0xFFF2F7FF),
+          color: colorScheme.surfaceContainer,
           borderRadius: BorderRadius.circular(18),
         ),
         child: Row(
@@ -1603,10 +1803,10 @@ class _DayPageState extends ConsumerState<DayPage> {
               height: 42,
               width: 42,
               decoration: BoxDecoration(
-                color: const Color(0xFFDCE8FA),
+                color: colorScheme.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: const Icon(Icons.directions_run, color: Color(0xFF174EA6)),
+              child: Icon(Icons.directions_run, color: colorScheme.primary),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -1622,17 +1822,17 @@ class _DayPageState extends ConsumerState<DayPage> {
                   const SizedBox(height: 2),
                   Text(
                     '${run.distanceKm.toStringAsFixed(1)} km',
-                    style: Theme.of(
-                      context,
-                    ).textTheme.bodyMedium?.copyWith(color: Colors.black54),
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ],
               ),
             ),
-            const Icon(
+            Icon(
               Icons.arrow_forward_ios_rounded,
               size: 16,
-              color: Color(0xFF6B7F9E),
+              color: colorScheme.onSurfaceVariant,
             ),
           ],
         ),
@@ -1657,11 +1857,12 @@ class _DayPageState extends ConsumerState<DayPage> {
   }
 
   Widget _buildEventTile(BuildContext context, CalendarEventModel event) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFF4F7FD),
+        color: colorScheme.surfaceContainer,
         borderRadius: BorderRadius.circular(18),
       ),
       child: Row(
@@ -1670,10 +1871,10 @@ class _DayPageState extends ConsumerState<DayPage> {
             height: 42,
             width: 42,
             decoration: BoxDecoration(
-              color: const Color(0xFFDCE8FA),
+              color: colorScheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(14),
             ),
-            child: const Icon(Icons.event_outlined, color: Color(0xFF174EA6)),
+            child: Icon(Icons.event_outlined, color: colorScheme.primary),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -1689,9 +1890,9 @@ class _DayPageState extends ConsumerState<DayPage> {
                 const SizedBox(height: 2),
                 Text(
                   event.start.isEmpty ? 'All day' : event.start,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodyMedium?.copyWith(color: Colors.black54),
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),
@@ -1707,16 +1908,17 @@ class _DayPageState extends ConsumerState<DayPage> {
     required String title,
     required String subtitle,
   }) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: const Color(0xFFF3F6FB),
+        color: colorScheme.surfaceContainer,
         borderRadius: BorderRadius.circular(20),
       ),
       child: Column(
         children: [
-          Icon(icon, size: 28, color: const Color(0xFF5F7393)),
+          Icon(icon, size: 28, color: colorScheme.onSurfaceVariant),
           const SizedBox(height: 10),
           Text(
             title,
@@ -1728,9 +1930,9 @@ class _DayPageState extends ConsumerState<DayPage> {
           const SizedBox(height: 4),
           Text(
             subtitle,
-            style: Theme.of(
-              context,
-            ).textTheme.bodyMedium?.copyWith(color: Colors.black54),
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
             textAlign: TextAlign.center,
           ),
         ],
@@ -1739,12 +1941,16 @@ class _DayPageState extends ConsumerState<DayPage> {
   }
 
   Widget _infoBadge({required IconData icon, required String label}) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
       decoration: BoxDecoration(
-        color:
-            Color.lerp(_heroAccent, Colors.white, 0.88) ??
-            const Color(0xFFEFF4FB),
+        color: isDark
+            ? Color.lerp(_heroAccent, colorScheme.surface, 0.82) ??
+                  colorScheme.surfaceContainerHighest
+            : (Color.lerp(_heroAccent, Colors.white, 0.88) ??
+                  const Color(0xFFEFF4FB)),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Row(
@@ -1755,9 +1961,10 @@ class _DayPageState extends ConsumerState<DayPage> {
           Text(
             label,
             style: TextStyle(
-              color:
-                  Color.lerp(_heroAccent, Colors.black, 0.35) ??
-                  const Color(0xFF173B73),
+              color: isDark
+                  ? colorScheme.onSurface
+                  : (Color.lerp(_heroAccent, Colors.black, 0.35) ??
+                        const Color(0xFF173B73)),
               fontWeight: FontWeight.w700,
               fontSize: 11.5,
             ),
@@ -1809,6 +2016,7 @@ class _DayPageState extends ConsumerState<DayPage> {
   }
 
   Widget _buildGallery(BuildContext context, StoryDayModel model) {
+    final colorScheme = Theme.of(context).colorScheme;
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
@@ -1841,11 +2049,14 @@ class _DayPageState extends ConsumerState<DayPage> {
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 180),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF3F6FB),
-                  border: Border.all(color: const Color(0xFFDCE3EE), width: 1),
-                  boxShadow: const [
+                  color: colorScheme.surfaceContainer,
+                  border: Border.all(
+                    color: colorScheme.outlineVariant.withValues(alpha: 0.6),
+                    width: 1,
+                  ),
+                  boxShadow: [
                     BoxShadow(
-                      color: Color(0x12000000),
+                      color: Colors.black.withValues(alpha: 0.12),
                       blurRadius: 12,
                       offset: Offset(0, 8),
                     ),
@@ -1858,11 +2069,11 @@ class _DayPageState extends ConsumerState<DayPage> {
                       imageUrl: url,
                       fit: BoxFit.cover,
                       httpHeaders: _authHeaders(),
-                      errorWidget: (_, __, ___) => const ColoredBox(
-                        color: Color(0xFFF1F5FB),
+                      errorWidget: (_, __, ___) => ColoredBox(
+                        color: colorScheme.surfaceContainerHighest,
                         child: Icon(
                           Icons.broken_image_outlined,
-                          color: Color(0xFF6E83A5),
+                          color: colorScheme.onSurfaceVariant,
                         ),
                       ),
                     ),
@@ -2058,6 +2269,7 @@ class _AddPersonSheetState extends State<_AddPersonSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     final query = _searchController.text.trim();
     final visibleResults = query.length < 2 ? _popular : _results;
     return Padding(
@@ -2078,7 +2290,7 @@ class _AddPersonSheetState extends State<_AddPersonSheet> {
                   _showCreate ? 'Create new person' : 'Add person',
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
                     fontWeight: FontWeight.w800,
-                    color: const Color(0xFF173B68),
+                    color: colorScheme.onSurface,
                   ),
                 ),
               ),
@@ -2130,8 +2342,8 @@ class _AddPersonSheetState extends State<_AddPersonSheet> {
                         ].where((part) => part.isNotEmpty).join(' · ');
                         return Material(
                           color: alreadySelected
-                              ? const Color(0xFFEAF1FB)
-                              : Colors.white,
+                              ? colorScheme.secondaryContainer
+                              : colorScheme.surfaceContainer,
                           borderRadius: BorderRadius.circular(20),
                           child: ListTile(
                             shape: RoundedRectangleBorder(
@@ -2142,7 +2354,7 @@ class _AddPersonSheetState extends State<_AddPersonSheet> {
                               style: TextStyle(
                                 fontWeight: FontWeight.w700,
                                 color: alreadySelected
-                                    ? const Color(0xFF6A819B)
+                                    ? colorScheme.onSecondaryContainer
                                     : null,
                               ),
                             ),
@@ -2152,7 +2364,7 @@ class _AddPersonSheetState extends State<_AddPersonSheet> {
                                   ? Icons.check_circle_rounded
                                   : Icons.add_circle_outline_rounded,
                               color: alreadySelected
-                                  ? const Color(0xFF1D4F91)
+                                  ? colorScheme.primary
                                   : null,
                             ),
                             onTap: alreadySelected
@@ -2259,23 +2471,24 @@ class _PickerInfoCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     final hasSubtitle = subtitle.trim().isNotEmpty;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: colorScheme.surfaceContainer,
         borderRadius: BorderRadius.circular(20),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, color: const Color(0xFF5B7290), size: 28),
+          Icon(icon, color: colorScheme.onSurfaceVariant, size: 28),
           const SizedBox(height: 10),
           Text(
             title,
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              color: const Color(0xFF173B68),
+              color: colorScheme.onSurface,
               fontWeight: FontWeight.w800,
             ),
             textAlign: TextAlign.center,
@@ -2284,9 +2497,9 @@ class _PickerInfoCard extends StatelessWidget {
             const SizedBox(height: 6),
             Text(
               subtitle,
-              style: Theme.of(
-                context,
-              ).textTheme.bodyMedium?.copyWith(color: const Color(0xFF5B7290)),
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
               textAlign: TextAlign.center,
             ),
           ],
@@ -2365,13 +2578,20 @@ class _ProgressiveHeroImageState extends State<_ProgressiveHeroImage> {
   @override
   Widget build(BuildContext context) {
     final asset = widget.asset;
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     if (asset == null || asset.previewUrl.isEmpty) {
       return Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFF9FBEEA), Color(0xFFDCE8FA)],
+            colors: isDark
+                ? [
+                    colorScheme.surfaceContainerHighest,
+                    colorScheme.surfaceContainer,
+                  ]
+                : const [Color(0xFF9FBEEA), Color(0xFFDCE8FA)],
           ),
         ),
       );
@@ -2386,17 +2606,22 @@ class _ProgressiveHeroImageState extends State<_ProgressiveHeroImage> {
           httpHeaders: widget.headers,
           fadeInDuration: const Duration(milliseconds: 160),
           errorWidget: (_, __, ___) => Container(
-            decoration: const BoxDecoration(
+            decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [Color(0xFF9FBEEA), Color(0xFFDCE8FA)],
+                colors: isDark
+                    ? [
+                        colorScheme.surfaceContainerHighest,
+                        colorScheme.surfaceContainer,
+                      ]
+                    : const [Color(0xFF9FBEEA), Color(0xFFDCE8FA)],
               ),
             ),
-            child: const Center(
+            child: Center(
               child: Icon(
                 Icons.image_not_supported_outlined,
-                color: Colors.white,
+                color: isDark ? colorScheme.onSurfaceVariant : Colors.white,
                 size: 34,
               ),
             ),

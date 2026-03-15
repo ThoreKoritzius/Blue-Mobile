@@ -24,6 +24,9 @@ final selectedTabProvider = StateProvider<int>((ref) => 0);
 final dayAppBarAccentProvider = StateProvider<Color>(
   (ref) => const Color(0xFF174EA6),
 );
+final themeModeProvider = NotifierProvider<AppThemeModeController, ThemeMode>(
+  AppThemeModeController.new,
+);
 
 final authTokenStoreProvider = Provider<AuthTokenStore>(
   (ref) => AuthTokenStore(),
@@ -447,5 +450,30 @@ class AuthUiController extends Notifier<AuthUiState> {
       return 'Login failed for unknown reason (${error.runtimeType}).';
     }
     return value;
+  }
+}
+
+class AppThemeModeController extends Notifier<ThemeMode> {
+  bool _initialized = false;
+
+  @override
+  ThemeMode build() {
+    return ThemeMode.dark;
+  }
+
+  Future<void> initialize() async {
+    if (_initialized) return;
+    _initialized = true;
+    final stored = await ref.read(authTokenStoreProvider).readThemeMode();
+    if (stored == 'light') {
+      state = ThemeMode.light;
+    } else {
+      state = ThemeMode.dark;
+    }
+  }
+
+  Future<void> setThemeMode(ThemeMode mode) async {
+    state = mode;
+    await ref.read(authTokenStoreProvider).writeThemeMode(mode.name);
   }
 }
