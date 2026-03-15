@@ -1,0 +1,66 @@
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.tmp
+*.orig
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.fleet/
+.history/
+.atom/
+
+# Dart / Flutter tooling
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub/
+.pub-cache/
+/build/
+coverage/
+**/doc/api/
+pubspec_overrides.yaml
+
+# Flutter generated / ephemeral
+**/ios/Flutter/.last_build_id
+**/ios/Flutter/ephemeral/
+**/android/.gradle/
+**/android/local.properties
+**/android/captures/
+**/android/app/debug/
+**/android/app/profile/
+**/android/app/release/
+**/macos/Flutter/ephemeral/
+**/linux/flutter/ephemeral/
+**/windows/flutter/ephemeral/
+**/web/flutter_bootstrap.js
+
+# Xcode / CocoaPods local state
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Runner.xcworkspace/xcuserdata/
+**/ios/Runner.xcodeproj/xcuserdata/
+**/macos/Pods/
+**/macos/.symlinks/
+**/macos/Runner.xcworkspace/xcuserdata/
+**/macos/Runner.xcodeproj/xcuserdata/
+DerivedData/
+
+# Misc build outputs
+*.class
+*.log
+*.pyc
+.build/
+.buildlog/
+.swiftpm/
+.svn/
+migrate_working_dir/
+
+# Symbolication / obfuscation
+app.*.symbols
+app.*.map.json
