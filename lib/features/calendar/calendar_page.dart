@@ -1,4 +1,5 @@
-import 'package:cached_network_image/cached_network_image.dart';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -17,22 +18,30 @@ class CalendarPage extends ConsumerStatefulWidget {
 
 class _CalendarPageState extends ConsumerState<CalendarPage> {
   static const int _pageSize = 120;
-  static const double _monthCardHeight = 420;
+  static const int _initialMonthTarget = 60;
+  static const double _monthCardHeight = 552;
+  static const double _monthItemExtent = 570;
 
   final ScrollController _scrollController = ScrollController();
   final Map<String, StoryDayModel> _storiesByDate = <String, StoryDayModel>{};
+  final ValueNotifier<int> _activeMonthIndexNotifier = ValueNotifier<int>(0);
+  final ValueNotifier<bool> _showScrubberHintNotifier = ValueNotifier<bool>(
+    false,
+  );
 
+  Timer? _scrubberHintTimer;
   bool _loadingInitial = true;
   bool _loadingMore = false;
   bool _hasMore = true;
   String? _nextCursor;
   String? _error;
+  List<DateTime> _lastBuiltMonths = const [];
 
   @override
   void initState() {
     super.initState();
     _scrollController.addListener(_onScroll);
-    _loadNextPage(initial: true);
+    _primeInitialRange();
   }
 
   @override
@@ -40,7 +49,79 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
     _scrollController
       ..removeListener(_onScroll)
       ..dispose();
+    _scrubberHintTimer?.cancel();
+    _activeMonthIndexNotifier.dispose();
+    _showScrubberHintNotifier.dispose();
     super.dispose();
+  }
+
+  int _loadedMonthCountFor(Map<String, StoryDayModel> stories) {
+    if (stories.isEmpty) return 1;
+    final now = DateUtils.dateOnly(DateTime.now());
+    final currentMonth = DateTime(now.year, now.month);
+    final oldestDate = stories.keys
+        .map(parseYmd)
+        .reduce((a, b) => a.isBefore(b) ? a : b);
+    return (currentMonth.year - oldestDate.year) * 12 +
+        (currentMonth.month - oldestDate.month) +
+        1;
+  }
+
+  void _applyPageItems(Iterable<StoryDayModel> items) {
+    for (final story in items) {
+      if (story.date.isNotEmpty) {
+        _storiesByDate[story.date] = story;
+      }
+    }
+  }
+
+  Future<void> _primeInitialRange() async {
+    if (_loadingMore) return;
+
+    setState(() {
+      _loadingInitial = true;
+      _error = null;
+    });
+
+    try {
+      String? cursor;
+      var hasMore = true;
+      final stagedStories = <String, StoryDayModel>{..._storiesByDate};
+
+      while (hasMore &&
+          _loadedMonthCountFor(stagedStories) < _initialMonthTarget) {
+        final page = await ref
+            .read(storiesRepositoryProvider)
+            .listStoriesPage(first: _pageSize, after: cursor);
+        _applyPageItems(page.items);
+        for (final story in page.items) {
+          if (story.date.isNotEmpty) {
+            stagedStories[story.date] = story;
+          }
+        }
+        cursor = page.endCursor;
+        hasMore = page.hasNextPage;
+        if (page.items.isEmpty) break;
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _nextCursor = cursor;
+        _hasMore = hasMore;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = error.toString().replaceFirst('Exception: ', '');
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingInitial = false;
+          _loadingMore = false;
+        });
+      }
+    }
   }
 
   Future<void> _loadNextPage({bool initial = false}) async {
@@ -64,11 +145,7 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
           );
       if (!mounted) return;
       setState(() {
-        for (final story in page.items) {
-          if (story.date.isNotEmpty) {
-            _storiesByDate[story.date] = story;
-          }
-        }
+        _applyPageItems(page.items);
         _nextCursor = page.endCursor;
         _hasMore = page.hasNextPage;
       });
@@ -92,7 +169,58 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
       return;
     }
     final position = _scrollController.position;
+    _syncActiveMonthFromScroll();
     if (position.extentAfter < 900) {
+      _loadNextPage();
+    }
+  }
+
+  void _syncActiveMonthFromScroll() {
+    if (!_scrollController.hasClients || _lastBuiltMonths.isEmpty) return;
+    final maxScroll = _scrollController.position.maxScrollExtent;
+    if (maxScroll <= 0) {
+      if (_activeMonthIndexNotifier.value != 0) {
+        _activeMonthIndexNotifier.value = 0;
+      }
+      return;
+    }
+    final fraction = (_scrollController.offset / maxScroll).clamp(0.0, 1.0);
+    final index = ((fraction * (_lastBuiltMonths.length - 1)).round()).clamp(
+      0,
+      _lastBuiltMonths.length - 1,
+    );
+    if (index != _activeMonthIndexNotifier.value) {
+      _activeMonthIndexNotifier.value = index;
+    }
+  }
+
+  void _showMonthHint() {
+    _scrubberHintTimer?.cancel();
+    if (!_showScrubberHintNotifier.value) {
+      _showScrubberHintNotifier.value = true;
+    }
+    _scrubberHintTimer = Timer(const Duration(milliseconds: 900), () {
+      _showScrubberHintNotifier.value = false;
+    });
+  }
+
+  void _handleScrub(double localDy, double height) {
+    if (!_scrollController.hasClients ||
+        _lastBuiltMonths.isEmpty ||
+        height <= 0) {
+      return;
+    }
+    final fraction = (localDy / height).clamp(0.0, 1.0);
+    final maxScroll = _scrollController.position.maxScrollExtent;
+    final targetOffset = maxScroll * fraction;
+    final index = ((fraction * (_lastBuiltMonths.length - 1)).round()).clamp(
+      0,
+      _lastBuiltMonths.length - 1,
+    );
+    _scrollController.jumpTo(targetOffset.clamp(0.0, maxScroll));
+    _activeMonthIndexNotifier.value = index;
+    _showMonthHint();
+    if (_hasMore && fraction > 0.82) {
       _loadNextPage();
     }
   }
@@ -127,101 +255,221 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final months = _visibleMonths();
+    _lastBuiltMonths = months;
     final loadedStories = _storiesByDate.length;
 
     if (_loadingInitial && _storiesByDate.isEmpty) {
       return _CalendarSkeleton(colorScheme: colorScheme);
     }
 
-    return RefreshIndicator(
-      onRefresh: () async {
-        _storiesByDate.clear();
-        _nextCursor = null;
-        _hasMore = true;
-        await _loadNextPage(initial: true);
-      },
-      child: CustomScrollView(
-        controller: _scrollController,
-        physics: const AlwaysScrollableScrollPhysics(),
-        slivers: [
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-              child: _CalendarHero(
-                loadedStories: loadedStories,
-                loadedMonths: months.length,
-                loadingMore: _loadingMore,
+    return Stack(
+      children: [
+        RefreshIndicator(
+          onRefresh: () async {
+            _storiesByDate.clear();
+            _nextCursor = null;
+            _hasMore = true;
+            await _primeInitialRange();
+          },
+          child: CustomScrollView(
+            controller: _scrollController,
+            cacheExtent: _monthItemExtent * 2,
+            physics: const AlwaysScrollableScrollPhysics(),
+            slivers: [
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 24, 12),
+                  child: _CalendarHero(
+                    loadedStories: loadedStories,
+                    loadedMonths: months.length,
+                    loadingMore: _loadingMore,
+                  ),
+                ),
               ),
-            ),
-          ),
-          if (_error != null && _storiesByDate.isEmpty)
-            SliverFillRemaining(
-              hasScrollBody: false,
-              child: _CalendarErrorState(
-                message: _error!,
-                onRetry: () => _loadNextPage(initial: true),
-              ),
-            )
-          else if (_storiesByDate.isEmpty)
-            SliverFillRemaining(
-              hasScrollBody: false,
-              child: _CalendarEmptyState(
-                title: 'No story days yet',
-                subtitle:
-                    'Once days have photos or notes, they will appear here as a scrollable calendar archive.',
-              ),
-            )
-          else
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate((context, index) {
-                  if (index == months.length) {
-                    if (_error != null) {
+              if (_error != null && _storiesByDate.isEmpty)
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: _CalendarErrorState(
+                    message: _error!,
+                    onRetry: () => _loadNextPage(initial: true),
+                  ),
+                )
+              else if (_storiesByDate.isEmpty)
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: _CalendarEmptyState(
+                    title: 'No story days yet',
+                    subtitle:
+                        'Once days have photos or notes, they will appear here as a scrollable calendar archive.',
+                  ),
+                )
+              else
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 24, 24),
+                  sliver: SliverFixedExtentList(
+                    itemExtent: _monthItemExtent,
+                    delegate: SliverChildBuilderDelegate((context, index) {
+                      final month = months[index];
                       return Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: _CalendarInlineError(
-                          message: _error!,
-                          onRetry: _loadNextPage,
+                        padding: const EdgeInsets.only(bottom: 18),
+                        child: RepaintBoundary(
+                          child: _MonthCard(
+                            month: month,
+                            storiesByDate: _storiesByDate,
+                            headers: _authHeaders(),
+                            onDayTap: _openDay,
+                          ),
                         ),
                       );
-                    }
-                    if (_loadingMore) {
-                      return const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 18),
-                        child: Center(child: CircularProgressIndicator()),
-                      );
-                    }
-                    if (_hasMore) {
-                      return const SizedBox(height: 24);
-                    }
-                    return Padding(
-                      padding: const EdgeInsets.only(top: 4, bottom: 12),
-                      child: Center(
-                        child: Text(
-                          'End of loaded history',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(color: colorScheme.onSurfaceVariant),
+                    }, childCount: months.length),
+                  ),
+                ),
+              if (_error != null)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 24, 24),
+                    child: _CalendarInlineError(
+                      message: _error!,
+                      onRetry: _loadNextPage,
+                    ),
+                  ),
+                )
+              else if (_loadingMore)
+                const SliverToBoxAdapter(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 18),
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+                )
+              else if (_hasMore)
+                const SliverToBoxAdapter(child: SizedBox(height: 24))
+              else
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 4, bottom: 12),
+                    child: Center(
+                      child: Text(
+                        'End of loaded history',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
                         ),
                       ),
-                    );
-                  }
-
-                  final month = months[index];
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 18),
-                    child: _MonthCard(
-                      month: month,
-                      storiesByDate: _storiesByDate,
-                      headers: _authHeaders(),
-                      onDayTap: _openDay,
                     ),
-                  );
-                }, childCount: months.length + 1),
-              ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        if (months.isNotEmpty && _storiesByDate.isNotEmpty)
+          Positioned(
+            top: 138,
+            right: 4,
+            bottom: 26,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final height = constraints.maxHeight;
+                return ValueListenableBuilder<int>(
+                  valueListenable: _activeMonthIndexNotifier,
+                  builder: (context, activeMonthIndex, _) {
+                    final fraction = months.length <= 1
+                        ? 0.0
+                        : (activeMonthIndex / (months.length - 1)).clamp(
+                            0.0,
+                            1.0,
+                          );
+                    final bubbleMonth =
+                        months[activeMonthIndex.clamp(0, months.length - 1)];
+                    return Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ValueListenableBuilder<bool>(
+                          valueListenable: _showScrubberHintNotifier,
+                          builder: (context, showHint, _) {
+                            return AnimatedOpacity(
+                              duration: const Duration(milliseconds: 160),
+                              opacity: showHint ? 1 : 0,
+                              child: IgnorePointer(
+                                child: Container(
+                                  margin: const EdgeInsets.only(right: 8),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: colorScheme.inverseSurface,
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                  child: Text(
+                                    DateFormat('MMMM y').format(bubbleMonth),
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .labelLarge
+                                        ?.copyWith(
+                                          color: colorScheme.onInverseSurface,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                        GestureDetector(
+                          behavior: HitTestBehavior.translucent,
+                          onVerticalDragStart: (_) => _showMonthHint(),
+                          onVerticalDragUpdate: (details) =>
+                              _handleScrub(details.localPosition.dy, height),
+                          onTapDown: (details) =>
+                              _handleScrub(details.localPosition.dy, height),
+                          child: SizedBox(
+                            width: 28,
+                            child: Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                Positioned(
+                                  top: 0,
+                                  bottom: 0,
+                                  child: Container(
+                                    width: 4,
+                                    decoration: BoxDecoration(
+                                      color: colorScheme.outlineVariant
+                                          .withValues(alpha: 0.45),
+                                      borderRadius: BorderRadius.circular(999),
+                                    ),
+                                  ),
+                                ),
+                                Positioned(
+                                  top: (height - 44) * fraction,
+                                  child: Container(
+                                    width: 18,
+                                    height: 44,
+                                    decoration: BoxDecoration(
+                                      color: colorScheme.primary,
+                                      borderRadius: BorderRadius.circular(999),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: colorScheme.primary.withValues(
+                                            alpha: 0.34,
+                                          ),
+                                          blurRadius: 14,
+                                          offset: const Offset(0, 6),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                );
+              },
             ),
-        ],
-      ),
+          ),
+      ],
     );
   }
 
@@ -524,12 +772,12 @@ class _DayCell extends StatelessWidget {
             fit: StackFit.expand,
             children: [
               if (hasImage)
-                CachedNetworkImage(
-                  imageUrl: imageUrl,
-                  httpHeaders: headers,
+                Image.network(
+                  imageUrl,
+                  headers: headers,
                   fit: BoxFit.cover,
-                  fadeInDuration: const Duration(milliseconds: 120),
-                  errorWidget: (_, __, ___) =>
+                  filterQuality: FilterQuality.low,
+                  errorBuilder: (_, __, ___) =>
                       _DayFallback(date: date, story: story),
                 )
               else
@@ -600,10 +848,7 @@ class _DayFallback extends StatelessWidget {
                   colorScheme.surfaceContainerHigh,
                   colorScheme.surfaceContainerHighest,
                 ]
-              : [
-                  colorScheme.surfaceContainerLow,
-                  colorScheme.surfaceContainer,
-                ],
+              : [colorScheme.surfaceContainerLow, colorScheme.surfaceContainer],
         ),
       ),
       child: Padding(
