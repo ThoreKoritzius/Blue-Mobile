@@ -91,6 +91,10 @@ mutation UploadFiles($date: String!, $files: [Upload!]!) {
   files {
     upload(date: $date, files: $files) {
       message
+      uploadCount
+      autoAssignedHighlight
+      highlightImage
+      files
     }
   }
 }

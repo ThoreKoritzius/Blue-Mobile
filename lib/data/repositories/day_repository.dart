@@ -33,13 +33,15 @@ class GraphqlDayRepository implements DayRepository {
   Future<DayPayloadModel?> getCachedDayCorePayload(String day) async {
     final story = await _storiesRepository.getCachedDay(day);
     List<RunModel> runs = const [];
-    try {
-      runs = await _runsRepository.runsForDate(day);
-    } catch (_) {
-      final cachedRuns = await _runsRepository.getCachedRuns();
-      runs = cachedRuns
-          .where((run) => run.startDateLocal.split('T').first == day)
-          .toList();
+    if (!_isFutureDay(day)) {
+      try {
+        runs = await _runsRepository.runsForDate(day);
+      } catch (_) {
+        final cachedRuns = await _runsRepository.getCachedRuns();
+        runs = cachedRuns
+            .where((run) => run.startDateLocal.split('T').first == day)
+            .toList();
+      }
     }
     if (story == null && runs.isEmpty) return null;
     return DayPayloadModel(
@@ -105,11 +107,12 @@ class GraphqlDayRepository implements DayRepository {
               as List<dynamic>? ??
           const []);
 
-      final runs = response['runs'] as Map<String, dynamic>? ?? const {};
-      final runEdges =
-          ((runs['byDate'] as Map<String, dynamic>?)?['edges']
-              as List<dynamic>? ??
-          const []);
+      final runEdges = _isFutureDay(day)
+          ? const <dynamic>[]
+          : (((response['runs'] as Map<String, dynamic>?)?['byDate']
+                        as Map<String, dynamic>?)?['edges']
+                    as List<dynamic>? ??
+                const []);
 
       final story = StoryDayModel.fromJson(day, storyJson);
       await _storiesRepository.cacheDay(story);
@@ -135,5 +138,15 @@ class GraphqlDayRepository implements DayRepository {
       if (cached != null) return cached;
       rethrow;
     }
+  }
+
+  bool _isFutureDay(String day) {
+    final parsed = DateTime.tryParse(day);
+    if (parsed == null) return false;
+    return DateTime(
+      parsed.year,
+      parsed.month,
+      parsed.day,
+    ).isAfter(DateTime.now());
   }
 }

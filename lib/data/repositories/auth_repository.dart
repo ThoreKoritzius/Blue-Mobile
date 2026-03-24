@@ -19,191 +19,133 @@ abstract class AuthRepository {
   Future<void> logout();
 }
 
+class GatewaySessionStatus {
+  const GatewaySessionStatus({
+    required this.oauthReady,
+    required this.appReady,
+    required this.reason,
+    required this.oauthIdentity,
+    required this.username,
+  });
+
+  final bool oauthReady;
+  final bool appReady;
+  final String? reason;
+  final String? oauthIdentity;
+  final String? username;
+}
+
 class GraphqlAuthRepository implements AuthRepository {
   GraphqlAuthRepository(this._gql, this._tokenStore);
 
   final GraphqlService _gql;
   final AuthTokenStore _tokenStore;
 
-  void _log(String message) {
-    debugPrint('[AUTH] $message');
-  }
-
   @override
   Future<AuthSession> login(String username, String password) async {
-    _log('repository login mutation start user="$username"');
-    late final Map<String, dynamic> response;
-    try {
-      response = await _gql.mutate(
-        GqlDocuments.login,
-        variables: {'username': username, 'password': password},
-      );
-    } catch (error) {
-      final raw = error.toString().toLowerCase();
-      _log('repository login mutation error=$error');
-      if (raw.contains('unknown error occurred') ||
-          raw.contains('invalid credentials') ||
-          raw.contains('unauthorized') ||
-          raw.contains('not authenticated')) {
-        throw Exception('Invalid username or password.');
-      }
-      if (raw.contains('stage-1 oauth proof missing') ||
-          raw.contains('oauth proof missing')) {
-        throw Exception(
-          'Google OAuth proof missing or expired. Complete step 1 again.',
-        );
-      }
-      rethrow;
+    if (kIsWeb) {
+      return _loginBrowser(username, password);
     }
-
-    final auth = response['auth'];
-    if (auth is! Map<String, dynamic>) {
-      throw Exception('Unexpected auth response from gateway/backend.');
-    }
-    final payload = auth['login'];
-    if (payload is! Map<String, dynamic>) {
-      _log('repository login payload missing response=$response');
-      throw Exception(
-        'Login response missing. Check OAuth stage and credentials.',
-      );
-    }
-
-    final token = (payload['accessToken'] ?? '').toString();
-    final userData = payload['user'];
-    final user = userData is Map<String, dynamic>
-        ? (userData['username'] ?? '').toString()
-        : '';
-
-    if (token.isEmpty) {
-      _log('repository login missing access token payload=$payload');
-      throw Exception('Authentication did not return an access token.');
-    }
-
-    await _tokenStore.writeToken(token);
-    if (user.isNotEmpty) {
-      await _tokenStore.writeUsername(user);
-    }
-    _log('repository login success user="$user"');
-    return AuthSession(username: user, accessToken: token);
+    return _loginMobile(username, password);
   }
 
-  @override
-  Future<String> exchangeMobileCode(String code) async {
+  Future<AuthSession> _loginBrowser(String username, String password) async {
     final client = createGraphqlHttpClient();
     try {
-      _log(
-        'mobile exchange POST ${AppConfig.backendUrl}/api/auth/mobile/exchange',
-      );
+      final basic = base64Encode(utf8.encode('$username:$password'));
       final response = await client
           .post(
-            Uri.parse('${AppConfig.backendUrl}/api/auth/mobile/exchange'),
+            Uri.parse('${AppConfig.backendUrl}/api/auth/login'),
+            headers: {
+              'Authorization': 'Basic $basic',
+              'Accept': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 12));
+      final body = jsonDecode(response.body);
+      if (response.statusCode != 200) {
+        throw Exception(_extractError(body));
+      }
+      final user = ((body as Map<String, dynamic>)['user'] as Map<String, dynamic>)['username']
+          .toString();
+      return AuthSession(username: user, accessToken: '');
+    } finally {
+      client.close();
+    }
+  }
+
+  Future<AuthSession> _loginMobile(String username, String password) async {
+    final deviceId = await _tokenStore.readOrCreateDeviceId();
+    final client = createGraphqlHttpClient();
+    try {
+      final response = await client
+          .post(
+            Uri.parse('${AppConfig.backendUrl}/api/auth/login'),
             headers: const {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
+              'X-Blue-Client': 'mobile',
             },
-            body: jsonEncode({'code': code}),
+            body: jsonEncode({
+              'username': username,
+              'password': password,
+              'device_id': deviceId,
+            }),
           )
           .timeout(const Duration(seconds: 12));
-
-      if (response.statusCode != 200) {
-        throw Exception(
-          'Mobile OAuth exchange failed (${response.statusCode}).',
-        );
-      }
-
       final body = jsonDecode(response.body);
-      if (body is! Map<String, dynamic>) {
-        throw Exception('Invalid mobile OAuth exchange response.');
+      if (response.statusCode != 200) {
+        throw Exception(_extractError(body));
       }
-      final gatewayToken = (body['gatewayToken'] ?? '').toString();
-      if (gatewayToken.isEmpty) {
-        throw Exception(
-          'Mobile OAuth exchange did not return a gateway token.',
-        );
+      final payload = body as Map<String, dynamic>;
+      final token = (payload['accessToken'] ?? '').toString();
+      final refreshToken = (payload['refreshToken'] ?? '').toString();
+      final user = ((payload['user'] ?? const {}) as Map<String, dynamic>)['username']
+          .toString();
+      if (token.isEmpty || refreshToken.isEmpty) {
+        throw Exception('Authentication did not return mobile session tokens.');
       }
-      await _tokenStore.writeGatewayToken(gatewayToken);
-      _log('mobile exchange success user="${body['user']}"');
-      return gatewayToken;
-    } on TimeoutException {
-      throw Exception('Mobile OAuth exchange timed out.');
+      await _tokenStore.writeToken(token);
+      await _tokenStore.writeRefreshToken(refreshToken);
+      if (user.isNotEmpty) {
+        await _tokenStore.writeUsername(user);
+      }
+      return AuthSession(username: user, accessToken: token);
     } finally {
       client.close();
     }
   }
 
   @override
-  Future<AuthSession?> checkSession() async {
-    final token = await _tokenStore.readToken();
-    final gatewayToken = await _tokenStore.readGatewayToken();
-    final cachedUsername = await _tokenStore.readUsername();
-    if (token == null ||
-        token.isEmpty ||
-        gatewayToken == null ||
-        gatewayToken.isEmpty) {
-      return null;
-    }
-
-    try {
-      final response = await _gql.query(GqlDocuments.me);
-      final username =
-          ((response['auth'] as Map<String, dynamic>)['me']
-                  as Map<String, dynamic>)['username']
-              .toString();
-      if (username.isNotEmpty) {
-        await _tokenStore.writeUsername(username);
-      }
-      return AuthSession(username: username, accessToken: token);
-    } catch (error) {
-      final raw = error.toString().toLowerCase();
-      final isAuthFailure =
-          raw.contains('not authenticated') ||
-          raw.contains('unauthorized') ||
-          raw.contains('invalid token') ||
-          raw.contains('oauth proof missing') ||
-          raw.contains('oauth session missing');
-      if (isAuthFailure) {
-        await _tokenStore.clear();
-        return null;
-      }
-      if (cachedUsername != null && cachedUsername.isNotEmpty) {
-        _log('checkSession network/transient failure, using cached session');
-        return AuthSession(username: cachedUsername, accessToken: token);
-      }
-      await _tokenStore.clear();
-      return null;
-    }
+  Future<String> exchangeMobileCode(String code) async {
+    throw Exception('Google OAuth flow has been removed.');
   }
 
-  @override
-  Future<bool> hasStoredGatewayProof() async {
-    final token = await _tokenStore.readGatewayToken();
-    return token != null && token.isNotEmpty;
-  }
-
-  @override
-  Future<bool> checkGatewaySession() async {
+  Future<GatewaySessionStatus> fetchSessionStatus() async {
     final client = createGraphqlHttpClient();
     try {
-      _log('checkGatewaySession GET ${AppConfig.backendUrl}/api/auth/status');
+      final headers = <String, String>{'Accept': 'application/json'};
+      final token = await _tokenStore.readToken();
+      if (!kIsWeb) {
+        headers['X-Blue-Client'] = 'mobile';
+      }
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
       final response = await client
           .get(
             Uri.parse('${AppConfig.backendUrl}/api/auth/status'),
-            headers: const {'Accept': 'application/json'},
+            headers: headers,
           )
           .timeout(const Duration(seconds: 8));
-      _log(
-        'checkGatewaySession status=${response.statusCode} body=${response.body}',
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      return GatewaySessionStatus(
+        oauthReady: true,
+        appReady: body['appReady'] == true,
+        reason: body['reason']?.toString(),
+        oauthIdentity: body['oauthIdentity']?.toString(),
+        username: body['username']?.toString(),
       );
-
-      if (response.statusCode == 200) {
-        final body = jsonDecode(response.body) as Map<String, dynamic>;
-        return body['oauthReady'] == true;
-      }
-      if (response.statusCode == 401) {
-        return false;
-      }
-
-      throw Exception('OAuth status check failed (${response.statusCode}).');
     } on TimeoutException {
       throw Exception('OAuth status check timed out.');
     } finally {
@@ -211,8 +153,131 @@ class GraphqlAuthRepository implements AuthRepository {
     }
   }
 
+  Future<void> _refreshMobileSession() async {
+    final refreshToken = await _tokenStore.readRefreshToken();
+    if (refreshToken == null || refreshToken.isEmpty) {
+      throw Exception('Refresh token missing.');
+    }
+    final deviceId = await _tokenStore.readOrCreateDeviceId();
+    final client = createGraphqlHttpClient();
+    try {
+      final response = await client
+          .post(
+            Uri.parse('${AppConfig.backendUrl}/api/auth/refresh'),
+            headers: const {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'X-Blue-Client': 'mobile',
+            },
+            body: jsonEncode({
+              'refresh_token': refreshToken,
+              'device_id': deviceId,
+            }),
+          )
+          .timeout(const Duration(seconds: 12));
+      final body = jsonDecode(response.body);
+      if (response.statusCode != 200) {
+        throw Exception(_extractError(body));
+      }
+      await _tokenStore.writeToken((body['accessToken'] ?? '').toString());
+      await _tokenStore.writeRefreshToken((body['refreshToken'] ?? '').toString());
+      final username = ((body['user'] ?? const {}) as Map<String, dynamic>)['username']
+          ?.toString();
+      if (username != null && username.isNotEmpty) {
+        await _tokenStore.writeUsername(username);
+      }
+    } finally {
+      client.close();
+    }
+  }
+
+  @override
+  Future<AuthSession?> checkSession() async {
+    final status = await fetchSessionStatus();
+    if (!status.appReady) {
+      if (!kIsWeb) {
+        final refresh = await _tokenStore.readRefreshToken();
+        if (refresh != null && refresh.isNotEmpty) {
+          try {
+            await _refreshMobileSession();
+            final refreshed = await fetchSessionStatus();
+            if (refreshed.appReady) {
+              return _querySessionUser();
+            }
+          } catch (_) {}
+        }
+      }
+      return null;
+    }
+    return _querySessionUser();
+  }
+
+  Future<AuthSession?> _querySessionUser() async {
+    try {
+      final response = await _gql.query(GqlDocuments.me);
+      final username =
+          ((response['auth'] as Map<String, dynamic>)['me']
+                  as Map<String, dynamic>)['username']
+              .toString();
+      final token = await _tokenStore.readToken() ?? '';
+      if (username.isNotEmpty) {
+        await _tokenStore.writeUsername(username);
+      }
+      return AuthSession(username: username, accessToken: token);
+    } catch (_) {
+      await _tokenStore.clear();
+      return null;
+    }
+  }
+
+  @override
+  Future<bool> hasStoredGatewayProof() async {
+    return true;
+  }
+
+  @override
+  Future<bool> checkGatewaySession() async {
+    return true;
+  }
+
   @override
   Future<void> logout() async {
-    await _tokenStore.clear();
+    final client = createGraphqlHttpClient();
+    try {
+      final headers = <String, String>{'Accept': 'application/json'};
+      final token = await _tokenStore.readToken();
+      if (!kIsWeb) {
+        headers['X-Blue-Client'] = 'mobile';
+      }
+      if (token != null && token.isNotEmpty) {
+        headers['Authorization'] = 'Bearer $token';
+      }
+      await client.post(
+        Uri.parse('${AppConfig.backendUrl}/api/auth/logout'),
+        headers: headers,
+      );
+    } catch (_) {
+      // Best effort.
+    } finally {
+      client.close();
+      await _tokenStore.clear();
+    }
+  }
+
+  String _extractError(Object? body) {
+    if (body is Map<String, dynamic>) {
+      final detail = body['detail']?.toString();
+      if (detail != null && detail.isNotEmpty) return detail;
+      final reason = body['reason']?.toString();
+      if (reason != null && reason.isNotEmpty) return reason;
+      if (body['errors'] is List && (body['errors'] as List).isNotEmpty) {
+        final first = (body['errors'] as List).first;
+        if (first is Map<String, dynamic>) {
+          final message = first['message']?.toString();
+          if (message != null && message.isNotEmpty) return message;
+        }
+      }
+    }
+    return 'Request failed.';
   }
 }

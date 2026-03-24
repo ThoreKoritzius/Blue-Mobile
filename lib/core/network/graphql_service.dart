@@ -23,11 +23,9 @@ class GraphqlService {
 
   Future<Map<String, String>> buildAuthHeaders() async {
     final token = await _tokenStore.readToken();
-    final gatewayToken = await _tokenStore.readGatewayToken();
     return {
       if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
-      if (gatewayToken != null && gatewayToken.isNotEmpty)
-        'X-Gateway-Session': gatewayToken,
+      if (!kIsWeb) 'X-Blue-Client': 'mobile',
     };
   }
 
@@ -84,6 +82,68 @@ class GraphqlService {
         return result.data ?? <String, dynamic>{};
       }
       return await _postJsonGraphql(document, variables: variables);
+    } on TimeoutException {
+      throw Exception('Request timeout after ${requestTimeout.inSeconds}s.');
+    } catch (error) {
+      throw Exception(_humanizeError(error.toString()));
+    }
+  }
+
+  Future<Map<String, dynamic>> mutateMultipartWithProgress(
+    String document, {
+    Map<String, dynamic> variables = const {},
+    required List<MultipartUploadFile> files,
+    required void Function(int sentBytes, int totalBytes) onProgress,
+  }) async {
+    try {
+      final request = _ProgressMultipartRequest(
+        'POST',
+        Uri.parse(AppConfig.graphqlHttpUrl),
+        onProgress: onProgress,
+      );
+      request.headers.addAll(await buildAuthHeaders());
+
+      final operationsVariables = <String, dynamic>{
+        ...variables,
+        'files': List<dynamic>.filled(files.length, null),
+      };
+      request.fields['operations'] = jsonEncode({
+        'query': document,
+        'variables': operationsVariables,
+      });
+      request.fields['map'] = jsonEncode({
+        for (var i = 0; i < files.length; i++) '$i': ['variables.files.$i'],
+      });
+
+      for (var i = 0; i < files.length; i++) {
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            '$i',
+            files[i].bytes,
+            filename: files[i].filename,
+          ),
+        );
+      }
+
+      final streamed = await request.send().timeout(requestTimeout);
+      final response = await http.Response.fromStream(streamed);
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        throw Exception('Invalid GraphQL response.');
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        final errors = decoded['errors'];
+        if (errors is List && errors.isNotEmpty) {
+          throw Exception(_graphqlErrorsToMessage(errors));
+        }
+        throw Exception('GraphQL HTTP ${response.statusCode}.');
+      }
+      final errors = decoded['errors'];
+      if (errors is List && errors.isNotEmpty) {
+        throw Exception(_graphqlErrorsToMessage(errors));
+      }
+      final data = decoded['data'];
+      return data is Map<String, dynamic> ? data : <String, dynamic>{};
     } on TimeoutException {
       throw Exception('Request timeout after ${requestTimeout.inSeconds}s.');
     } catch (error) {
@@ -226,20 +286,49 @@ class GraphqlService {
         text.contains('responseformatexception') ||
         text.contains('unexpected end of input') ||
         text.contains('unexpected character')) {
-      return 'Gateway returned non-JSON auth/proxy response. '
-          'This usually means oauth2-proxy redirected or blocked /api/graphql. '
-          'Check gateway routing for /api/graphql at ${AppConfig.backendUrl}.';
+      return 'Gateway returned a non-JSON response. Check /api/graphql routing at ${AppConfig.backendUrl}.';
     }
     if (text.contains('timeout')) {
       return 'Network timeout while contacting ${AppConfig.backendUrl}.';
     }
     if (text.contains('not authenticated')) {
-      return 'Not authenticated. Complete Google OAuth and app sign-in again.';
-    }
-    if (text.contains('stage-1 oauth proof missing') ||
-        text.contains('oauth proof missing')) {
-      return 'Google OAuth proof missing or expired. Complete step 1 again.';
+      return 'Not authenticated. Sign in again.';
     }
     return cleaned;
+  }
+}
+
+class MultipartUploadFile {
+  const MultipartUploadFile({required this.filename, required this.bytes});
+
+  final String filename;
+  final Uint8List bytes;
+}
+
+class _ProgressMultipartRequest extends http.MultipartRequest {
+  _ProgressMultipartRequest(
+    super.method,
+    super.url, {
+    required this.onProgress,
+  });
+
+  final void Function(int sentBytes, int totalBytes) onProgress;
+
+  @override
+  http.ByteStream finalize() {
+    final stream = super.finalize();
+    final total = contentLength;
+    var sent = 0;
+    return http.ByteStream(
+      stream.transform(
+        StreamTransformer<List<int>, List<int>>.fromHandlers(
+          handleData: (chunk, sink) {
+            sent += chunk.length;
+            onProgress(sent, total);
+            sink.add(chunk);
+          },
+        ),
+      ),
+    );
   }
 }

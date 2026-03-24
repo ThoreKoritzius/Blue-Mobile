@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/config/app_config.dart';
 import '../../providers.dart';
-import 'oauth_launcher.dart';
 
 class LoginPage extends ConsumerStatefulWidget {
   const LoginPage({super.key, this.initialError});
@@ -52,47 +50,6 @@ class _LoginPageState extends ConsumerState<LoginPage> {
     await ref
         .read(authUiStateProvider.notifier)
         .signIn(username: _username.text, password: _password.text);
-  }
-
-  Future<void> _startGoogleOauth() async {
-    debugPrint('[AUTH] UI oauth button pressed (isWeb=$kIsWeb)');
-    try {
-      if (kIsWeb) {
-        final oauthUrl = AppConfig.oauthSignInUrl(
-          redirectTarget: '${AppConfig.backendUrl}/api/auth/status',
-        );
-        final launched = await launchOauthInSeparateContext(oauthUrl);
-        if (!launched) {
-          debugPrint('[AUTH] web oauth launch failed');
-          ref
-              .read(authUiStateProvider.notifier)
-              .initialize(initialError: 'Could not open Google OAuth flow.');
-          return;
-        }
-        debugPrint('[AUTH] web oauth launched, probing oauth status');
-        await ref.read(authUiStateProvider.notifier).checkOauth();
-        return;
-      }
-
-      final oauthUrl = AppConfig.oauthSignInUrl(
-        redirectTarget: AppConfig.mobileOauthBridgeUrl(),
-      );
-      final exchangeCode = await launchOauthWithAppCallback(
-        oauthUrl,
-        AppConfig.oauthCallbackScheme,
-      );
-      debugPrint(
-        '[AUTH] mobile oauth callback accepted, exchange code received',
-      );
-      await ref
-          .read(authUiStateProvider.notifier)
-          .completeMobileOauth(exchangeCode);
-    } catch (error) {
-      debugPrint('[AUTH] oauth flow failed error=$error');
-      ref
-          .read(authUiStateProvider.notifier)
-          .initialize(initialError: 'Google OAuth failed: $error');
-    }
   }
 
   @override
@@ -150,44 +107,9 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                           color: helperColor,
                         ),
                       ),
-                      const SizedBox(height: 16),
-                      FilledButton.tonalIcon(
-                        onPressed: _startGoogleOauth,
-                        icon: const Icon(Icons.login),
-                        label: const Text('1) Continue with Google'),
-                      ),
-                      const SizedBox(height: 8),
-                      OutlinedButton.icon(
-                        onPressed: (!kIsWeb || uiState.isCheckingOauth)
-                            ? null
-                            : () => ref
-                                  .read(authUiStateProvider.notifier)
-                                  .checkOauth(),
-                        icon: uiState.isCheckingOauth
-                            ? const SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : Icon(
-                                uiState.oauthReady
-                                    ? Icons.verified_user
-                                    : Icons.verified_user_outlined,
-                              ),
-                        label: Text(
-                          uiState.oauthReady
-                              ? '2) OAuth ready'
-                              : (kIsWeb
-                                    ? '2) Check OAuth session'
-                                    : '2) Await OAuth callback'),
-                        ),
-                      ),
                       const SizedBox(height: 20),
                       TextField(
                         controller: _username,
-                        enabled: uiState.oauthReady,
                         decoration: const InputDecoration(
                           labelText: 'Username',
                         ),
@@ -195,7 +117,6 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                       const SizedBox(height: 12),
                       TextField(
                         controller: _password,
-                        enabled: uiState.oauthReady,
                         obscureText: true,
                         decoration: const InputDecoration(
                           labelText: 'Password',
@@ -221,9 +142,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
                       ],
                       const SizedBox(height: 16),
                       FilledButton(
-                        onPressed: (uiState.isSubmitting || !uiState.oauthReady)
-                            ? null
-                            : _login,
+                        onPressed: uiState.isSubmitting ? null : _login,
                         child: uiState.isSubmitting
                             ? const SizedBox(
                                 width: 18,

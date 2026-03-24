@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -21,12 +20,15 @@ import 'data/repositories/runs_repository.dart';
 import 'data/repositories/search_repository.dart';
 import 'data/repositories/stories_repository.dart';
 import 'features/auth/auth_error_storage.dart';
+import 'features/day/day_draft_controller.dart';
 
 final selectedDateProvider = StateProvider<DateTime>((ref) => DateTime.now());
 final selectedTabProvider = StateProvider<int>((ref) => 0);
 final dayAppBarAccentProvider = StateProvider<Color>(
   (ref) => const Color(0xFF174EA6),
 );
+final dayDraftControllerProvider =
+    NotifierProvider<DayDraftController, DayDraftState>(DayDraftController.new);
 final themeModeProvider = NotifierProvider<AppThemeModeController, ThemeMode>(
   AppThemeModeController.new,
 );
@@ -185,7 +187,7 @@ class AuthUiState {
 
   static const initial = AuthUiState(
     stage: AuthStage.idle,
-    oauthReady: false,
+    oauthReady: true,
     errorMessage: null,
     lastFailure: null,
   );
@@ -234,143 +236,36 @@ class AuthUiController extends Notifier<AuthUiState> {
 
     if (_initialized) return;
     _initialized = true;
-    if (kIsWeb) {
-      _log('initialize running checkOauth (web)');
-      await checkOauth();
-    } else {
-      final hasGatewayProof = await ref
-          .read(authRepositoryProvider)
-          .hasStoredGatewayProof();
-      _log('initialize mobile gatewayProof=$hasGatewayProof');
-      if (hasGatewayProof) {
-        state = state.copyWith(
-          stage: AuthStage.idle,
-          oauthReady: true,
-          clearError: true,
-          clearFailure: true,
-        );
-      }
-    }
+    state = state.copyWith(
+      stage: AuthStage.idle,
+      oauthReady: true,
+      clearError: true,
+      clearFailure: true,
+    );
   }
 
   Future<void> checkOauth() async {
-    _log('checkOauth start');
     state = state.copyWith(
-      stage: AuthStage.checkingOauth,
+      stage: AuthStage.idle,
+      oauthReady: true,
       clearError: true,
       clearFailure: true,
     );
     writePersistedAuthError(null);
-
-    try {
-      final ready = await ref
-          .read(authRepositoryProvider)
-          .checkGatewaySession()
-          .timeout(const Duration(seconds: 8));
-      _log('checkOauth result oauthReady=$ready');
-      if (ready) {
-        state = state.copyWith(
-          stage: AuthStage.idle,
-          oauthReady: true,
-          clearError: true,
-          clearFailure: true,
-        );
-        writePersistedAuthError(null);
-      } else {
-        _setFailure(
-          'oauth_missing',
-          'Google OAuth session missing. Complete step 1 and retry.',
-          stage: AuthStage.oauthMissing,
-          oauthReady: false,
-        );
-      }
-    } on TimeoutException {
-      _log('checkOauth timeout');
-      _setFailure(
-        'oauth_timeout',
-        'OAuth check timed out. Please retry.',
-        stage: AuthStage.error,
-        oauthReady: false,
-      );
-    } catch (error) {
-      _log('checkOauth error=$error');
-      _setFailure(
-        'oauth_check_failed',
-        _normalizeError(error),
-        stage: AuthStage.error,
-        oauthReady: false,
-      );
-    }
   }
 
   Future<void> awaitOauthReadyAfterLaunch() async {
-    _log('awaitOauthReadyAfterLaunch start');
     state = state.copyWith(
-      stage: AuthStage.checkingOauth,
+      stage: AuthStage.idle,
+      oauthReady: true,
       clearError: true,
       clearFailure: true,
     );
     writePersistedAuthError(null);
-
-    for (var i = 0; i < 24; i += 1) {
-      try {
-        final ready = await ref
-            .read(authRepositoryProvider)
-            .checkGatewaySession()
-            .timeout(const Duration(seconds: 4));
-        if (ready) {
-          _log('awaitOauthReadyAfterLaunch success');
-          state = state.copyWith(
-            stage: AuthStage.idle,
-            oauthReady: true,
-            clearError: true,
-            clearFailure: true,
-          );
-          writePersistedAuthError(null);
-          return;
-        }
-      } catch (_) {
-        // Ignore single probe failures while user is still authenticating.
-      }
-      await Future<void>.delayed(const Duration(seconds: 2));
-    }
-
-    _setFailure(
-      'oauth_missing',
-      'OAuth session still missing after waiting. Complete Google login and press "Check OAuth session".',
-      stage: AuthStage.oauthMissing,
-      oauthReady: false,
-    );
   }
 
   Future<void> completeMobileOauth(String code) async {
-    _log('completeMobileOauth start');
-    state = state.copyWith(
-      stage: AuthStage.checkingOauth,
-      clearError: true,
-      clearFailure: true,
-      oauthReady: false,
-    );
-    writePersistedAuthError(null);
-    try {
-      await ref.read(authRepositoryProvider).exchangeMobileCode(code);
-      _log('completeMobileOauth success');
-      state = state.copyWith(
-        stage: AuthStage.idle,
-        oauthReady: true,
-        clearError: true,
-        clearFailure: true,
-      );
-      writePersistedAuthError(null);
-    } catch (error) {
-      _log('completeMobileOauth error=$error');
-      _setFailure(
-        'oauth_exchange_failed',
-        _normalizeError(error),
-        stage: AuthStage.error,
-        oauthReady: false,
-      );
-    }
+    await checkOauth();
   }
 
   Future<AuthResult> signIn({
@@ -388,17 +283,6 @@ class AuthUiController extends Notifier<AuthUiState> {
         oauthReady: state.oauthReady,
       );
       return AuthResult.failure('validation', message);
-    }
-
-    if (!state.oauthReady) {
-      final message = 'OAuth stage incomplete. Use Google sign-in first.';
-      _setFailure(
-        'oauth_required',
-        message,
-        stage: AuthStage.oauthMissing,
-        oauthReady: false,
-      );
-      return AuthResult.failure('oauth_required', message);
     }
 
     state = state.copyWith(

@@ -19,7 +19,7 @@ class CalendarPage extends ConsumerStatefulWidget {
 enum _MonthLoadState { unloaded, loading, loaded, error }
 
 class _CalendarPageState extends ConsumerState<CalendarPage> {
-  static const int _pageSize = 120;
+  static const int _pageSize = 200;
   static const int _initialVirtualMonthCount = 120;
   static const int _visibleMonthPrefetch = 0;
   static const double _monthItemExtent = 552;
@@ -255,11 +255,23 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
 
   void _jumpToMonthIndex(int index) {
     final safeIndex = index.clamp(0, _months.length - 1);
+    final targetMonth = _months[safeIndex];
+    final targetKey = _monthKey(targetMonth);
     final targetOffset = (_heroExtentEstimate + (safeIndex * _monthItemExtent))
         .clamp(0.0, _scrollController.position.maxScrollExtent);
+    if (!_monthIsCovered(targetMonth) &&
+        _monthStates[targetKey] != _MonthLoadState.loading &&
+        mounted) {
+      setState(() {
+        _monthStates[targetKey] = _MonthLoadState.loading;
+      });
+    }
     _scrollController.jumpTo(targetOffset);
     _activeMonthIndexNotifier.value = safeIndex;
     _syncVisibleWindow(force: true);
+    if (!_monthIsCovered(targetMonth)) {
+      unawaited(_ensureVisibleWindowLoaded());
+    }
   }
 
   void _handleScrub(double localDy, double height) {
@@ -283,11 +295,9 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
     final token =
         ref.read(authControllerProvider).value?.accessToken ??
         tokenStore.peekToken();
-    final gatewayToken = tokenStore.peekGatewayToken();
     return {
       if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
-      if (gatewayToken != null && gatewayToken.isNotEmpty)
-        'X-Gateway-Session': gatewayToken,
+      'X-Blue-Client': 'mobile',
     };
   }
 
@@ -342,10 +352,11 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
                       final state =
                           _monthStates[key] ?? _MonthLoadState.unloaded;
                       final isActiveMonth = index == _visibleStartIndex;
-                      final shouldRenderImages =
-                          !_isScrollingFast &&
+                      final isVisibleMonth =
                           index >= _visibleStartIndex &&
                           index <= _visibleEndIndex;
+                      final shouldRenderImages =
+                          !_isScrollingFast && isVisibleMonth;
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 18),
                         child: RepaintBoundary(
@@ -360,10 +371,14 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
                                       : state == _MonthLoadState.error
                                       ? _MonthRenderMode.error
                                       : _MonthRenderMode.full)
-                                : (isActiveMonth &&
-                                          state == _MonthLoadState.loading
+                                : ((isActiveMonth || isVisibleMonth) &&
+                                          (state == _MonthLoadState.loading ||
+                                              state == _MonthLoadState.unloaded)
                                       ? _MonthRenderMode.loading
-                                      : _MonthRenderMode.placeholder),
+                                      : ((isActiveMonth || isVisibleMonth) &&
+                                                state == _MonthLoadState.error
+                                            ? _MonthRenderMode.error
+                                            : _MonthRenderMode.placeholder)),
                           ),
                         ),
                       );
@@ -669,19 +684,32 @@ class _MonthCard extends StatelessWidget {
           const _WeekdayHeader(),
           const SizedBox(height: 8),
           Expanded(
-            child: switch (mode) {
-              _MonthRenderMode.placeholder => _MonthPlaceholderGrid(
-                month: month,
-              ),
-              _MonthRenderMode.loading => const _MonthLoadingGrid(),
-              _MonthRenderMode.error => const _MonthErrorGrid(),
-              _MonthRenderMode.full => _MonthDayGrid(
-                month: month,
-                storiesByDate: storiesByDate,
-                headers: headers,
-                onDayTap: onDayTap,
-              ),
-            },
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 180),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeOutCubic,
+              transitionBuilder: (child, animation) =>
+                  FadeTransition(opacity: animation, child: child),
+              child: switch (mode) {
+                _MonthRenderMode.placeholder => _MonthPlaceholderGrid(
+                  key: ValueKey('placeholder-${month.year}-${month.month}'),
+                  month: month,
+                ),
+                _MonthRenderMode.loading => _MonthLoadingGrid(
+                  key: ValueKey('loading-${month.year}-${month.month}'),
+                ),
+                _MonthRenderMode.error => _MonthErrorGrid(
+                  key: ValueKey('error-${month.year}-${month.month}'),
+                ),
+                _MonthRenderMode.full => _MonthDayGrid(
+                  key: ValueKey('full-${month.year}-${month.month}'),
+                  month: month,
+                  storiesByDate: storiesByDate,
+                  headers: headers,
+                  onDayTap: onDayTap,
+                ),
+              },
+            ),
           ),
         ],
       ),
@@ -719,6 +747,7 @@ class _WeekdayHeader extends StatelessWidget {
 
 class _MonthDayGrid extends StatelessWidget {
   const _MonthDayGrid({
+    super.key,
     required this.month,
     required this.storiesByDate,
     required this.headers,
@@ -768,14 +797,13 @@ class _MonthDayGrid extends StatelessWidget {
 }
 
 class _MonthPlaceholderGrid extends StatelessWidget {
-  const _MonthPlaceholderGrid({required this.month});
+  const _MonthPlaceholderGrid({super.key, required this.month});
 
   final DateTime month;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final formatter = DateFormat('MMM');
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -783,29 +811,59 @@ class _MonthPlaceholderGrid extends StatelessWidget {
           end: Alignment.bottomRight,
           colors: [
             colorScheme.surfaceContainerLowest,
-            colorScheme.surfaceContainerLow,
+            colorScheme.surfaceContainer,
           ],
         ),
       ),
-      child: Center(
+      child: Padding(
+        padding: const EdgeInsets.all(18),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              formatter.format(month).toUpperCase(),
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 1.2,
+            Expanded(
+              child: Row(
+                children: List.generate(
+                  7,
+                  (index) => Expanded(
+                    child: Container(
+                      margin: EdgeInsets.only(right: index == 6 ? 0 : 1),
+                      decoration: BoxDecoration(
+                        color:
+                            (index.isEven
+                                    ? colorScheme.surfaceContainerLow
+                                    : colorScheme.surfaceContainer)
+                                .withValues(alpha: 0.55),
+                      ),
+                    ),
+                  ),
+                ),
               ),
             ),
-            const SizedBox(height: 10),
-            Text(
-              'Scroll here to load this month',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-                fontWeight: FontWeight.w600,
-              ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainerHigh.withValues(
+                        alpha: 0.7,
+                      ),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Container(
+                  width: 72,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: colorScheme.surfaceContainerHigh.withValues(
+                      alpha: 0.55,
+                    ),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -815,11 +873,10 @@ class _MonthPlaceholderGrid extends StatelessWidget {
 }
 
 class _MonthLoadingGrid extends StatelessWidget {
-  const _MonthLoadingGrid();
+  const _MonthLoadingGrid({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return GridView.builder(
       itemCount: 42,
       physics: const NeverScrollableScrollPhysics(),
@@ -830,15 +887,9 @@ class _MonthLoadingGrid extends StatelessWidget {
         childAspectRatio: 0.72,
       ),
       itemBuilder: (context, index) {
-        return DecoratedBox(
-          decoration: BoxDecoration(
-            color: index.isEven
-                ? colorScheme.surfaceContainer
-                : colorScheme.surfaceContainerHigh,
-            border: Border.all(
-              color: colorScheme.outlineVariant.withValues(alpha: 0.12),
-            ),
-          ),
+        return Padding(
+          padding: const EdgeInsets.all(0.5),
+          child: _ShimmerTile(isEmphasized: index % 7 == 0 || index % 7 == 6),
         );
       },
     );
@@ -846,7 +897,7 @@ class _MonthLoadingGrid extends StatelessWidget {
 }
 
 class _MonthErrorGrid extends StatelessWidget {
-  const _MonthErrorGrid();
+  const _MonthErrorGrid({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -861,6 +912,59 @@ class _MonthErrorGrid extends StatelessWidget {
           fontWeight: FontWeight.w700,
         ),
       ),
+    );
+  }
+}
+
+class _ShimmerTile extends StatefulWidget {
+  const _ShimmerTile({required this.isEmphasized});
+
+  final bool isEmphasized;
+
+  @override
+  State<_ShimmerTile> createState() => _ShimmerTileState();
+}
+
+class _ShimmerTileState extends State<_ShimmerTile>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1200),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final base = widget.isEmphasized
+        ? colorScheme.surfaceContainerHigh
+        : colorScheme.surfaceContainer;
+    final highlight = widget.isEmphasized
+        ? colorScheme.surfaceContainerHighest
+        : colorScheme.surfaceContainerHigh;
+
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color.lerp(base, highlight, _controller.value * 0.45) ?? base,
+                Color.lerp(highlight, base, _controller.value * 0.75) ??
+                    highlight,
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

@@ -146,7 +146,9 @@ class GraphqlStoriesRepository implements StoriesRepository {
     int limit = StoryCacheStore.maxCachedDays,
   }) async {
     final lastWarmAt = await _cacheStore.readLastWarmAt();
-    if (lastWarmAt != null &&
+    final cachedCount = (await _cacheStore.readRecentDays(limit: limit)).length;
+    if (cachedCount >= limit &&
+        lastWarmAt != null &&
         DateTime.now().toUtc().difference(lastWarmAt) <
             const Duration(minutes: 20)) {
       return;

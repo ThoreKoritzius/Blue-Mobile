@@ -111,21 +111,12 @@ class AppConfig {
     );
   }
 
-  static String oauthSignInUrl({String? redirectTarget}) {
-    final target = redirectTarget ?? '$backendUrl/api/auth/status';
-    final encoded = Uri.encodeComponent(target);
-    return '$backendUrl/oauth2/sign_in?rd=$encoded';
-  }
+  static String oauthSignInUrl({String? redirectTarget}) => '';
 
-  static String mobileOauthCallbackUrl() {
-    return '$oauthCallbackScheme://$oauthCallbackHost';
-  }
+  static String mobileOauthCallbackUrl() => '$oauthCallbackScheme://$oauthCallbackHost';
 
-  static String mobileOauthBridgeUrl() {
-    return '$backendUrl/api/auth/mobile/complete';
-  }
+  static String mobileOauthBridgeUrl() => '$backendUrl/api/auth/mobile/complete';
 
-  static String get authModeDescription => useOauthGateway
-      ? 'Gateway auth mode via $backendUrl. Complete Google OAuth, then sign in with app username/password.'
-      : 'Direct backend mode.';
+  static String get authModeDescription =>
+      'Direct sign-in mode. Use your Blue username and password.';
 }

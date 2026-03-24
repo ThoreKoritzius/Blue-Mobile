@@ -18,8 +18,10 @@ import '../../data/models/day_payload_model.dart';
 import '../../data/models/person_model.dart';
 import '../../data/models/run_model.dart';
 import '../../data/models/story_day_model.dart';
+import '../../data/models/upload_batch_state_model.dart';
 import '../../data/repositories/person_repository.dart';
 import '../../providers.dart';
+import 'day_draft_controller.dart';
 import '../persons/person_detail_page.dart';
 import '../runs/run_detail_page.dart';
 
@@ -47,11 +49,13 @@ class _DayPageState extends ConsumerState<DayPage> {
   final List<String> _cacheOrder = <String>[];
 
   Timer? _pendingLoadTimer;
+  Timer? _autosaveTimer;
   StoryDayModel? _original;
   StoryDayModel? _current;
   List<DayMediaModel> _media = const [];
   List<RunModel> _runs = const [];
   List<CalendarEventModel> _events = const [];
+  List<UploadItemStateModel> _uploadQueue = const [];
 
   bool _loading = true;
   bool _saving = false;
@@ -63,6 +67,8 @@ class _DayPageState extends ConsumerState<DayPage> {
   int _activeLoadId = 0;
   String? _activeDayKey;
   String? _pendingSyncDayKey;
+  DateTime? _queuedDateAfterSave;
+  bool _suppressDateSync = false;
   DateTime _lastNavigationAt = DateTime.fromMillisecondsSinceEpoch(0);
   Color _heroAccent = _defaultHeroAccent;
   String? _paletteSourceUrl;
@@ -83,9 +89,10 @@ class _DayPageState extends ConsumerState<DayPage> {
     _selectedDateSubscription = ref.listenManual<DateTime>(
       selectedDateProvider,
       (previous, next) {
+        if (_suppressDateSync) return;
         final nextDay = formatYmd(DateUtils.dateOnly(next));
         if (nextDay == _activeDayKey) return;
-        _scheduleLoadForDate(next);
+        unawaited(_handleRequestedDateChange(next));
       },
     );
 
@@ -101,6 +108,7 @@ class _DayPageState extends ConsumerState<DayPage> {
     _description.dispose();
     _tagInput.dispose();
     _pendingLoadTimer?.cancel();
+    _autosaveTimer?.cancel();
     _scrollController.dispose();
     _selectedDateSubscription.close();
     super.dispose();
@@ -129,14 +137,49 @@ class _DayPageState extends ConsumerState<DayPage> {
         description: _description.text,
       );
     });
+    _markDirtyAndScheduleAutosave();
+  }
+
+  void _syncDraftStatus([String? text]) {
+    final notifier = ref.read(dayDraftControllerProvider.notifier);
+    notifier.setCurrentDay(_activeDayKey ?? '');
+    if (_saving) {
+      notifier.markSaving(text: text ?? 'Saving');
+      return;
+    }
+    if (_uploadQueue.any((item) => item.status != UploadItemStatus.done)) {
+      notifier.setUploading(true, text: text ?? 'Uploading');
+      return;
+    }
+    notifier.setUploading(false);
+    if (_dirty) {
+      notifier.markDirty(text: text ?? 'Unsaved changes');
+      return;
+    }
+    notifier.markClean(text: text ?? _status);
+  }
+
+  void _markDirtyAndScheduleAutosave() {
+    _autosaveTimer?.cancel();
+    if (!_dirty) {
+      _syncDraftStatus();
+      return;
+    }
+    _syncDraftStatus('Unsaved changes');
+    _autosaveTimer = Timer(
+      const Duration(milliseconds: 850),
+      () => unawaited(_saveNow()),
+    );
   }
 
   Future<void> _loadDate(DateTime date) async {
     final normalized = DateUtils.dateOnly(date);
     final day = formatYmd(normalized);
+    final isFutureDay = _isFutureDate(normalized);
     final requestId = ++_activeLoadId;
     _activeDayKey = day;
     _lastNavigationAt = DateTime.now();
+    ref.read(dayDraftControllerProvider.notifier).setCurrentDay(day);
 
     final cached = _cacheGet(day);
     if (cached != null) {
@@ -148,7 +191,7 @@ class _DayPageState extends ConsumerState<DayPage> {
       setState(() {
         _loading = false;
         _transitioningDay = false;
-        _detailsLoading = !cached.detailsLoaded;
+        _detailsLoading = isFutureDay ? false : !cached.detailsLoaded;
       });
       if (!_isRapidNavigation()) {
         _schedulePostApplyWork(
@@ -177,7 +220,7 @@ class _DayPageState extends ConsumerState<DayPage> {
         setState(() {
           _loading = false;
           _transitioningDay = false;
-          _detailsLoading = true;
+          _detailsLoading = !isFutureDay;
         });
       }
       unawaited(_refreshDate(normalized, requestId));
@@ -187,7 +230,7 @@ class _DayPageState extends ConsumerState<DayPage> {
     setState(() {
       _loading = _current == null;
       _transitioningDay = _current != null;
-      _detailsLoading = true;
+      _detailsLoading = !isFutureDay;
       _status = '';
     });
     await _refreshDate(normalized, requestId);
@@ -195,11 +238,19 @@ class _DayPageState extends ConsumerState<DayPage> {
 
   Future<void> _refreshDate(DateTime date, int requestId) async {
     final day = formatYmd(date);
+    final isFutureDay = _isFutureDate(date);
 
     try {
-      final payload = await ref
+      final basePayload = await ref
           .read(dayRepositoryProvider)
           .getDayCorePayload(day);
+      final payload = isFutureDay
+          ? basePayload.copyWith(
+              runs: const <RunModel>[],
+              events: const <CalendarEventModel>[],
+              detailsLoaded: true,
+            )
+          : basePayload;
       _cachePut(day, payload);
 
       if (_isActiveRequest(requestId, day)) {
@@ -211,7 +262,7 @@ class _DayPageState extends ConsumerState<DayPage> {
         setState(() {
           _loading = false;
           _transitioningDay = false;
-          _detailsLoading = true;
+          _detailsLoading = !isFutureDay;
         });
         _schedulePostApplyWork(
           day,
@@ -240,6 +291,16 @@ class _DayPageState extends ConsumerState<DayPage> {
   bool _isRapidNavigation() {
     return DateTime.now().difference(_lastNavigationAt) <
         _navigationBurstWindow;
+  }
+
+  bool _isFutureDate(DateTime date) {
+    return DateUtils.dateOnly(date).isAfter(DateUtils.dateOnly(DateTime.now()));
+  }
+
+  bool get _isFutureDayActive {
+    final day = _activeDayKey;
+    if (day == null || day.isEmpty) return false;
+    return _isFutureDate(parseYmd(day));
   }
 
   void _scheduleLoadForDate(DateTime date) {
@@ -299,8 +360,11 @@ class _DayPageState extends ConsumerState<DayPage> {
         includeFullHero: includeFullHero,
       ),
     );
-    unawaited(_loadCalendarEvents(day, requestId));
-    if (prefetchAdjacent && !_isRapidNavigation()) {
+    final isFutureDay = _isFutureDate(parseYmd(day));
+    if (!isFutureDay) {
+      unawaited(_loadCalendarEvents(day, requestId));
+    }
+    if (prefetchAdjacent && !_isRapidNavigation() && !isFutureDay) {
       unawaited(_prefetchAdjacentDays(DateUtils.dateOnly(parseYmd(day))));
     }
   }
@@ -310,6 +374,7 @@ class _DayPageState extends ConsumerState<DayPage> {
     required bool detailsLoaded,
     bool clearStatus = false,
   }) {
+    _autosaveTimer?.cancel();
     _syncingControllers = true;
     _place.text = payload.story.place;
     _country.text = payload.story.country;
@@ -330,6 +395,7 @@ class _DayPageState extends ConsumerState<DayPage> {
         _status = '';
       }
     });
+    _syncDraftStatus();
   }
 
   void _cachePut(String day, DayPayloadModel payload) {
@@ -429,21 +495,68 @@ class _DayPageState extends ConsumerState<DayPage> {
     } catch (_) {}
   }
 
+  Future<void> _handleRequestedDateChange(DateTime next) async {
+    final normalized = DateUtils.dateOnly(next);
+    if (await _prepareForDayNavigation(normalized)) {
+      _scheduleLoadForDate(normalized);
+    }
+  }
+
+  Future<bool> _prepareForDayNavigation(DateTime next) async {
+    final nextDay = formatYmd(next);
+    if (nextDay == _activeDayKey) return true;
+    if (_saving) {
+      _queueNavigation(next, 'Finishing save');
+      return false;
+    }
+    if (_dirty) {
+      _queueNavigation(next, 'Saving before switching');
+      final saved = await _saveNow();
+      if (!saved) return false;
+    }
+    return true;
+  }
+
+  void _queueNavigation(DateTime next, String text) {
+    _queuedDateAfterSave = DateUtils.dateOnly(next);
+    _status = text;
+    _syncDraftStatus(text);
+    if (_activeDayKey != null) {
+      _suppressDateSync = true;
+      ref.read(selectedDateProvider.notifier).state = parseYmd(_activeDayKey!);
+      _suppressDateSync = false;
+    }
+  }
+
+  Future<void> _runQueuedNavigationIfNeeded() async {
+    final queued = _queuedDateAfterSave;
+    if (queued == null || _dirty || _saving) return;
+    _queuedDateAfterSave = null;
+    _suppressDateSync = true;
+    ref.read(selectedDateProvider.notifier).state = queued;
+    _suppressDateSync = false;
+    await _loadDate(queued);
+  }
+
   Future<void> _changeDate() async {
     final selected = await _showCalendarDialog(ref.read(selectedDateProvider));
     if (selected == null) return;
-    await _setDate(selected);
+    await _requestDateChange(selected);
   }
 
-  Future<void> _setDate(DateTime date) async {
+  Future<void> _requestDateChange(DateTime date) async {
     final normalized = DateUtils.dateOnly(date);
+    if (!await _prepareForDayNavigation(normalized)) return;
+    _suppressDateSync = true;
     ref.read(selectedDateProvider.notifier).state = normalized;
+    _suppressDateSync = false;
+    await _loadDate(normalized);
   }
 
   Future<void> _shiftDay(int delta) async {
     final current = DateUtils.dateOnly(ref.read(selectedDateProvider));
     final target = current.add(Duration(days: delta));
-    await _setDate(target);
+    await _requestDateChange(target);
   }
 
   Future<DateTime?> _showCalendarDialog(DateTime initialDate) {
@@ -573,15 +686,22 @@ class _DayPageState extends ConsumerState<DayPage> {
                           const SizedBox(width: 10),
                           Expanded(
                             child: FilledButton.tonalIcon(
-                              onPressed: () {
-                                final target = DateUtils.dateOnly(
-                                  selectedDay.add(const Duration(days: 1)),
-                                );
-                                setDialogState(() {
-                                  selectedDay = target;
-                                  focusedDay = target;
-                                });
-                              },
+                              onPressed: selectedDay.isBefore(now)
+                                  ? () {
+                                      final target = DateUtils.dateOnly(
+                                        selectedDay.add(
+                                          const Duration(days: 1),
+                                        ),
+                                      );
+                                      setDialogState(() {
+                                        final clamped = target.isAfter(now)
+                                            ? now
+                                            : target;
+                                        selectedDay = clamped;
+                                        focusedDay = clamped;
+                                      });
+                                    }
+                                  : null,
                               icon: const Icon(Icons.chevron_right_rounded),
                               label: const Text('Next'),
                             ),
@@ -616,8 +736,14 @@ class _DayPageState extends ConsumerState<DayPage> {
                                   selectedDay.day.clamp(1, daysInMonth),
                                 );
                                 setDialogState(() {
-                                  focusedDay = DateUtils.dateOnly(adjusted);
-                                  selectedDay = DateUtils.dateOnly(adjusted);
+                                  final normalized = DateUtils.dateOnly(
+                                    adjusted,
+                                  );
+                                  final clamped = normalized.isAfter(now)
+                                      ? now
+                                      : normalized;
+                                  focusedDay = clamped;
+                                  selectedDay = clamped;
                                 });
                               },
                             ),
@@ -649,8 +775,14 @@ class _DayPageState extends ConsumerState<DayPage> {
                                   selectedDay.day.clamp(1, daysInMonth),
                                 );
                                 setDialogState(() {
-                                  focusedDay = DateUtils.dateOnly(adjusted);
-                                  selectedDay = DateUtils.dateOnly(adjusted);
+                                  final normalized = DateUtils.dateOnly(
+                                    adjusted,
+                                  );
+                                  final clamped = normalized.isAfter(now)
+                                      ? now
+                                      : normalized;
+                                  focusedDay = clamped;
+                                  selectedDay = clamped;
                                 });
                               },
                             ),
@@ -666,7 +798,7 @@ class _DayPageState extends ConsumerState<DayPage> {
                         padding: const EdgeInsets.fromLTRB(6, 8, 6, 6),
                         child: TableCalendar<void>(
                           firstDay: DateTime(2005),
-                          lastDay: now.add(const Duration(days: 365)),
+                          lastDay: now,
                           focusedDay: focusedDay,
                           currentDay: now,
                           selectedDayPredicate: (day) =>
@@ -767,6 +899,7 @@ class _DayPageState extends ConsumerState<DayPage> {
     if (_current == null) return;
     final people = [..._current!.people]..remove(name);
     setState(() => _current = _current!.copyWith(names: people.join(';')));
+    _markDirtyAndScheduleAutosave();
   }
 
   bool _appendPersonName(String name) {
@@ -779,6 +912,7 @@ class _DayPageState extends ConsumerState<DayPage> {
     setState(() {
       _current = _current!.copyWith(names: [...people, normalized].join(';'));
     });
+    _markDirtyAndScheduleAutosave();
     return true;
   }
 
@@ -788,20 +922,14 @@ class _DayPageState extends ConsumerState<DayPage> {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      backgroundColor: const Color(0xFFF7FAFE),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
+      backgroundColor: Colors.transparent,
       builder: (context) => _AddPersonSheet(
         repository: ref.read(personRepositoryProvider),
         selectedNames: selectedNames,
       ),
     );
     if (!mounted || selected == null) return;
-    final added = _appendPersonName(selected.displayName);
-    if (added) {
-      await _save();
-    }
+    _appendPersonName(selected.displayName);
   }
 
   Future<void> _openPersonFromName(String name) async {
@@ -831,68 +959,86 @@ class _DayPageState extends ConsumerState<DayPage> {
 
       final selected = await showModalBottomSheet<PersonModel>(
         context: context,
-        backgroundColor: const Color(0xFFF7FAFE),
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-        ),
+        backgroundColor: Colors.transparent,
         builder: (context) {
+          final theme = Theme.of(context);
           return SafeArea(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(18, 18, 18, 24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Choose a person',
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w800,
-                      color: const Color(0xFF173B68),
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surface,
+                  borderRadius: BorderRadius.circular(28),
+                  border: Border.all(
+                    color: theme.colorScheme.outlineVariant.withValues(
+                      alpha: 0.38,
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Several saved people match "$query".',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: const Color(0xFF506882),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.22),
+                      blurRadius: 32,
+                      offset: const Offset(0, 18),
                     ),
-                  ),
-                  const SizedBox(height: 14),
-                  Flexible(
-                    child: ListView.separated(
-                      shrinkWrap: true,
-                      itemCount: matches.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 10),
-                      itemBuilder: (context, index) {
-                        final person = matches[index];
-                        final subtitle = [
-                          person.relation.trim(),
-                          person.profession.trim(),
-                        ].where((part) => part.isNotEmpty).join(' · ');
-                        return Material(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(20),
-                          child: ListTile(
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            title: Text(
-                              person.displayName,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
+                  ],
+                ),
+                padding: const EdgeInsets.fromLTRB(18, 18, 18, 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Choose a person',
+                      style: theme.textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Several saved people match "$query".',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Flexible(
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: matches.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 10),
+                        itemBuilder: (context, index) {
+                          final person = matches[index];
+                          final subtitle = [
+                            person.relation.trim(),
+                            person.profession.trim(),
+                          ].where((part) => part.isNotEmpty).join(' · ');
+                          return Material(
+                            color: theme.colorScheme.surfaceContainer,
+                            borderRadius: BorderRadius.circular(20),
+                            child: ListTile(
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(20),
                               ),
+                              title: Text(
+                                person.displayName,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              subtitle: subtitle.isEmpty
+                                  ? null
+                                  : Text(subtitle),
+                              trailing: const Icon(
+                                Icons.arrow_forward_ios_rounded,
+                              ),
+                              onTap: () => Navigator.of(context).pop(person),
                             ),
-                            subtitle: subtitle.isEmpty ? null : Text(subtitle),
-                            trailing: const Icon(
-                              Icons.arrow_forward_ios_rounded,
-                            ),
-                            onTap: () => Navigator.of(context).pop(person),
-                          ),
-                        );
-                      },
+                          );
+                        },
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           );
@@ -940,35 +1086,53 @@ class _DayPageState extends ConsumerState<DayPage> {
       _current = _current!.copyWith(keywords: tags.join(';'));
       _tagInput.clear();
     });
+    _markDirtyAndScheduleAutosave();
   }
 
   void _removeTag(String tag) {
     if (_current == null) return;
     final tags = [..._current!.tags]..remove(tag);
     setState(() => _current = _current!.copyWith(keywords: tags.join(';')));
+    _markDirtyAndScheduleAutosave();
   }
 
-  Future<void> _save() async {
+  Future<bool> _saveNow() async {
     final model = _current;
-    if (model == null) return;
+    if (model == null) return true;
+    if (!_dirty) {
+      _syncDraftStatus();
+      await _runQueuedNavigationIfNeeded();
+      return true;
+    }
+    if (_saving) return false;
 
+    _autosaveTimer?.cancel();
     setState(() {
       _saving = true;
       _status = '';
     });
+    ref.read(dayDraftControllerProvider.notifier).markSaving();
 
     try {
       await ref.read(storiesRepositoryProvider).saveDay(model);
       _cacheUpdate(model.date, (payload) => payload.copyWith(story: model));
+      final savedAt = DateTime.now();
       setState(() {
         _original = model;
-        _status = 'Saved ${DateFormat('HH:mm').format(DateTime.now())}';
+        _status = 'Saved ${DateFormat('HH:mm').format(savedAt)}';
       });
+      ref
+          .read(dayDraftControllerProvider.notifier)
+          .markClean(savedAt: savedAt, text: _status);
+      await _runQueuedNavigationIfNeeded();
+      return true;
     } catch (error) {
+      final message = error.toString().replaceFirst('Exception: ', '');
       setState(() {
-        _status =
-            'Save failed: ${error.toString().replaceFirst('Exception: ', '')}';
+        _status = 'Retry needed';
       });
+      ref.read(dayDraftControllerProvider.notifier).markError(message);
+      return false;
     } finally {
       if (mounted) {
         setState(() => _saving = false);
@@ -977,6 +1141,7 @@ class _DayPageState extends ConsumerState<DayPage> {
   }
 
   Future<void> _uploadFiles() async {
+    if (_saving) return;
     final date = formatYmd(ref.read(selectedDateProvider));
     final picked = await FilePicker.platform.pickFiles(
       allowMultiple: true,
@@ -984,25 +1149,79 @@ class _DayPageState extends ConsumerState<DayPage> {
     );
     if (picked == null || picked.files.isEmpty) return;
 
-    setState(() {
-      _status = 'Uploading ${picked.files.length} files...';
-    });
+    final files = picked.files
+        .where((item) => item.path != null)
+        .map((item) => File(item.path!))
+        .toList();
+    if (files.isEmpty) return;
 
-    try {
-      final files = picked.files
-          .where((item) => item.path != null)
-          .map((item) => File(item.path!))
-          .toList();
-      await ref.read(filesRepositoryProvider).uploadFiles(date, files);
-      _dayCache.remove(date);
-      _cacheOrder.remove(date);
-      await _loadDate(ref.read(selectedDateProvider));
-      setState(() => _status = 'Upload complete');
-    } catch (error) {
-      setState(
-        () => _status =
-            'Upload failed: ${error.toString().replaceFirst('Exception: ', '')}',
-      );
+    ref
+        .read(dayDraftControllerProvider.notifier)
+        .setUploading(true, text: 'Uploading ${files.length}');
+    await for (final batch
+        in ref
+            .read(filesRepositoryProvider)
+            .uploadFilesWithProgress(date, files)) {
+      if (!mounted) return;
+      setState(() {
+        _uploadQueue = batch.items;
+      });
+      if (batch.uploading) {
+        _status = 'Uploading ${(batch.overallProgress * 100).round()}%';
+        ref
+            .read(dayDraftControllerProvider.notifier)
+            .setUploading(true, text: _status);
+        continue;
+      }
+      if (batch.errorMessage != null && batch.errorMessage!.isNotEmpty) {
+        _status = 'Upload failed';
+        ref
+            .read(dayDraftControllerProvider.notifier)
+            .markError(batch.errorMessage!, text: 'Upload failed');
+        continue;
+      }
+      final result = batch.result;
+      if (result == null) continue;
+      final media = [...result.media, ..._media];
+      final nextStory = result.highlightImage.isNotEmpty && _current != null
+          ? _current!.copyWith(highlightImage: result.highlightImage)
+          : _current;
+      if (nextStory != null) {
+        _cacheUpdate(
+          nextStory.date,
+          (payload) => payload.copyWith(story: nextStory, media: media),
+        );
+      }
+      setState(() {
+        _uploadQueue = const [];
+        _media = media;
+        _current = nextStory;
+        _original = nextStory ?? _original;
+        _heroAsset = nextStory == null
+            ? _heroAsset
+            : _resolveHeroAssetForModel(nextStory, media);
+        _status = result.autoAssignedHighlight
+            ? 'Cover updated'
+            : 'Upload complete';
+      });
+      if (nextStory != null) {
+        await _updateHeroPalette(
+          DayPayloadModel(
+            story: nextStory,
+            media: media,
+            runs: _runs,
+            events: _events,
+            detailsLoaded: _events.isNotEmpty,
+          ),
+          nextStory.date,
+          _activeLoadId,
+        );
+      }
+      ref.read(dayDraftControllerProvider.notifier).setUploading(false);
+      ref
+          .read(dayDraftControllerProvider.notifier)
+          .markClean(text: _status, savedAt: DateTime.now());
+      unawaited(_refreshDate(ref.read(selectedDateProvider), _activeLoadId));
     }
   }
 
@@ -1020,8 +1239,11 @@ class _DayPageState extends ConsumerState<DayPage> {
     setState(() {
       _current = nextModel;
       _heroAsset = nextHeroAsset;
-      _status = 'Updating hero...';
+      _status = 'Updating cover';
     });
+    ref
+        .read(dayDraftControllerProvider.notifier)
+        .markSaving(text: 'Updating cover');
     await _updateHeroPalette(
       DayPayloadModel(
         story: nextModel,
@@ -1042,17 +1264,21 @@ class _DayPageState extends ConsumerState<DayPage> {
       );
       setState(() {
         _original = _original?.copyWith(highlightImage: media.path);
-        _status = 'Hero updated';
+        _status = 'Cover updated';
         _heroPickerEnabled = false;
       });
+      ref
+          .read(dayDraftControllerProvider.notifier)
+          .markClean(savedAt: DateTime.now(), text: _status);
       await _scrollToTop();
     } catch (error) {
+      final message = error.toString().replaceFirst('Exception: ', '');
       setState(() {
         _current = previousModel;
         _heroAsset = previousHeroAsset;
-        _status =
-            'Failed to update highlight: ${error.toString().replaceFirst('Exception: ', '')}';
+        _status = 'Retry needed';
       });
+      ref.read(dayDraftControllerProvider.notifier).markError(message);
       await _updateHeroPalette(
         DayPayloadModel(
           story: previousModel,
@@ -1110,6 +1336,54 @@ class _DayPageState extends ConsumerState<DayPage> {
     );
   }
 
+  Future<void> _showPlaceEditorSheet() async {
+    final draft = ref.read(dayDraftControllerProvider);
+    final result = await showModalBottomSheet<({String place, String country})>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _PlaceEditorSheet(
+        initialPlace: _place.text,
+        initialCountry: _country.text,
+        placeSuggestions: _placeSuggestions(),
+        countrySuggestions: _countrySuggestions(),
+        statusText: draft.statusText,
+        errorText: draft.errorMessage,
+      ),
+    );
+    if (!mounted || result == null) return;
+    if (_place.text.trim() == result.place.trim() &&
+        _country.text.trim() == result.country.trim()) {
+      return;
+    }
+    _place.text = result.place.trim();
+    _country.text = result.country.trim();
+    _markDirtyAndScheduleAutosave();
+  }
+
+  List<String> _placeSuggestions() {
+    final values = <String>{};
+    for (final payload in _dayCache.values) {
+      final place = payload.story.place.trim();
+      if (place.isNotEmpty && place != _place.text.trim()) {
+        values.add(place);
+      }
+    }
+    return values.take(6).toList();
+  }
+
+  List<String> _countrySuggestions() {
+    final values = <String>{};
+    for (final payload in _dayCache.values) {
+      final country = payload.story.country.trim();
+      if (country.isNotEmpty && country != _country.text.trim()) {
+        values.add(country);
+      }
+    }
+    return values.take(4).toList();
+  }
+
   Future<void> _updateHeroPalette(
     DayPayloadModel payload,
     String day,
@@ -1162,6 +1436,7 @@ class _DayPageState extends ConsumerState<DayPage> {
   @override
   Widget build(BuildContext context) {
     final date = ref.watch(selectedDateProvider);
+    final draft = ref.watch(dayDraftControllerProvider);
     final model = _current;
     final selectedDayKey = formatYmd(DateUtils.dateOnly(date));
 
@@ -1172,7 +1447,7 @@ class _DayPageState extends ConsumerState<DayPage> {
         if (!mounted) return;
         if (_pendingSyncDayKey != selectedDayKey) return;
         _pendingSyncDayKey = null;
-        unawaited(_loadDate(date));
+        unawaited(_handleRequestedDateChange(date));
       });
     }
 
@@ -1215,12 +1490,13 @@ class _DayPageState extends ConsumerState<DayPage> {
                   context,
                   date: date,
                   placeLine: placeLine,
+                  draft: draft,
                   canGoForward: !date.isAfter(
                     now.subtract(const Duration(days: 1)),
                   ),
                 ),
                 const SizedBox(height: 12),
-                _buildOverviewCard(context),
+                _buildOverviewCard(context, draft),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _description,
@@ -1271,19 +1547,45 @@ class _DayPageState extends ConsumerState<DayPage> {
                 SectionCard(
                   title: 'Gallery',
                   action: FilledButton.tonalIcon(
-                    onPressed: _uploadFiles,
+                    onPressed: draft.uploading ? null : _uploadFiles,
                     icon: const Icon(Icons.add_photo_alternate_outlined),
                     label: const Text('Upload'),
                   ),
                   padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
-                  child: _media.isEmpty
-                      ? _buildEmptyState(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (_heroPickerEnabled) ...[
+                        Text(
+                          'Tap a photo to set it as cover.',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+                      if (_uploadQueue.isNotEmpty) ...[
+                        _buildUploadQueue(context),
+                        const SizedBox(height: 12),
+                      ],
+                      if (_media.isEmpty)
+                        _buildEmptyState(
                           context,
                           icon: Icons.photo_library_outlined,
-                          title: 'No photos',
-                          subtitle: 'Upload media for this date.',
+                          title: draft.uploading
+                              ? 'Uploading photos'
+                              : 'No photos',
+                          subtitle: draft.uploading
+                              ? 'Your uploads will appear here.'
+                              : 'Upload media for this date.',
                         )
-                      : _buildGallery(context, model),
+                      else
+                        _buildGallery(context, model),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -1329,6 +1631,7 @@ class _DayPageState extends ConsumerState<DayPage> {
     BuildContext context, {
     required DateTime date,
     required String placeLine,
+    required DayDraftState draft,
     required bool canGoForward,
   }) {
     return Container(
@@ -1390,18 +1693,15 @@ class _DayPageState extends ConsumerState<DayPage> {
                       onPressed: () => _shiftDay(-1),
                     ),
                     const Spacer(),
-                    if (_status.isNotEmpty)
+                    if (draft.statusText.isNotEmpty)
                       _glassStatusPill(
                         context,
-                        _status,
-                        color:
-                            _status.startsWith('Save failed') ||
-                                _status.startsWith('Upload failed') ||
-                                _status.startsWith('Failed')
+                        draft.statusText,
+                        color: draft.hasError
                             ? const Color(0xFF832C2C)
                             : _heroAccent,
                       ),
-                    if (_status.isNotEmpty) const SizedBox(width: 8),
+                    if (draft.statusText.isNotEmpty) const SizedBox(width: 8),
                     _glassIconButton(
                       icon: Icons.chevron_right,
                       onPressed: canGoForward ? () => _shiftDay(1) : null,
@@ -1443,7 +1743,7 @@ class _DayPageState extends ConsumerState<DayPage> {
                     ),
                     const SizedBox(height: 10),
                     InkWell(
-                      onTap: _changeDate,
+                      onTap: _showPlaceEditorSheet,
                       borderRadius: BorderRadius.circular(999),
                       child: Container(
                         padding: const EdgeInsets.symmetric(
@@ -1461,7 +1761,7 @@ class _DayPageState extends ConsumerState<DayPage> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             const Icon(
-                              Icons.place_outlined,
+                              Icons.edit_location_alt_outlined,
                               color: Colors.white,
                               size: 15,
                             ),
@@ -1490,7 +1790,7 @@ class _DayPageState extends ConsumerState<DayPage> {
     );
   }
 
-  Widget _buildOverviewCard(BuildContext context) {
+  Widget _buildOverviewCard(BuildContext context, DayDraftState draft) {
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
@@ -1534,15 +1834,14 @@ class _DayPageState extends ConsumerState<DayPage> {
             ),
             const SizedBox(width: 6),
             FilledButton.tonalIcon(
-              onPressed: () {
-                _dismissKeyboard();
-                setState(() {
-                  _heroPickerEnabled = !_heroPickerEnabled;
-                  _status = _heroPickerEnabled
-                      ? 'Tap a gallery image to set the hero'
-                      : '';
-                });
-              },
+              onPressed: draft.uploading
+                  ? null
+                  : () {
+                      _dismissKeyboard();
+                      setState(() {
+                        _heroPickerEnabled = !_heroPickerEnabled;
+                      });
+                    },
               style: FilledButton.styleFrom(
                 backgroundColor: _heroPickerEnabled
                     ? _heroAccent
@@ -1570,7 +1869,7 @@ class _DayPageState extends ConsumerState<DayPage> {
             ),
             const SizedBox(width: 6),
             FilledButton.tonal(
-              onPressed: _uploadFiles,
+              onPressed: draft.uploading ? null : _uploadFiles,
               style: FilledButton.styleFrom(
                 backgroundColor: Color.lerp(_heroAccent, Colors.white, 0.86),
                 foregroundColor: _heroAccent,
@@ -1587,28 +1886,21 @@ class _DayPageState extends ConsumerState<DayPage> {
               child: const Text('Upload'),
             ),
             const SizedBox(width: 6),
-            FilledButton(
-              onPressed: _dirty && !_saving ? _save : null,
-              style: FilledButton.styleFrom(
-                backgroundColor: _heroAccent,
-                foregroundColor: Colors.white,
-                minimumSize: const Size(36, 36),
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+            if (draft.hasError)
+              FilledButton.tonalIcon(
+                onPressed: _saving ? null : () => unawaited(_saveNow()),
+                style: FilledButton.styleFrom(
+                  backgroundColor: colorScheme.errorContainer,
+                  foregroundColor: colorScheme.onErrorContainer,
+                  minimumSize: const Size(0, 36),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
                 ),
+                icon: const Icon(Icons.refresh_rounded, size: 16),
+                label: const Text('Retry'),
               ),
-              child: _saving
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : Icon(_dirty ? Icons.save_outlined : Icons.check_rounded),
-            ),
           ],
         ),
       ),
@@ -1616,22 +1908,49 @@ class _DayPageState extends ConsumerState<DayPage> {
   }
 
   Widget _buildRunsEventsSection(BuildContext context) {
+    if (_isFutureDayActive) {
+      return _buildEmptyState(
+        context,
+        icon: Icons.edit_calendar_outlined,
+        title: 'Future day',
+        subtitle:
+            'No runs or events yet. Use it for planning, notes, and media.',
+      );
+    }
+
     if (_detailsLoading) {
-      return Column(children: List.generate(3, (_) => _buildLoadingTile()));
+      return SizedBox(
+        height: 112,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: 3,
+          separatorBuilder: (_, __) => const SizedBox(width: 10),
+          itemBuilder: (_, __) => _buildLoadingTile(),
+        ),
+      );
     }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (_runs.isEmpty)
+        if (_runs.isEmpty && _events.isEmpty)
           _buildEmptyState(
             context,
             icon: Icons.directions_run_outlined,
-            title: 'No runs',
+            title: 'No runs or events',
             subtitle: 'Nothing synced for this date.',
           )
-        else
-          ..._runs.map((run) => _buildRunTile(context, run)),
+        else if (_runs.isNotEmpty)
+          SizedBox(
+            height: 118,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _runs.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (context, index) =>
+                  _buildRunTile(context, _runs[index]),
+            ),
+          ),
         if (_events.isNotEmpty) ...[
           const SizedBox(height: 16),
           Text(
@@ -1650,7 +1969,7 @@ class _DayPageState extends ConsumerState<DayPage> {
   Widget _buildLoadingTile() {
     final colorScheme = Theme.of(context).colorScheme;
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
+      width: 188,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainer,
@@ -1808,52 +2127,61 @@ class _DayPageState extends ConsumerState<DayPage> {
 
   Widget _buildRunTile(BuildContext context, RunModel run) {
     final colorScheme = Theme.of(context).colorScheme;
+    final pace = run.averageSpeed > 0 ? _formatRunPace(run.averageSpeed) : null;
     return InkWell(
       borderRadius: BorderRadius.circular(18),
       onTap: () => _openRunDetail(run),
       child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
+        width: 220,
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: colorScheme.surfaceContainer,
           borderRadius: BorderRadius.circular(18),
         ),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              height: 42,
-              width: 42,
-              decoration: BoxDecoration(
-                color: colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Icon(Icons.directions_run, color: colorScheme.primary),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
+            Row(
+              children: [
+                Container(
+                  height: 40,
+                  width: 40,
+                  decoration: BoxDecoration(
+                    color: colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(Icons.directions_run, color: colorScheme.primary),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
                     run.name.isEmpty ? 'Run ${run.id}' : run.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
                       fontWeight: FontWeight.w800,
                     ),
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    '${run.distanceKm.toStringAsFixed(1)} km',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
-            Icon(
-              Icons.arrow_forward_ios_rounded,
-              size: 16,
-              color: colorScheme.onSurfaceVariant,
+            const Spacer(),
+            Text(
+              '${run.distanceKm.toStringAsFixed(1)} km',
+              style: Theme.of(
+                context,
+              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              [
+                if (run.startTime.isNotEmpty) run.startTime,
+                if (run.movingMinutes > 0) '${run.movingMinutes} min',
+                if (pace != null) pace,
+              ].join(' · '),
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
             ),
           ],
         ),
@@ -1961,6 +2289,88 @@ class _DayPageState extends ConsumerState<DayPage> {
     );
   }
 
+  Widget _buildUploadQueue(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Column(
+      children: _uploadQueue.map((item) {
+        final isDone = item.status == UploadItemStatus.done;
+        final hasError = item.status == UploadItemStatus.failed;
+        return Container(
+          margin: const EdgeInsets.only(bottom: 10),
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainer,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: hasError
+                  ? colorScheme.error.withValues(alpha: 0.35)
+                  : colorScheme.outlineVariant.withValues(alpha: 0.5),
+            ),
+          ),
+          child: Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: SizedBox(
+                  width: 56,
+                  height: 56,
+                  child: Image.file(
+                    File(item.localPath),
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => ColoredBox(
+                      color: colorScheme.surfaceContainerHighest,
+                      child: Icon(
+                        Icons.photo_outlined,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.fileName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    LinearProgressIndicator(
+                      value: hasError ? null : item.progress.clamp(0, 1),
+                      minHeight: 6,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      hasError
+                          ? (item.errorMessage ?? 'Upload failed')
+                          : isDone
+                          ? 'Uploaded'
+                          : item.status == UploadItemStatus.processing
+                          ? 'Processing'
+                          : '${(item.progress * 100).round()}%',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: hasError
+                            ? colorScheme.error
+                            : colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+  }
+
   Widget _infoBadge({required IconData icon, required String label}) {
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -1993,6 +2403,14 @@ class _DayPageState extends ConsumerState<DayPage> {
         ],
       ),
     );
+  }
+
+  String? _formatRunPace(double averageSpeedMetersPerSecond) {
+    if (averageSpeedMetersPerSecond <= 0) return null;
+    final secondsPerKm = 1000 / averageSpeedMetersPerSecond;
+    final minutes = secondsPerKm ~/ 60;
+    final seconds = (secondsPerKm.round() % 60).toString().padLeft(2, '0');
+    return '$minutes:$seconds /km';
   }
 
   Widget _glassIconButton({
@@ -2063,7 +2481,11 @@ class _DayPageState extends ConsumerState<DayPage> {
           itemBuilder: (context, index) {
             final item = _media[index];
             final url = _galleryThumbUrl(item);
+            final isCover = _isSelectedMedia(model, item);
             return InkWell(
+              onLongPress: _heroPickerEnabled || _uploadQueue.isNotEmpty
+                  ? null
+                  : () => _setHighlight(item),
               onTap: () => _heroPickerEnabled
                   ? _setHighlight(item)
                   : _showImagePreview(item),
@@ -2112,6 +2534,29 @@ class _DayPageState extends ConsumerState<DayPage> {
                         ),
                       ),
                     ),
+                    if (isCover)
+                      Positioned(
+                        top: 10,
+                        right: 10,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.56),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: const Text(
+                            'Cover',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -2181,11 +2626,9 @@ class _DayPageState extends ConsumerState<DayPage> {
     final token =
         ref.read(authControllerProvider).value?.accessToken ??
         tokenStore.peekToken();
-    final gatewayToken = tokenStore.peekGatewayToken();
     return {
       if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
-      if (gatewayToken != null && gatewayToken.isNotEmpty)
-        'X-Gateway-Session': gatewayToken,
+      'X-Blue-Client': 'mobile',
     };
   }
 }
@@ -2201,6 +2644,161 @@ class _AddPersonSheet extends StatefulWidget {
 
   @override
   State<_AddPersonSheet> createState() => _AddPersonSheetState();
+}
+
+class _PlaceEditorSheet extends StatefulWidget {
+  const _PlaceEditorSheet({
+    required this.initialPlace,
+    required this.initialCountry,
+    required this.placeSuggestions,
+    required this.countrySuggestions,
+    required this.statusText,
+    required this.errorText,
+  });
+
+  final String initialPlace;
+  final String initialCountry;
+  final List<String> placeSuggestions;
+  final List<String> countrySuggestions;
+  final String statusText;
+  final String? errorText;
+
+  @override
+  State<_PlaceEditorSheet> createState() => _PlaceEditorSheetState();
+}
+
+class _PlaceEditorSheetState extends State<_PlaceEditorSheet> {
+  late final TextEditingController _placeController;
+  late final TextEditingController _countryController;
+
+  @override
+  void initState() {
+    super.initState();
+    _placeController = TextEditingController(text: widget.initialPlace);
+    _countryController = TextEditingController(text: widget.initialCountry);
+  }
+
+  @override
+  void dispose() {
+    _placeController.dispose();
+    _countryController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        12,
+        12,
+        12,
+        12 + MediaQuery.viewInsetsOf(context).bottom,
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          borderRadius: BorderRadius.circular(28),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.18),
+              blurRadius: 28,
+              offset: const Offset(0, 18),
+            ),
+          ],
+        ),
+        child: SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Where were you?',
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: _placeController,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Place',
+                    hintText: 'City, neighborhood, spot',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _countryController,
+                  decoration: const InputDecoration(
+                    labelText: 'Country',
+                    hintText: 'Country',
+                  ),
+                ),
+                if (widget.placeSuggestions.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: widget.placeSuggestions
+                        .map(
+                          (item) => ActionChip(
+                            label: Text(item),
+                            onPressed: () => _placeController.text = item,
+                          ),
+                        )
+                        .toList(),
+                  ),
+                ],
+                if (widget.countrySuggestions.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: widget.countrySuggestions
+                        .map(
+                          (item) => ActionChip(
+                            label: Text(item),
+                            onPressed: () => _countryController.text = item,
+                          ),
+                        )
+                        .toList(),
+                  ),
+                ],
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        widget.errorText ?? widget.statusText,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: widget.errorText != null
+                              ? theme.colorScheme.error
+                              : theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                    FilledButton(
+                      onPressed: () {
+                        Navigator.of(context).pop((
+                          place: _placeController.text.trim(),
+                          country: _countryController.text.trim(),
+                        ));
+                      },
+                      child: const Text('Done'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _AddPersonSheetState extends State<_AddPersonSheet> {
@@ -2295,109 +2893,136 @@ class _AddPersonSheetState extends State<_AddPersonSheet> {
     final visibleResults = query.length < 2 ? _popular : _results;
     return Padding(
       padding: EdgeInsets.fromLTRB(
-        18,
-        18,
-        18,
-        24 + MediaQuery.viewInsetsOf(context).bottom,
+        12,
+        12,
+        12,
+        12 + MediaQuery.viewInsetsOf(context).bottom,
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  _showCreate ? 'Create new person' : 'Add person',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w800,
-                    color: colorScheme.onSurface,
-                  ),
-                ),
-              ),
-              TextButton(
-                onPressed: () {
-                  setState(() {
-                    _showCreate = !_showCreate;
-                  });
-                },
-                child: Text(_showCreate ? 'Back' : 'New'),
-              ),
-            ],
+      child: Container(
+        decoration: BoxDecoration(
+          color: colorScheme.surface,
+          borderRadius: BorderRadius.circular(28),
+          border: Border.all(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.38),
           ),
-          const SizedBox(height: 14),
-          if (_showCreate)
-            _buildCreateForm(context)
-          else ...[
-            TextField(
-              controller: _searchController,
-              autofocus: true,
-              onChanged: _onChanged,
-              decoration: const InputDecoration(
-                labelText: 'Search people',
-                prefixIcon: Icon(Icons.search_rounded),
-              ),
-            ),
-            const SizedBox(height: 14),
-            Flexible(
-              child: _loading
-                  ? const Center(child: CircularProgressIndicator())
-                  : visibleResults.isEmpty
-                  ? _PickerInfoCard(
-                      icon: Icons.person_off_outlined,
-                      title: query.length < 2
-                          ? 'No popular people yet'
-                          : 'No matching person found',
-                      subtitle: '',
-                    )
-                  : ListView.separated(
-                      shrinkWrap: true,
-                      itemCount: visibleResults.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 10),
-                      itemBuilder: (context, index) {
-                        final person = visibleResults[index];
-                        final alreadySelected = _isAlreadySelected(person);
-                        final subtitle = [
-                          person.relation.trim(),
-                          person.profession.trim(),
-                        ].where((part) => part.isNotEmpty).join(' · ');
-                        return Material(
-                          color: alreadySelected
-                              ? colorScheme.secondaryContainer
-                              : colorScheme.surfaceContainer,
-                          borderRadius: BorderRadius.circular(20),
-                          child: ListTile(
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            title: Text(
-                              person.displayName,
-                              style: TextStyle(
-                                fontWeight: FontWeight.w700,
-                                color: alreadySelected
-                                    ? colorScheme.onSecondaryContainer
-                                    : null,
-                              ),
-                            ),
-                            subtitle: subtitle.isEmpty ? null : Text(subtitle),
-                            trailing: Icon(
-                              alreadySelected
-                                  ? Icons.check_circle_rounded
-                                  : Icons.add_circle_outline_rounded,
-                              color: alreadySelected
-                                  ? colorScheme.primary
-                                  : null,
-                            ),
-                            onTap: alreadySelected
-                                ? null
-                                : () => Navigator.of(context).pop(person),
-                          ),
-                        );
-                      },
-                    ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.22),
+              blurRadius: 32,
+              offset: const Offset(0, 18),
             ),
           ],
-        ],
+        ),
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _showCreate ? 'Create new person' : 'Add person',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          color: colorScheme.onSurface,
+                        ),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        setState(() {
+                          _showCreate = !_showCreate;
+                        });
+                      },
+                      child: Text(_showCreate ? 'Back' : 'New'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                if (_showCreate)
+                  _buildCreateForm(context)
+                else ...[
+                  TextField(
+                    controller: _searchController,
+                    autofocus: true,
+                    onChanged: _onChanged,
+                    decoration: const InputDecoration(
+                      labelText: 'Search people',
+                      prefixIcon: Icon(Icons.search_rounded),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Flexible(
+                    child: _loading
+                        ? const Center(child: CircularProgressIndicator())
+                        : visibleResults.isEmpty
+                        ? _PickerInfoCard(
+                            icon: Icons.person_off_outlined,
+                            title: query.length < 2
+                                ? 'No popular people yet'
+                                : 'No matching person found',
+                            subtitle: '',
+                          )
+                        : ListView.separated(
+                            shrinkWrap: true,
+                            itemCount: visibleResults.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(height: 10),
+                            itemBuilder: (context, index) {
+                              final person = visibleResults[index];
+                              final alreadySelected = _isAlreadySelected(
+                                person,
+                              );
+                              final subtitle = [
+                                person.relation.trim(),
+                                person.profession.trim(),
+                              ].where((part) => part.isNotEmpty).join(' · ');
+                              return Material(
+                                color: alreadySelected
+                                    ? colorScheme.secondaryContainer
+                                    : colorScheme.surfaceContainer,
+                                borderRadius: BorderRadius.circular(20),
+                                child: ListTile(
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  title: Text(
+                                    person.displayName,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w700,
+                                      color: alreadySelected
+                                          ? colorScheme.onSecondaryContainer
+                                          : null,
+                                    ),
+                                  ),
+                                  subtitle: subtitle.isEmpty
+                                      ? null
+                                      : Text(subtitle),
+                                  trailing: Icon(
+                                    alreadySelected
+                                        ? Icons.check_circle_rounded
+                                        : Icons.add_circle_outline_rounded,
+                                    color: alreadySelected
+                                        ? colorScheme.primary
+                                        : null,
+                                  ),
+                                  onTap: alreadySelected
+                                      ? null
+                                      : () => Navigator.of(context).pop(person),
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

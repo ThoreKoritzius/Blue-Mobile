@@ -8,8 +8,8 @@ class RunCacheStore {
   RunCacheStore() : _storage = const FlutterSecureStorage();
 
   static const int maxCachedDays = 3650;
-  static const String _indexKey = 'blue_run_cache_index_v1';
-  static const String _lastWarmAtKey = 'blue_run_cache_last_warm_at_v1';
+  static const String _indexKey = 'blue_run_cache_index_v2';
+  static const String _lastWarmAtKey = 'blue_run_cache_last_warm_at_v2';
 
   final FlutterSecureStorage _storage;
 

@@ -121,7 +121,10 @@ class GraphqlRunsRepository implements RunsRepository {
     int limitDays = RunCacheStore.maxCachedDays,
   }) async {
     final lastWarmAt = await _cacheStore.readLastWarmAt();
-    if (lastWarmAt != null &&
+    final cachedCount = (await _cacheStore.readAllRuns()).length;
+    final minimumExpected = (limitDays / 7).floor();
+    if (cachedCount >= minimumExpected &&
+        lastWarmAt != null &&
         DateTime.now().toUtc().difference(lastWarmAt) <
             const Duration(minutes: 20)) {
       return;

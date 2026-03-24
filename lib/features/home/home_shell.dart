@@ -40,6 +40,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     final ref = this.ref;
     final tabIndex = ref.watch(selectedTabProvider);
     final dayAccent = ref.watch(dayAppBarAccentProvider);
+    final dayDraft = ref.watch(dayDraftControllerProvider);
     final appBarBase = tabIndex == 0
         ? _complementaryScaffoldColor(dayAccent)
         : Theme.of(context).appBarTheme.backgroundColor ??
@@ -109,8 +110,19 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       body: IndexedStack(index: tabIndex, children: pages),
       bottomNavigationBar: NavigationBar(
         selectedIndex: tabIndex,
-        onDestinationSelected: (index) =>
-            ref.read(selectedTabProvider.notifier).state = index,
+        onDestinationSelected: (index) {
+          if (index == tabIndex) return;
+          if (tabIndex == 0 && !dayDraft.canNavigate) {
+            final message = dayDraft.hasError
+                ? (dayDraft.errorMessage ?? 'Retry needed before leaving Day.')
+                : 'Finish saving before leaving Day.';
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text(message)));
+            return;
+          }
+          ref.read(selectedTabProvider.notifier).state = index;
+        },
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.book_outlined),

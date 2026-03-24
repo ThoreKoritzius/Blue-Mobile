@@ -764,11 +764,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final token =
         ref.read(authControllerProvider).value?.accessToken ??
         tokenStore.peekToken();
-    final gatewayToken = tokenStore.peekGatewayToken();
     return {
       if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
-      if (gatewayToken != null && gatewayToken.isNotEmpty)
-        'X-Gateway-Session': gatewayToken,
+      'X-Blue-Client': 'mobile',
     };
   }
 
