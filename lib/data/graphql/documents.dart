@@ -327,4 +327,16 @@ query TimelineDay($date: String!) {
   }
 }
 ''';
+
+  static const dailyActivity = r'''
+query DailyActivity($date: String!) {
+  health {
+    dailyActivity(dateFrom: $date, dateTo: $date, first: 1) {
+      edges {
+        node
+      }
+    }
+  }
+}
+''';
 }

@@ -11,8 +11,10 @@ import 'package:table_calendar/table_calendar.dart';
 
 import '../../core/config/app_config.dart';
 import '../../core/utils/date_format.dart';
+import '../../data/graphql/documents.dart';
 import '../../core/widgets/section_card.dart';
 import '../../data/models/calendar_event_model.dart';
+import '../../data/models/daily_activity_model.dart';
 import '../../data/models/day_media_model.dart';
 import '../../data/models/day_payload_model.dart';
 import '../../data/models/person_model.dart';
@@ -55,6 +57,7 @@ class _DayPageState extends ConsumerState<DayPage> {
   List<DayMediaModel> _media = const [];
   List<RunModel> _runs = const [];
   List<CalendarEventModel> _events = const [];
+  DailyActivityModel? _dailyActivity;
   List<UploadItemStateModel> _uploadQueue = const [];
 
   bool _loading = true;
@@ -320,6 +323,28 @@ class _DayPageState extends ConsumerState<DayPage> {
     });
   }
 
+  Future<void> _loadDailyActivity(String day) async {
+    try {
+      final gql = ref.read(graphqlServiceProvider);
+      final response = await gql.query(
+        GqlDocuments.dailyActivity,
+        variables: {'date': day},
+      );
+      final edges = (((response['health'] as Map<String, dynamic>?)?['dailyActivity']
+              as Map<String, dynamic>?)?['edges'] as List<dynamic>?) ??
+          [];
+      if (!mounted) return;
+      if (edges.isNotEmpty) {
+        final node = (edges.first as Map<String, dynamic>)['node'];
+        if (node is Map<String, dynamic>) {
+          setState(() => _dailyActivity = DailyActivityModel.fromJson(node));
+        }
+      }
+    } catch (_) {
+      // non-critical, ignore silently
+    }
+  }
+
   Future<void> _loadCalendarEvents(String day, int requestId) async {
     try {
       final events = await ref
@@ -363,6 +388,7 @@ class _DayPageState extends ConsumerState<DayPage> {
     final isFutureDay = _isFutureDate(parseYmd(day));
     if (!isFutureDay) {
       unawaited(_loadCalendarEvents(day, requestId));
+      unawaited(_loadDailyActivity(day));
     }
     if (prefetchAdjacent && !_isRapidNavigation() && !isFutureDay) {
       unawaited(_prefetchAdjacentDays(DateUtils.dateOnly(parseYmd(day))));
@@ -390,6 +416,7 @@ class _DayPageState extends ConsumerState<DayPage> {
       _media = payload.media;
       _runs = payload.runs;
       _events = detailsLoaded ? payload.events : const [];
+      _dailyActivity = null;
       _heroAsset = heroAsset;
       if (clearStatus) {
         _status = '';
@@ -1510,6 +1537,12 @@ class _DayPageState extends ConsumerState<DayPage> {
                 ),
                 const SizedBox(height: 12),
                 SectionCard(
+                  title: 'Activity',
+                  padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
+                  child: _buildActivityBar(context),
+                ),
+                const SizedBox(height: 12),
+                SectionCard(
                   title: 'People met',
                   action: IconButton.filledTonal(
                     onPressed: _showAddPersonSheet,
@@ -2123,6 +2156,108 @@ class _DayPageState extends ConsumerState<DayPage> {
           ),
       ],
     );
+  }
+
+  Widget _buildActivityBar(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final act = _dailyActivity;
+
+    if (act == null) {
+      return const SizedBox(height: 36);
+    }
+
+    final steps = act.stepCount;
+    final distKm = act.distanceM != null ? act.distanceM! / 1000.0 : null;
+    final cyclingMin = act.cyclingDurationMs != null
+        ? (act.cyclingDurationMs! / 60000).round()
+        : null;
+
+    return Row(
+      children: [
+        if (steps != null)
+          Expanded(
+            child: _activityChip(
+              context,
+              icon: Icons.directions_walk_rounded,
+              value: _formatSteps(steps),
+              label: 'steps',
+              color: colorScheme.primary,
+            ),
+          ),
+        if (steps != null && distKm != null) const SizedBox(width: 10),
+        if (distKm != null)
+          Expanded(
+            child: _activityChip(
+              context,
+              icon: Icons.straighten_rounded,
+              value: '${distKm.toStringAsFixed(1)} km',
+              label: 'distance',
+              color: const Color(0xFF1A7A4A),
+            ),
+          ),
+        if (cyclingMin != null && cyclingMin > 0) ...[
+          const SizedBox(width: 10),
+          Expanded(
+            child: _activityChip(
+              context,
+              icon: Icons.directions_bike_rounded,
+              value: '$cyclingMin min',
+              label: 'cycling',
+              color: const Color(0xFF7C4DDB),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _activityChip(
+    BuildContext context, {
+    required IconData icon,
+    required String value,
+    required String label,
+    required Color color,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: color),
+          const SizedBox(width: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                value,
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: colorScheme.onSurface,
+                ),
+              ),
+              Text(
+                label,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatSteps(int steps) {
+    if (steps >= 1000) {
+      return '${(steps / 1000.0).toStringAsFixed(1)}k';
+    }
+    return '$steps';
   }
 
   Widget _buildRunTile(BuildContext context, RunModel run) {

@@ -115,7 +115,32 @@ class _MapPageState extends ConsumerState<MapPage> {
       } else {
         _ensureImagesLoadedIfNeeded();
       }
+      // If a day-view was requested and runs are already loaded, enter now.
+      // If runs are still loading, _pendingDayViewDate will be consumed in _loadRuns.
+      final pending = _pendingDayViewDate;
+      if (pending != null && !_runsLoading) {
+        _pendingDayViewDate = null;
+        _enterDayView(pending);
+      }
     });
+    _selectedDateSubscription = ref.listenManual<DateTime>(
+      selectedDateProvider,
+      (previous, next) {
+        // Only treat this as a map day-view request when the map tab is active.
+        if (ref.read(selectedTabProvider) != _mapTabIndex) return;
+        final dateStr =
+            '${next.year.toString().padLeft(4, '0')}-'
+            '${next.month.toString().padLeft(2, '0')}-'
+            '${next.day.toString().padLeft(2, '0')}';
+        if (_isVisibleTab && !_runsLoading) {
+          // Tab visible and runs loaded — enter day-view immediately.
+          _enterDayView(dateStr);
+        } else {
+          // Either tab not yet visible or runs still loading — consume later.
+          _pendingDayViewDate = dateStr;
+        }
+      },
+    );
     if (_isVisibleTab) {
       _load();
     } else {
@@ -128,6 +153,7 @@ class _MapPageState extends ConsumerState<MapPage> {
     _viewportDebounceTimer?.cancel();
     _nextImagePageTimer?.cancel();
     _selectedTabSubscription.close();
+    _selectedDateSubscription.close();
     super.dispose();
   }
 
@@ -182,6 +208,11 @@ class _MapPageState extends ConsumerState<MapPage> {
         _runsLoaded = overlays.length;
         _runsLoading = false;
       });
+      final pending = _pendingDayViewDate;
+      if (pending != null) {
+        _pendingDayViewDate = null;
+        _enterDayView(pending);
+      }
     } catch (error, stackTrace) {
       debugPrint('[MAP] _loadRuns failed: $error');
       debugPrintStack(stackTrace: stackTrace);
@@ -1089,14 +1120,18 @@ class _MapPageState extends ConsumerState<MapPage> {
     // If still empty, seed with the requested date.
     if (dates.isEmpty) dates.add(date);
 
+    // Always ensure the requested date is present in the list.
+    if (!dates.contains(date)) dates.add(date);
+    dates.sort();
+
     final idx = dates.indexOf(date);
     setState(() {
       _dayViewMode = true;
       _dayViewDates = dates;
-      _dayViewDateIndex = idx >= 0 ? idx : dates.length - 1;
-      _dayViewDate = dates[idx >= 0 ? idx : dates.length - 1];
+      _dayViewDateIndex = idx;
+      _dayViewDate = date;
     });
-    await _loadDayView(_dayViewDate);
+    await _loadDayView(date);
   }
 
   void _exitDayView() {
