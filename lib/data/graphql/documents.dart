@@ -309,4 +309,22 @@ subscription ChatStream($messages: [ChatMessageInput!]!) {
   }
 }
 ''';
+
+  static const timelineWhenWasINear = r'''
+query TimelineWhenWasINear($location: String!) {
+  timeline {
+    whenWasINear(location: $location)
+  }
+}
+''';
+
+  static const timelineDay = r'''
+query TimelineDay($date: String!) {
+  timeline {
+    polyline(date: $date)
+    runs(date: $date)
+    imageLocations(date: $date)
+  }
+}
+''';
 }

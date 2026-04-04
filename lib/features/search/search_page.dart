@@ -8,6 +8,8 @@ import '../../core/config/app_config.dart';
 import '../../core/utils/date_format.dart';
 import '../../data/models/memory_search_result_model.dart';
 import '../../data/models/person_model.dart';
+import '../../data/models/story_day_model.dart';
+import '../../data/repositories/map_repository.dart';
 import '../../data/repositories/search_repository.dart';
 import '../../providers.dart';
 import '../persons/person_detail_page.dart';
@@ -117,10 +119,16 @@ class _SearchPageState extends ConsumerState<SearchPage>
   };
   late Map<MemorySearchMode, _TabSearchState> _tabStates;
 
+  // Near tab
+  bool _nearLoading = false;
+  String _nearError = '';
+  WhenWasINearResult? _nearResult;
+  Map<String, StoryDayModel> _nearDayCache = {};
+
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     _tabStates = {
       MemorySearchMode.days: _TabSearchState.empty(pageSize: _daysPageSize),
       MemorySearchMode.images: _TabSearchState.empty(pageSize: _imagesPageSize),
@@ -150,8 +158,17 @@ class _SearchPageState extends ConsumerState<SearchPage>
       ? MemorySearchMode.days
       : MemorySearchMode.images;
 
+  bool get _isNearTab => _tabController.index == 2;
+
   void _handleTabChanged() {
     if (_tabController.indexIsChanging || !mounted) return;
+    if (_isNearTab) {
+      if (_activeQuery.isNotEmpty && _nearResult == null && !_nearLoading) {
+        _runNearSearch(_activeQuery, generation: _queryGeneration);
+      }
+      setState(() {});
+      return;
+    }
     final state = _tabStates[_activeMode]!;
     if (_activeQuery.isEmpty || state.hasRequested) {
       setState(() {});
@@ -190,6 +207,9 @@ class _SearchPageState extends ConsumerState<SearchPage>
       _activeQuery = query;
       _peopleHits = const [];
       _peopleLoading = query.length >= 2;
+      _nearResult = null;
+      _nearError = '';
+      _nearLoading = false;
       _tabStates = {
         MemorySearchMode.days: _TabSearchState.empty(pageSize: _daysPageSize),
         MemorySearchMode.images: _TabSearchState.empty(
@@ -198,12 +218,16 @@ class _SearchPageState extends ConsumerState<SearchPage>
       };
     });
 
-    _runSearch(
-      query,
-      mode: _activeMode,
-      reset: true,
-      generation: _queryGeneration,
-    );
+    if (_isNearTab) {
+      _runNearSearch(query, generation: _queryGeneration);
+    } else {
+      _runSearch(
+        query,
+        mode: _activeMode,
+        reset: true,
+        generation: _queryGeneration,
+      );
+    }
     _runPeopleSearch(query, generation: _queryGeneration);
   }
 
@@ -234,6 +258,43 @@ class _SearchPageState extends ConsumerState<SearchPage>
       setState(() {
         _peopleHits = const [];
         _peopleLoading = false;
+      });
+    }
+  }
+
+  Future<void> _runNearSearch(String query, {required int generation}) async {
+    if (query.isEmpty) return;
+    setState(() {
+      _nearLoading = true;
+      _nearError = '';
+      _nearResult = null;
+      _nearDayCache = {};
+    });
+    try {
+      final result = await ref.read(mapRepositoryProvider).whenWasINear(query);
+      if (!mounted || generation != _queryGeneration) return;
+
+      // Populate cache from locally stored stories — no extra network calls.
+      final cachedDays = await ref
+          .read(storiesRepositoryProvider)
+          .getCachedRecentDays(limit: 9999);
+      if (!mounted || generation != _queryGeneration) return;
+
+      final cache = <String, StoryDayModel>{};
+      for (final day in cachedDays) {
+        cache[day.date] = day;
+      }
+
+      setState(() {
+        _nearResult = result;
+        _nearDayCache = cache;
+        _nearLoading = false;
+      });
+    } catch (error) {
+      if (!mounted || generation != _queryGeneration) return;
+      setState(() {
+        _nearError = error.toString().replaceFirst('Exception: ', '');
+        _nearLoading = false;
       });
     }
   }
@@ -458,6 +519,11 @@ class _SearchPageState extends ConsumerState<SearchPage>
                     text:
                         'Images (${_tabStates[MemorySearchMode.images]!.total})',
                   ),
+                  Tab(
+                    text: _nearResult != null
+                        ? 'Near (${_nearResult!.dates.length})'
+                        : 'Near',
+                  ),
                 ],
               ),
             ),
@@ -560,6 +626,7 @@ class _SearchPageState extends ConsumerState<SearchPage>
                   state: _tabStates[MemorySearchMode.images]!,
                   authHeaders: authHeaders,
                 ),
+                _buildNearBody(),
               ],
             ),
           ),
@@ -761,6 +828,207 @@ class _SearchPageState extends ConsumerState<SearchPage>
           item: state.items[index],
           authHeaders: authHeaders,
           onTap: () => _openResult(state.items[index]),
+        );
+      },
+    );
+  }
+
+  Widget _buildNearBody() {
+    final authHeaders = _authHeaders();
+    final theme = Theme.of(context);
+
+    if (_activeQuery.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 88,
+                height: 88,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: LinearGradient(
+                    colors: [
+                      theme.colorScheme.surfaceContainerHighest,
+                      theme.colorScheme.surfaceContainer,
+                    ],
+                  ),
+                ),
+                child: Icon(
+                  Icons.location_searching_rounded,
+                  size: 42,
+                  color: theme.colorScheme.primary,
+                ),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                'Search nearby',
+                style: theme.textTheme.headlineSmall
+                    ?.copyWith(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Enter a place name to find all days you were near it.',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyLarge?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (_nearLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_nearError.isNotEmpty) {
+      return _SearchErrorState(
+        message: _nearError,
+        onRetry: () =>
+            _runNearSearch(_activeQuery, generation: _queryGeneration),
+      );
+    }
+
+    if (_nearResult == null) return const SizedBox.shrink();
+
+    final result = _nearResult!;
+
+    if (result.dates.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 90,
+                height: 90,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(28),
+                  color: theme.colorScheme.surfaceContainerHighest,
+                ),
+                child: Icon(
+                  Icons.location_off_outlined,
+                  size: 42,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                'No visits found',
+                style: theme.textTheme.headlineSmall
+                    ?.copyWith(fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'No days found near "${result.location}".',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyLarge?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+      itemCount: result.dates.length + 1, // +1 for location header
+      itemBuilder: (context, index) {
+        // Location header card — tapping opens map day-view
+        if (index == 0) {
+          return Card(
+            margin: const EdgeInsets.only(bottom: 16),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: () {
+                // Navigate to map tab and enter day-view on the first date
+                Navigator.of(context).pop();
+                ref.read(selectedTabProvider.notifier).state = 4;
+                // Store the near-result dates so the map can open them.
+                // We use selectedDateProvider to signal the first date.
+                if (result.dates.isNotEmpty) {
+                  ref.read(selectedDateProvider.notifier).state =
+                      parseYmd(result.dates.first);
+                }
+              },
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.primaryContainer,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.map_outlined,
+                        color: theme.colorScheme.onPrimaryContainer,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            result.location,
+                            style: theme.textTheme.titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '${result.dates.length} day${result.dates.length == 1 ? '' : 's'} visited · tap to view on map',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      Icons.chevron_right,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
+
+        final date = result.dates[index - 1];
+        final story = _nearDayCache[date];
+        final preview = story?.highlightImage.trim() ?? '';
+        final place = story?.place.trim() ?? '';
+        final description = story?.description.trim() ?? '';
+
+        return _SearchResultCard(
+          item: MemorySearchResultModel(
+            date: date,
+            place: place,
+            names: '',
+            description: description,
+            keywords: '',
+            country: '',
+            highlightImage: preview,
+            path: preview,
+          ),
+          authHeaders: authHeaders,
+          onTap: () {
+            ref.read(selectedDateProvider.notifier).state = parseYmd(date);
+            ref.read(selectedTabProvider.notifier).state = 0;
+            Navigator.of(context).pop();
+          },
         );
       },
     );

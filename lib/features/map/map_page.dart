@@ -61,6 +61,8 @@ class _MapPageState extends ConsumerState<MapPage> {
   final MapController _mapController = MapController();
   final Map<String, _ImageOverlay> _imageCache = <String, _ImageOverlay>{};
   late final ProviderSubscription<int> _selectedTabSubscription;
+  late final ProviderSubscription<DateTime> _selectedDateSubscription;
+  String? _pendingDayViewDate;
 
   Timer? _viewportDebounceTimer;
   Timer? _nextImagePageTimer;
@@ -82,6 +84,16 @@ class _MapPageState extends ConsumerState<MapPage> {
   _MapStyle _mapStyle = _MapStyle.light;
   _DisplayType _displayType = _DisplayType.both;
   bool _differentRouteColors = false;
+
+  // Day-view state
+  bool _dayViewMode = false;
+  String _dayViewDate = '';
+  bool _dayViewLoading = false;
+  String _dayViewError = '';
+  TimelineDayData? _dayViewData;
+  // All dates with run data, used to build the slider
+  List<String> _dayViewDates = const [];
+  int _dayViewDateIndex = 0;
 
   @override
   void initState() {
@@ -407,6 +419,8 @@ class _MapPageState extends ConsumerState<MapPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (_dayViewMode) return _buildDayView(context);
+
     final tileConfig = AppConfig.mapTileConfig(_mapStyle.name);
     final center = _initialCenter();
     final showImages = _displayType != _DisplayType.runs;
@@ -563,7 +577,263 @@ class _MapPageState extends ConsumerState<MapPage> {
             child: const Icon(Icons.tune),
           ),
         ),
+        // Day-view toggle at bottom-left
+        if (!_runsLoading)
+          Positioned(
+            left: 16,
+            bottom: 16,
+            child: FloatingActionButton.small(
+              heroTag: 'map_day_toggle',
+              tooltip: 'Day view',
+              onPressed: _runs.isNotEmpty
+                  ? () => _enterDayView(_runs.last.run.startDateLocal.split('T').first)
+                  : null,
+              child: const Icon(Icons.calendar_today),
+            ),
+          ),
       ],
+    );
+  }
+
+  Widget _buildDayView(BuildContext context) {
+    final tileConfig = AppConfig.mapTileConfig(_mapStyle.name);
+    final data = _dayViewData;
+    final walkColor = _mapStyle == _MapStyle.dark
+        ? const Color(0xFF81C784)
+        : const Color(0xFF2E7D32);
+    final imageBorderColor = _mapStyle == _MapStyle.dark
+        ? const Color(0xFF6EB1FF)
+        : const Color(0xFFD32F2F);
+
+    // Walk points come directly as LatLng list from the repository
+    final walkPoints = data != null
+        ? data.walkPoints.map((p) => LatLng(p.lat, p.lon)).toList()
+        : const <LatLng>[];
+
+    // Decode run polylines
+    final runPolylines = <Polyline>[];
+    final runMarkers = <Marker>[];
+    if (data != null) {
+      for (final run in data.runs) {
+        if (run.summaryPolyline.isEmpty) continue;
+        try {
+          final pts = decodePolyline(run.summaryPolyline)
+              .map((p) => LatLng(p[0].toDouble(), p[1].toDouble()))
+              .toList();
+          if (pts.length < 2) continue;
+          final color = _colorForSeed(run.id);
+          runPolylines.add(Polyline(points: pts, strokeWidth: 3, color: color));
+          runMarkers.add(
+            Marker(
+              point: pts.first,
+              width: 28,
+              height: 28,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.88),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white),
+                ),
+                child: const Icon(Icons.directions_run, size: 16, color: Colors.white),
+              ),
+            ),
+          );
+        } catch (_) {}
+      }
+    }
+
+    // Image markers
+    final imageMarkers = <Marker>[];
+    if (data != null) {
+      for (final img in data.imageLocations) {
+        imageMarkers.add(
+          Marker(
+            point: LatLng(img.lat, img.lon),
+            width: 28,
+            height: 28,
+            child: GestureDetector(
+              onTap: () => _showDayImageSheet(img, _dayViewDate),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: imageBorderColor.withValues(alpha: 0.92),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white),
+                  boxShadow: const [BoxShadow(blurRadius: 6, color: Color(0x33000000))],
+                ),
+                child: const Icon(Icons.photo_camera, size: 14, color: Colors.white),
+              ),
+            ),
+          ),
+        );
+      }
+    }
+
+    final hasSlider = _dayViewDates.length > 1;
+
+    return Stack(
+      children: [
+        FlutterMap(
+          mapController: _mapController,
+          options: MapOptions(
+            initialCenter: _initialCenter(),
+            initialZoom: _currentZoom,
+            onMapReady: _onMapReady,
+            onPositionChanged: (camera, _) => _handleCameraChanged(camera),
+          ),
+          children: [
+            TileLayer(
+              urlTemplate: tileConfig.urlTemplate,
+              subdomains: tileConfig.subdomains,
+              maxZoom: tileConfig.maxZoom.toDouble(),
+              userAgentPackageName: 'blue_mobile',
+            ),
+            if (walkPoints.length >= 2)
+              PolylineLayer(
+                polylines: [
+                  Polyline(points: walkPoints, strokeWidth: 4, color: walkColor),
+                ],
+              ),
+            if (runPolylines.isNotEmpty)
+              PolylineLayer(polylines: runPolylines),
+            if (runMarkers.isNotEmpty)
+              MarkerLayer(markers: runMarkers),
+            if (imageMarkers.isNotEmpty)
+              MarkerLayer(markers: imageMarkers),
+          ],
+        ),
+        // Top bar: back button + date label + loading/error
+        Positioned(
+          top: 16,
+          left: 16,
+          right: 84,
+          child: Row(
+            children: [
+              Material(
+                color: const Color(0xD9222222),
+                borderRadius: BorderRadius.circular(20),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(20),
+                  onTap: _exitDayView,
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.arrow_back, color: Colors.white, size: 18),
+                        SizedBox(width: 6),
+                        Text('Overview', style: TextStyle(color: Colors.white)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Material(
+                  color: const Color(0xD9222222),
+                  borderRadius: BorderRadius.circular(20),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    child: _dayViewLoading
+                        ? const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              ),
+                              SizedBox(width: 8),
+                              Text('Loading…', style: TextStyle(color: Colors.white)),
+                            ],
+                          )
+                        : _dayViewError.isNotEmpty
+                            ? Text(
+                                _dayViewError,
+                                style: const TextStyle(color: Color(0xFFFF8A80)),
+                                overflow: TextOverflow.ellipsis,
+                              )
+                            : Text(
+                                _dayViewDate,
+                                style: const TextStyle(color: Colors.white),
+                              ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // Bottom: date slider
+        if (hasSlider)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: _DaySlider(
+              dates: _dayViewDates,
+              currentIndex: _dayViewDateIndex,
+              onChanged: _onDaySliderChanged,
+            ),
+          ),
+        // Controls FAB
+        Positioned(
+          right: 16,
+          bottom: hasSlider ? 80 : 16,
+          child: FloatingActionButton(
+            heroTag: 'map_controls',
+            onPressed: _showControlsSheet,
+            child: const Icon(Icons.tune),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _showDayImageSheet(TimelineImageLocation img, String date) {
+    return showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(date, style: Theme.of(context).textTheme.titleLarge),
+                  const SizedBox(height: 12),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: CachedNetworkImage(
+                      imageUrl: img.path,
+                      httpHeaders: _authHeaders(),
+                      height: 220,
+                      width: double.infinity,
+                      fit: BoxFit.cover,
+                      errorWidget: (_, __, ___) => Container(
+                        height: 220,
+                        color: const Color(0x11000000),
+                        alignment: Alignment.center,
+                        child: const Icon(Icons.image_not_supported_outlined),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton(
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      _openDay(date);
+                    },
+                    child: const Text('Open day'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -797,6 +1067,104 @@ class _MapPageState extends ConsumerState<MapPage> {
     ref.read(selectedTabProvider.notifier).state = 0;
   }
 
+  // ── Day-view ────────────────────────────────────────────────────────────────
+
+  Future<void> _enterDayView(String date) async {
+    // Build a sorted list of unique dates from loaded runs, capped at today.
+    final today = DateTime.now();
+    final todayStr =
+        '${today.year.toString().padLeft(4, '0')}-'
+        '${today.month.toString().padLeft(2, '0')}-'
+        '${today.day.toString().padLeft(2, '0')}';
+    final dates = _runs
+        .map((r) => r.run.startDateLocal.split('T').first)
+        .where((d) => d.isNotEmpty && d.compareTo(todayStr) <= 0)
+        .toSet()
+        .toList()
+      ..sort();
+
+    // Always include today as the rightmost tick.
+    if (!dates.contains(todayStr)) dates.add(todayStr);
+
+    // If still empty, seed with the requested date.
+    if (dates.isEmpty) dates.add(date);
+
+    final idx = dates.indexOf(date);
+    setState(() {
+      _dayViewMode = true;
+      _dayViewDates = dates;
+      _dayViewDateIndex = idx >= 0 ? idx : dates.length - 1;
+      _dayViewDate = dates[idx >= 0 ? idx : dates.length - 1];
+    });
+    await _loadDayView(_dayViewDate);
+  }
+
+  void _exitDayView() {
+    setState(() {
+      _dayViewMode = false;
+      _dayViewData = null;
+      _dayViewError = '';
+      _dayViewLoading = false;
+    });
+  }
+
+  Future<void> _loadDayView(String date) async {
+    setState(() {
+      _dayViewLoading = true;
+      _dayViewError = '';
+      _dayViewData = null;
+      _dayViewDate = date;
+    });
+    try {
+      final data = await ref
+          .read(mapRepositoryProvider)
+          .loadTimelineDay(date);
+      if (!mounted) return;
+      setState(() {
+        _dayViewData = data;
+        _dayViewLoading = false;
+      });
+      // Fit map to the day's content.
+      _fitDayViewBounds(data);
+    } catch (error, stackTrace) {
+      debugPrint('[DAY_VIEW] loadDayView failed date=$date error=$error');
+      debugPrintStack(stackTrace: stackTrace);
+      if (!mounted) return;
+      setState(() {
+        _dayViewLoading = false;
+        _dayViewError = error.toString().replaceFirst('Exception: ', '');
+      });
+    }
+  }
+
+  void _fitDayViewBounds(TimelineDayData data) {
+    final points = <LatLng>[
+      for (final img in data.imageLocations) LatLng(img.lat, img.lon),
+    ];
+    points.addAll(data.walkPoints.map((p) => LatLng(p.lat, p.lon)));
+    for (final run in data.runs) {
+      if (run.summaryPolyline.isEmpty) continue;
+      try {
+        points.addAll(
+          decodePolyline(run.summaryPolyline)
+              .map((p) => LatLng(p[0].toDouble(), p[1].toDouble())),
+        );
+      } catch (_) {}
+    }
+    if (points.length < 2) return;
+    final bounds = LatLngBounds.fromPoints(points);
+    _mapController.fitCamera(
+      CameraFit.bounds(bounds: bounds, padding: const EdgeInsets.all(40)),
+    );
+  }
+
+  void _onDaySliderChanged(double value) {
+    final idx = value.round().clamp(0, _dayViewDates.length - 1);
+    if (idx == _dayViewDateIndex) return;
+    setState(() => _dayViewDateIndex = idx);
+    _loadDayView(_dayViewDates[idx]);
+  }
+
   Map<String, String> _authHeaders() {
     final tokenStore = ref.read(authTokenStoreProvider);
     final token =
@@ -845,6 +1213,61 @@ class _MapPageState extends ConsumerState<MapPage> {
     final saturation = 0.55 + (random.nextDouble() * 0.25);
     final value = 0.72 + (random.nextDouble() * 0.18);
     return HSVColor.fromAHSV(1, hue, saturation, value).toColor();
+  }
+}
+
+class _DaySlider extends StatelessWidget {
+  const _DaySlider({
+    required this.dates,
+    required this.currentIndex,
+    required this.onChanged,
+  });
+
+  final List<String> dates;
+  final int currentIndex;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final date = dates[currentIndex];
+    return Container(
+      color: const Color(0xD9222222),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                dates.first,
+                style: const TextStyle(color: Colors.white70, fontSize: 11),
+              ),
+              Text(
+                date,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Text(
+                'Today',
+                style: TextStyle(color: Colors.white70, fontSize: 11),
+              ),
+            ],
+          ),
+          Slider(
+            value: currentIndex.toDouble(),
+            min: 0,
+            max: (dates.length - 1).toDouble(),
+            divisions: dates.length - 1,
+            onChanged: onChanged,
+            activeColor: Colors.white,
+            inactiveColor: Colors.white30,
+          ),
+        ],
+      ),
+    );
   }
 }
 
