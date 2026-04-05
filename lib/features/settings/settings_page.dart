@@ -1,22 +1,69 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/config/app_config.dart';
+import '../../core/network/graphql_service.dart';
 import '../../data/models/auth_session.dart';
 import '../../providers.dart';
 
-class SettingsPage extends ConsumerWidget {
+class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends ConsumerState<SettingsPage> {
+  bool _importing = false;
+  String? _importResult;
+
+  Future<void> _importTakeout() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+      withData: true,
+    );
+    if (picked == null || picked.files.isEmpty) return;
+    final bytes = picked.files.first.bytes;
+    if (bytes == null) return;
+
+    setState(() {
+      _importing = true;
+      _importResult = null;
+    });
+    try {
+      final graphql = ref.read(graphqlServiceProvider);
+      final data = await graphql.mutateMultipartWithProgress(
+        r'''
+          mutation ImportTakeout($files: [Upload!]!) {
+            timeline { importTakeout(files: $files) { message } }
+          }
+        ''',
+        files: [MultipartUploadFile(filename: 'Zeitachse.json', bytes: bytes)],
+        onProgress: (_, __) {},
+      );
+      final message = (data['timeline'] as Map?)?['importTakeout']?['message'] as String?;
+      setState(() {
+        _importResult = message ?? 'Import complete';
+      });
+    } catch (e) {
+      setState(() {
+        _importResult = 'Error: $e';
+      });
+    } finally {
+      setState(() {
+        _importing = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final session = ref.watch(authControllerProvider).valueOrNull;
     final themeMode = ref.watch(themeModeProvider);
     final isDark = themeMode == ThemeMode.dark;
-    final backendUri = Uri.tryParse(AppConfig.backendUrl);
-
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
@@ -58,12 +105,32 @@ class SettingsPage extends ConsumerWidget {
               ],
             ),
           ),
+          const SizedBox(height: 20),
+          _SectionCard(
+            title: 'Data Import',
+            subtitle: 'Import Google Takeout location history',
+            child: _SettingRow(
+              icon: Icons.upload_file_rounded,
+              title: 'Google Timeline',
+              subtitle: _importResult ?? 'Upload Zeitachse.json',
+              trailing: _importing
+                  ? const SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : FilledButton.tonal(
+                      onPressed: _importTakeout,
+                      child: const Text('Upload'),
+                    ),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Future<void> _confirmSignOut(BuildContext context, WidgetRef ref) async {
+  Future<void> _confirmSignOut() async {
     final shouldSignOut = await showDialog<bool>(
       context: context,
       builder: (context) {
@@ -86,9 +153,9 @@ class SettingsPage extends ConsumerWidget {
       },
     );
 
-    if (shouldSignOut != true || !context.mounted) return;
+    if (shouldSignOut != true || !mounted) return;
     await ref.read(authControllerProvider.notifier).signOut();
-    if (context.mounted) {
+    if (mounted) {
       Navigator.of(context).pop();
     }
   }

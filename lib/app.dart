@@ -18,7 +18,7 @@ class BlueMobileApp extends ConsumerWidget {
     ref.read(themeModeProvider.notifier).initialize();
 
     return MaterialApp(
-      title: 'Blue Mobile',
+      title: 'Blue',
       debugShowCheckedModeBanner: false,
       theme: buildAppTheme(brightness: Brightness.light),
       darkTheme: buildAppTheme(brightness: Brightness.dark),
