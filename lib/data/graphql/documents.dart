@@ -202,6 +202,13 @@ query DayBundle($day: String!, $filesFirst: Int!, $runsFirst: Int!) {
       }
     }
   }
+  health {
+    dailyActivity(dateFrom: $day, dateTo: $day, first: 1) {
+      edges {
+        node
+      }
+    }
+  }
 }
 ''';
 

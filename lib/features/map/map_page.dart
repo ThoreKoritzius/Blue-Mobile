@@ -478,6 +478,9 @@ class _MapPageState extends ConsumerState<MapPage> {
             initialZoom: _currentZoom,
             onMapReady: _onMapReady,
             onPositionChanged: (camera, _) => _handleCameraChanged(camera),
+            interactionOptions: const InteractionOptions(
+              flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+            ),
           ),
           children: [
             TileLayer(
@@ -710,6 +713,9 @@ class _MapPageState extends ConsumerState<MapPage> {
             initialZoom: _currentZoom,
             onMapReady: _onMapReady,
             onPositionChanged: (camera, _) => _handleCameraChanged(camera),
+            interactionOptions: const InteractionOptions(
+              flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+            ),
           ),
           children: [
             TileLayer(

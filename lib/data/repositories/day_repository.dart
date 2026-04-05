@@ -1,5 +1,6 @@
 import '../../core/network/graphql_service.dart';
 import '../graphql/documents.dart';
+import '../models/daily_activity_model.dart';
 import '../models/day_media_model.dart';
 import '../models/day_payload_model.dart';
 import '../models/run_model.dart';
@@ -34,14 +35,10 @@ class GraphqlDayRepository implements DayRepository {
     final story = await _storiesRepository.getCachedDay(day);
     List<RunModel> runs = const [];
     if (!_isFutureDay(day)) {
-      try {
-        runs = await _runsRepository.runsForDate(day);
-      } catch (_) {
-        final cachedRuns = await _runsRepository.getCachedRuns();
-        runs = cachedRuns
-            .where((run) => run.startDateLocal.split('T').first == day)
-            .toList();
-      }
+      final cachedRuns = await _runsRepository.getCachedRuns();
+      runs = cachedRuns
+          .where((run) => run.startDateLocal.split('T').first == day)
+          .toList();
     }
     if (story == null && runs.isEmpty) return null;
     return DayPayloadModel(
@@ -122,6 +119,19 @@ class GraphqlDayRepository implements DayRepository {
           .map(RunModel.fromJson)
           .toList();
       await _runsRepository.cacheRuns(dayRuns);
+      final activityEdges =
+          (((response['health'] as Map<String, dynamic>?)?['dailyActivity']
+                      as Map<String, dynamic>?)?['edges']
+                  as List<dynamic>?) ??
+              const [];
+      DailyActivityModel? activity;
+      if (activityEdges.isNotEmpty) {
+        final node = (activityEdges.first as Map<String, dynamic>)['node'];
+        if (node is Map<String, dynamic>) {
+          activity = DailyActivityModel.fromJson(node);
+        }
+      }
+
       return DayPayloadModel(
         story: story,
         media: fileEdges
@@ -132,6 +142,7 @@ class GraphqlDayRepository implements DayRepository {
         runs: dayRuns,
         events: const [],
         detailsLoaded: false,
+        activity: activity,
       );
     } catch (_) {
       final cached = await getCachedDayCorePayload(day);

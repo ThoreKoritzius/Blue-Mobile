@@ -13,7 +13,6 @@ import '../../core/config/app_config.dart';
 import '../../core/utils/date_format.dart';
 import '../../data/graphql/documents.dart';
 import '../../core/widgets/section_card.dart';
-import '../../data/models/calendar_event_model.dart';
 import '../../data/models/daily_activity_model.dart';
 import '../../data/models/day_media_model.dart';
 import '../../data/models/day_payload_model.dart';
@@ -37,7 +36,6 @@ class DayPage extends ConsumerStatefulWidget {
 class _DayPageState extends ConsumerState<DayPage> {
   static const _defaultHeroAccent = Color(0xFF174EA6);
   static const _maxDayCacheEntries = 7;
-  static const _loadDebounce = Duration(milliseconds: 90);
   static const _navigationBurstWindow = Duration(milliseconds: 260);
 
   late final TextEditingController _place;
@@ -51,19 +49,16 @@ class _DayPageState extends ConsumerState<DayPage> {
   final List<String> _cacheOrder = <String>[];
 
   Timer? _pendingLoadTimer;
-  Timer? _autosaveTimer;
   StoryDayModel? _original;
   StoryDayModel? _current;
   List<DayMediaModel> _media = const [];
   List<RunModel> _runs = const [];
-  List<CalendarEventModel> _events = const [];
   DailyActivityModel? _dailyActivity;
   List<UploadItemStateModel> _uploadQueue = const [];
 
   bool _loading = true;
   bool _saving = false;
   bool _transitioningDay = false;
-  bool _detailsLoading = false;
   bool _heroPickerEnabled = false;
   bool _syncingControllers = false;
   String _status = '';
@@ -111,7 +106,6 @@ class _DayPageState extends ConsumerState<DayPage> {
     _description.dispose();
     _tagInput.dispose();
     _pendingLoadTimer?.cancel();
-    _autosaveTimer?.cancel();
     _scrollController.dispose();
     _selectedDateSubscription.close();
     super.dispose();
@@ -163,16 +157,11 @@ class _DayPageState extends ConsumerState<DayPage> {
   }
 
   void _markDirtyAndScheduleAutosave() {
-    _autosaveTimer?.cancel();
     if (!_dirty) {
       _syncDraftStatus();
       return;
     }
     _syncDraftStatus('Unsaved changes');
-    _autosaveTimer = Timer(
-      const Duration(milliseconds: 850),
-      () => unawaited(_saveNow()),
-    );
   }
 
   Future<void> _loadDate(DateTime date) async {
@@ -194,18 +183,18 @@ class _DayPageState extends ConsumerState<DayPage> {
       setState(() {
         _loading = false;
         _transitioningDay = false;
-        _detailsLoading = isFutureDay ? false : !cached.detailsLoaded;
       });
-      if (!_isRapidNavigation()) {
-        _schedulePostApplyWork(
-          day,
-          requestId,
-          cached,
-          includeFullHero: false,
-          prefetchAdjacent: false,
-        );
-        unawaited(_refreshDate(normalized, requestId));
+      if (cached.activity == null && !isFutureDay) {
+        unawaited(_loadDailyActivity(day));
       }
+      _schedulePostApplyWork(
+        day,
+        requestId,
+        cached,
+        includeFullHero: false,
+        prefetchAdjacent: !_isRapidNavigation(),
+      );
+      unawaited(_refreshDate(normalized, requestId));
       return;
     }
 
@@ -223,7 +212,6 @@ class _DayPageState extends ConsumerState<DayPage> {
         setState(() {
           _loading = false;
           _transitioningDay = false;
-          _detailsLoading = !isFutureDay;
         });
       }
       unawaited(_refreshDate(normalized, requestId));
@@ -233,7 +221,6 @@ class _DayPageState extends ConsumerState<DayPage> {
     setState(() {
       _loading = _current == null;
       _transitioningDay = _current != null;
-      _detailsLoading = !isFutureDay;
       _status = '';
     });
     await _refreshDate(normalized, requestId);
@@ -250,7 +237,6 @@ class _DayPageState extends ConsumerState<DayPage> {
       final payload = isFutureDay
           ? basePayload.copyWith(
               runs: const <RunModel>[],
-              events: const <CalendarEventModel>[],
               detailsLoaded: true,
             )
           : basePayload;
@@ -265,7 +251,6 @@ class _DayPageState extends ConsumerState<DayPage> {
         setState(() {
           _loading = false;
           _transitioningDay = false;
-          _detailsLoading = !isFutureDay;
         });
         _schedulePostApplyWork(
           day,
@@ -281,7 +266,6 @@ class _DayPageState extends ConsumerState<DayPage> {
           _status = error.toString().replaceFirst('Exception: ', '');
           _loading = false;
           _transitioningDay = false;
-          _detailsLoading = false;
         });
       }
     }
@@ -307,20 +291,8 @@ class _DayPageState extends ConsumerState<DayPage> {
   }
 
   void _scheduleLoadForDate(DateTime date) {
-    final normalized = DateUtils.dateOnly(date);
-    final day = formatYmd(normalized);
-    final cached = _dayCache[day];
-
     _pendingLoadTimer?.cancel();
-    if (cached != null) {
-      unawaited(_loadDate(normalized));
-      return;
-    }
-
-    _pendingLoadTimer = Timer(_loadDebounce, () {
-      if (!mounted) return;
-      unawaited(_loadDate(normalized));
-    });
+    unawaited(_loadDate(DateUtils.dateOnly(date)));
   }
 
   Future<void> _loadDailyActivity(String day) async {
@@ -330,42 +302,22 @@ class _DayPageState extends ConsumerState<DayPage> {
         GqlDocuments.dailyActivity,
         variables: {'date': day},
       );
+      if (!mounted) return;
       final edges = (((response['health'] as Map<String, dynamic>?)?['dailyActivity']
               as Map<String, dynamic>?)?['edges'] as List<dynamic>?) ??
           [];
-      if (!mounted) return;
       if (edges.isNotEmpty) {
         final node = (edges.first as Map<String, dynamic>)['node'];
         if (node is Map<String, dynamic>) {
-          setState(() => _dailyActivity = DailyActivityModel.fromJson(node));
+          final result = DailyActivityModel.fromJson(node);
+          _cacheUpdate(day, (p) => p.copyWith(activity: result));
+          if (_activeDayKey == day && mounted) {
+            setState(() => _dailyActivity = result);
+          }
         }
       }
     } catch (_) {
       // non-critical, ignore silently
-    }
-  }
-
-  Future<void> _loadCalendarEvents(String day, int requestId) async {
-    try {
-      final events = await ref
-          .read(calendarRepositoryProvider)
-          .eventsForDate(day);
-      final cached = _cacheGet(day);
-      if (cached != null) {
-        _cachePut(day, cached.copyWith(events: events, detailsLoaded: true));
-      }
-      if (_isActiveRequest(requestId, day) && mounted) {
-        setState(() {
-          _events = events;
-          _detailsLoading = false;
-        });
-      }
-    } catch (_) {
-      if (_isActiveRequest(requestId, day) && mounted) {
-        setState(() {
-          _detailsLoading = false;
-        });
-      }
     }
   }
 
@@ -386,8 +338,7 @@ class _DayPageState extends ConsumerState<DayPage> {
       ),
     );
     final isFutureDay = _isFutureDate(parseYmd(day));
-    if (!isFutureDay) {
-      unawaited(_loadCalendarEvents(day, requestId));
+    if (!isFutureDay && payload.activity == null) {
       unawaited(_loadDailyActivity(day));
     }
     if (prefetchAdjacent && !_isRapidNavigation() && !isFutureDay) {
@@ -400,7 +351,6 @@ class _DayPageState extends ConsumerState<DayPage> {
     required bool detailsLoaded,
     bool clearStatus = false,
   }) {
-    _autosaveTimer?.cancel();
     _syncingControllers = true;
     _place.text = payload.story.place;
     _country.text = payload.story.country;
@@ -415,8 +365,7 @@ class _DayPageState extends ConsumerState<DayPage> {
       _current = payload.story;
       _media = payload.media;
       _runs = payload.runs;
-      _events = detailsLoaded ? payload.events : const [];
-      _dailyActivity = null;
+      _dailyActivity = payload.activity;
       _heroAsset = heroAsset;
       if (clearStatus) {
         _status = '';
@@ -454,7 +403,7 @@ class _DayPageState extends ConsumerState<DayPage> {
 
   Future<void> _prefetchAdjacentDays(DateTime date) async {
     if (_isRapidNavigation()) return;
-    for (final delta in const [-1, 1]) {
+    for (final delta in const [-2, -1, 1, 2]) {
       unawaited(_prefetchDate(date.add(Duration(days: delta))));
     }
   }
@@ -462,8 +411,12 @@ class _DayPageState extends ConsumerState<DayPage> {
   Future<void> _prefetchDate(DateTime date) async {
     if (!mounted) return;
     final day = formatYmd(DateUtils.dateOnly(date));
+    final isFuture = _isFutureDate(date);
     final cached = _dayCache[day];
     if (cached != null && cached.detailsLoaded) {
+      if (cached.activity == null && !isFuture) {
+        unawaited(_loadDailyActivity(day));
+      }
       await _precacheDayImages(
         cached,
         day: day,
@@ -474,14 +427,8 @@ class _DayPageState extends ConsumerState<DayPage> {
     }
 
     try {
-      final payload = await ref
-          .read(dayRepositoryProvider)
-          .getDayCorePayload(day);
-      _cachePut(day, payload);
-      final events = await ref
-          .read(calendarRepositoryProvider)
-          .eventsForDate(day);
-      _cachePut(day, payload.copyWith(events: events, detailsLoaded: true));
+      final payload = await ref.read(dayRepositoryProvider).getDayCorePayload(day);
+      _cachePut(day, payload.copyWith(events: const [], detailsLoaded: true));
       await _precacheDayImages(
         payload,
         day: day,
@@ -537,7 +484,6 @@ class _DayPageState extends ConsumerState<DayPage> {
       return false;
     }
     if (_dirty) {
-      _queueNavigation(next, 'Saving before switching');
       final saved = await _saveNow();
       if (!saved) return false;
     }
@@ -1133,7 +1079,8 @@ class _DayPageState extends ConsumerState<DayPage> {
     }
     if (_saving) return false;
 
-    _autosaveTimer?.cancel();
+    final savedDay = model.date; // capture — _activeDayKey may change mid-save
+
     setState(() {
       _saving = true;
       _status = '';
@@ -1142,23 +1089,26 @@ class _DayPageState extends ConsumerState<DayPage> {
 
     try {
       await ref.read(storiesRepositoryProvider).saveDay(model);
-      _cacheUpdate(model.date, (payload) => payload.copyWith(story: model));
+      _cacheUpdate(savedDay, (payload) => payload.copyWith(story: model));
       final savedAt = DateTime.now();
-      setState(() {
-        _original = model;
-        _status = 'Saved ${DateFormat('HH:mm').format(savedAt)}';
-      });
-      ref
-          .read(dayDraftControllerProvider.notifier)
-          .markClean(savedAt: savedAt, text: _status);
+      // Only update _original if we're still on the day we saved
+      if (_activeDayKey == savedDay && mounted) {
+        setState(() {
+          _original = model;
+          _status = 'Saved ${DateFormat('HH:mm').format(savedAt)}';
+        });
+        ref
+            .read(dayDraftControllerProvider.notifier)
+            .markClean(savedAt: savedAt, text: _status);
+      }
       await _runQueuedNavigationIfNeeded();
       return true;
     } catch (error) {
       final message = error.toString().replaceFirst('Exception: ', '');
-      setState(() {
-        _status = 'Retry needed';
-      });
-      ref.read(dayDraftControllerProvider.notifier).markError(message);
+      if (_activeDayKey == savedDay && mounted) {
+        setState(() => _status = 'Retry needed');
+        ref.read(dayDraftControllerProvider.notifier).markError(message);
+      }
       return false;
     } finally {
       if (mounted) {
@@ -1237,8 +1187,8 @@ class _DayPageState extends ConsumerState<DayPage> {
             story: nextStory,
             media: media,
             runs: _runs,
-            events: _events,
-            detailsLoaded: _events.isNotEmpty,
+            events: const [],
+            detailsLoaded: true,
           ),
           nextStory.date,
           _activeLoadId,
@@ -1276,8 +1226,8 @@ class _DayPageState extends ConsumerState<DayPage> {
         story: nextModel,
         media: _media,
         runs: _runs,
-        events: _events,
-        detailsLoaded: _events.isNotEmpty,
+        events: const [],
+        detailsLoaded: true,
       ),
       nextModel.date,
       _activeLoadId,
@@ -1311,8 +1261,8 @@ class _DayPageState extends ConsumerState<DayPage> {
           story: previousModel,
           media: _media,
           runs: _runs,
-          events: _events,
-          detailsLoaded: _events.isNotEmpty,
+          events: const [],
+          detailsLoaded: true,
         ),
         previousModel.date,
         _activeLoadId,
@@ -1496,6 +1446,7 @@ class _DayPageState extends ConsumerState<DayPage> {
     return GestureDetector(
       onTap: _dismissKeyboard,
       onHorizontalDragEnd: (details) {
+        if (_dirty) return; // don't swipe away while editing
         final velocity = details.primaryVelocity ?? 0;
         if (velocity < -220) {
           _shiftDay(1);
@@ -1535,12 +1486,14 @@ class _DayPageState extends ConsumerState<DayPage> {
                         'Write the atmosphere of the day, what surprised you, who you met, what stayed with you...',
                   ),
                 ),
-                const SizedBox(height: 12),
-                SectionCard(
-                  title: 'Activity',
-                  padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
-                  child: _buildActivityBar(context),
-                ),
+                if (_dailyActivity != null) ...[
+                  const SizedBox(height: 12),
+                  SectionCard(
+                    title: 'Activity',
+                    padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
+                    child: _buildActivityBar(context),
+                  ),
+                ],
                 const SizedBox(height: 12),
                 SectionCard(
                   title: 'People met',
@@ -1621,6 +1574,33 @@ class _DayPageState extends ConsumerState<DayPage> {
                   ),
                 ),
               ],
+            ),
+          ),
+          AnimatedPositioned(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            right: 18,
+            bottom: _dirty ? (18 + bottomInset) : -(72 + bottomInset),
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 180),
+              opacity: _dirty ? 1.0 : 0.0,
+              child: FloatingActionButton.extended(
+                onPressed: _saving ? null : () => unawaited(_saveNow()),
+                backgroundColor: _heroAccent,
+                foregroundColor: Colors.white,
+                elevation: 6,
+                icon: _saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.check_rounded),
+                label: Text(_saving ? 'Saving…' : 'Save'),
+              ),
             ),
           ),
           if (_transitioningDay)
@@ -1863,7 +1843,7 @@ class _DayPageState extends ConsumerState<DayPage> {
             const SizedBox(width: 6),
             _infoBadge(
               icon: Icons.directions_run_outlined,
-              label: _detailsLoading ? '...' : '${_runs.length}',
+              label: '${_runs.length}',
             ),
             const SizedBox(width: 6),
             FilledButton.tonalIcon(
@@ -1951,105 +1931,26 @@ class _DayPageState extends ConsumerState<DayPage> {
       );
     }
 
-    if (_detailsLoading) {
-      return SizedBox(
-        height: 112,
-        child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          itemCount: 3,
-          separatorBuilder: (_, __) => const SizedBox(width: 10),
-          itemBuilder: (_, __) => _buildLoadingTile(),
-        ),
+    if (_runs.isEmpty) {
+      return _buildEmptyState(
+        context,
+        icon: Icons.directions_run_outlined,
+        title: 'No runs',
+        subtitle: 'Nothing synced for this date.',
       );
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (_runs.isEmpty && _events.isEmpty)
-          _buildEmptyState(
-            context,
-            icon: Icons.directions_run_outlined,
-            title: 'No runs or events',
-            subtitle: 'Nothing synced for this date.',
-          )
-        else if (_runs.isNotEmpty)
-          SizedBox(
-            height: 118,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: _runs.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 10),
-              itemBuilder: (context, index) =>
-                  _buildRunTile(context, _runs[index]),
-            ),
-          ),
-        if (_events.isNotEmpty) ...[
-          const SizedBox(height: 16),
-          Text(
-            'Events',
-            style: Theme.of(
-              context,
-            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 8),
-          ..._events.map((event) => _buildEventTile(context, event)),
-        ],
-      ],
+    return SizedBox(
+      height: 118,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: _runs.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 10),
+        itemBuilder: (context, index) => _buildRunTile(context, _runs[index]),
+      ),
     );
   }
 
-  Widget _buildLoadingTile() {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      width: 188,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainer,
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Row(
-        children: [
-          Container(
-            height: 42,
-            width: 42,
-            decoration: BoxDecoration(
-              color: colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(14),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              children: [
-                Container(
-                  height: 12,
-                  decoration: BoxDecoration(
-                    color: colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: FractionallySizedBox(
-                    widthFactor: 0.52,
-                    child: Container(
-                      height: 10,
-                      decoration: BoxDecoration(
-                        color: colorScheme.surfaceContainerHigh,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   Widget _buildChipEditor({
     required TextEditingController controller,
@@ -2160,11 +2061,7 @@ class _DayPageState extends ConsumerState<DayPage> {
 
   Widget _buildActivityBar(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final act = _dailyActivity;
-
-    if (act == null) {
-      return const SizedBox(height: 36);
-    }
+    final act = _dailyActivity!;
 
     final steps = act.stepCount;
     final distKm = act.distanceM != null ? act.distanceM! / 1000.0 : null;
@@ -2340,51 +2237,6 @@ class _DayPageState extends ConsumerState<DayPage> {
     );
   }
 
-  Widget _buildEventTile(BuildContext context, CalendarEventModel event) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainer,
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Row(
-        children: [
-          Container(
-            height: 42,
-            width: 42,
-            decoration: BoxDecoration(
-              color: colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(Icons.event_outlined, color: colorScheme.primary),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  event.summary.isEmpty ? 'Untitled event' : event.summary,
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  event.start.isEmpty ? 'All day' : event.start,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   Widget _buildEmptyState(
     BuildContext context, {

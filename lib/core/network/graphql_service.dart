@@ -21,8 +21,8 @@ class GraphqlService {
     debugPrint('[AUTH] $message');
   }
 
-  Future<Map<String, String>> buildAuthHeaders() async {
-    final token = await _tokenStore.readToken();
+  Map<String, String> buildAuthHeaders() {
+    final token = _tokenStore.peekToken();
     return {
       if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
       if (!kIsWeb) 'X-Blue-Client': 'mobile',
@@ -73,7 +73,7 @@ class GraphqlService {
                 document: gql(document),
                 variables: variables,
                 context: Context.fromList([
-                  HttpLinkHeaders(headers: await buildAuthHeaders()),
+                  HttpLinkHeaders(headers: buildAuthHeaders()),
                 ]),
               ),
             )
@@ -101,7 +101,7 @@ class GraphqlService {
         Uri.parse(AppConfig.graphqlHttpUrl),
         onProgress: onProgress,
       );
-      request.headers.addAll(await buildAuthHeaders());
+      request.headers.addAll(buildAuthHeaders());
 
       final operationsVariables = <String, dynamic>{
         ...variables,
@@ -161,7 +161,7 @@ class GraphqlService {
           headers: {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
-            ...await buildAuthHeaders(),
+            ...buildAuthHeaders(),
           },
           body: jsonEncode({'query': document, 'variables': variables}),
         )
@@ -216,7 +216,7 @@ class GraphqlService {
     String document, {
     Map<String, dynamic> variables = const {},
   }) async* {
-    final headers = await buildAuthHeaders();
+    final headers = buildAuthHeaders();
     Link link = HttpLink(
       AppConfig.graphqlHttpUrl,
       httpClient: createGraphqlHttpClient(),
