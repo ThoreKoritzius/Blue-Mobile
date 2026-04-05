@@ -9,10 +9,15 @@ import 'package:intl/intl.dart';
 import 'package:palette_generator/palette_generator.dart';
 import 'package:table_calendar/table_calendar.dart';
 
+import 'package:flutter_map/flutter_map.dart';
+import 'package:google_polyline_algorithm/google_polyline_algorithm.dart';
+import 'package:latlong2/latlong.dart';
+
 import '../../core/config/app_config.dart';
 import '../../core/utils/date_format.dart';
 import '../../data/graphql/documents.dart';
 import '../../core/widgets/section_card.dart';
+import '../../data/repositories/map_repository.dart';
 import '../../data/models/daily_activity_model.dart';
 import '../../data/models/day_media_model.dart';
 import '../../data/models/day_payload_model.dart';
@@ -54,6 +59,7 @@ class _DayPageState extends ConsumerState<DayPage> {
   List<DayMediaModel> _media = const [];
   List<RunModel> _runs = const [];
   DailyActivityModel? _dailyActivity;
+  TimelineDayData? _timelineDay;
   List<UploadItemStateModel> _uploadQueue = const [];
 
   bool _loading = true;
@@ -171,7 +177,9 @@ class _DayPageState extends ConsumerState<DayPage> {
     final requestId = ++_activeLoadId;
     _activeDayKey = day;
     _lastNavigationAt = DateTime.now();
+    _timelineDay = null;
     ref.read(dayDraftControllerProvider.notifier).setCurrentDay(day);
+    unawaited(_loadTimeline(day));
 
     final cached = _cacheGet(day);
     if (cached != null) {
@@ -293,6 +301,14 @@ class _DayPageState extends ConsumerState<DayPage> {
   void _scheduleLoadForDate(DateTime date) {
     _pendingLoadTimer?.cancel();
     unawaited(_loadDate(DateUtils.dateOnly(date)));
+  }
+
+  Future<void> _loadTimeline(String day) async {
+    try {
+      final data = await ref.read(mapRepositoryProvider).loadTimelineDay(day);
+      if (!mounted || _activeDayKey != day) return;
+      setState(() => _timelineDay = data);
+    } catch (_) {}
   }
 
   Future<void> _loadDailyActivity(String day) async {
@@ -1494,6 +1510,10 @@ class _DayPageState extends ConsumerState<DayPage> {
                         'Write the atmosphere of the day, what surprised you, who you met, what stayed with you...',
                   ),
                 ),
+                if (_timelineDay != null && _timelineDay!.hasData) ...[
+                  const SizedBox(height: 12),
+                  _buildTimelineMapCard(context),
+                ],
                 if (_dailyActivity != null) ...[
                   const SizedBox(height: 12),
                   SectionCard(
@@ -1923,6 +1943,103 @@ class _DayPageState extends ConsumerState<DayPage> {
                 label: const Text('Retry'),
               ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTimelineMapCard(BuildContext context) {
+    final data = _timelineDay!;
+    final colorScheme = Theme.of(context).colorScheme;
+
+    final walkLatLngs = data.walkPoints.map((p) => LatLng(p.lat, p.lon)).toList();
+
+    final runPolylines = data.runs
+        .where((r) => r.summaryPolyline.isNotEmpty)
+        .map((r) {
+          final decoded = decodePolyline(r.summaryPolyline);
+          return decoded.map((p) => LatLng(p[0].toDouble(), p[1].toDouble())).toList();
+        })
+        .where((pts) => pts.isNotEmpty)
+        .toList();
+
+    final allPoints = [
+      ...walkLatLngs,
+      ...runPolylines.expand((pts) => pts),
+      ...data.imageLocations.map((i) => LatLng(i.lat, i.lon)),
+    ];
+    if (allPoints.isEmpty) return const SizedBox.shrink();
+
+    final bounds = LatLngBounds.fromPoints(allPoints);
+
+    return SectionCard(
+      title: 'Movement',
+      padding: EdgeInsets.zero,
+      child: ClipRRect(
+        borderRadius: const BorderRadius.only(
+          bottomLeft: Radius.circular(16),
+          bottomRight: Radius.circular(16),
+        ),
+        child: SizedBox(
+          height: 260,
+          child: FlutterMap(
+            options: MapOptions(
+              initialCameraFit: CameraFit.bounds(
+                bounds: bounds,
+                padding: const EdgeInsets.all(32),
+              ),
+              interactionOptions: const InteractionOptions(
+                flags: InteractiveFlag.pinchZoom | InteractiveFlag.drag,
+              ),
+            ),
+            children: [
+              TileLayer(
+                urlTemplate: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+                subdomains: const ['a', 'b', 'c'],
+                userAgentPackageName: 'com.blue.app',
+              ),
+              if (walkLatLngs.length > 1)
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: walkLatLngs,
+                      color: colorScheme.primary.withValues(alpha: 0.85),
+                      strokeWidth: 3,
+                    ),
+                  ],
+                ),
+              if (runPolylines.isNotEmpty)
+                PolylineLayer(
+                  polylines: runPolylines
+                      .map((pts) => Polyline(
+                            points: pts,
+                            color: Colors.orange.withValues(alpha: 0.9),
+                            strokeWidth: 4,
+                          ))
+                      .toList(),
+                ),
+              if (data.imageLocations.isNotEmpty)
+                MarkerLayer(
+                  markers: data.imageLocations
+                      .map((img) => Marker(
+                            point: LatLng(img.lat, img.lon),
+                            width: 10,
+                            height: 10,
+                            child: Container(
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: colorScheme.primary,
+                                  width: 2,
+                                ),
+                              ),
+                            ),
+                          ))
+                      .toList(),
+                ),
+            ],
+          ),
         ),
       ),
     );

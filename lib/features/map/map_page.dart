@@ -657,18 +657,29 @@ class _MapPageState extends ConsumerState<MapPage> {
           if (pts.length < 2) continue;
           final color = _colorForSeed(run.id);
           runPolylines.add(Polyline(points: pts, strokeWidth: 3, color: color));
+          // Try to find the matching full RunOverlay for the sheet.
+          final matchingOverlay = _runs.where((r) => r.run.id == run.id).firstOrNull;
           runMarkers.add(
             Marker(
               point: pts.first,
               width: 28,
               height: 28,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.88),
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white),
+              child: GestureDetector(
+                onTap: () {
+                  if (matchingOverlay != null) {
+                    _showRunSheet(matchingOverlay);
+                  } else {
+                    _showDayRunSheet(run);
+                  }
+                },
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.88),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white),
+                  ),
+                  child: const Icon(Icons.directions_run, size: 16, color: Colors.white),
                 ),
-                child: const Icon(Icons.directions_run, size: 16, color: Colors.white),
               ),
             ),
           );
@@ -823,6 +834,57 @@ class _MapPageState extends ConsumerState<MapPage> {
           ),
         ),
       ],
+    );
+  }
+
+  Future<void> _showDayRunSheet(TimelineRun run) {
+    return showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) {
+        return SafeArea(
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    run.name.isEmpty ? 'Run ${run.id}' : run.name,
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 12),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Image.network(
+                      AppConfig.runImageUrl(run.id),
+                      headers: _authHeaders(),
+                      height: 200,
+                      width: double.infinity,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                        height: 200,
+                        color: const Color(0x11000000),
+                        alignment: Alignment.center,
+                        child: const Icon(Icons.image_not_supported_outlined),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton(
+                    onPressed: () {
+                      Navigator.of(context).pop();
+                      ref.read(selectedTabProvider.notifier).state = 2;
+                    },
+                    child: const Text('Open runs'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
