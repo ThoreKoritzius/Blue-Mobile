@@ -41,6 +41,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         ''',
         files: [MultipartUploadFile(filename: 'Zeitachse.json', bytes: bytes)],
         onProgress: (_, __) {},
+        timeout: const Duration(minutes: 5),
       );
       final message = (data['timeline'] as Map?)?['importTakeout']?['message'] as String?;
       setState(() {
@@ -69,7 +70,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
         children: [
-          _AccountHero(session: session),
+          _AccountHero(session: session, onSignOut: _confirmSignOut),
           const SizedBox(height: 20),
           _SectionCard(
             title: 'Appearance',
@@ -162,9 +163,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 }
 
 class _AccountHero extends StatelessWidget {
-  const _AccountHero({required this.session});
+  const _AccountHero({required this.session, required this.onSignOut});
 
   final AuthSession? session;
+  final VoidCallback onSignOut;
 
   @override
   Widget build(BuildContext context) {
@@ -207,7 +209,7 @@ class _AccountHero extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  hasUser ? username : 'Blue Mobile',
+                  hasUser ? username : 'Blue',
                   style: theme.textTheme.headlineSmall?.copyWith(
                     color: Colors.white,
                     fontWeight: FontWeight.w800,
@@ -222,6 +224,11 @@ class _AccountHero extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+          IconButton(
+            tooltip: 'Sign out',
+            onPressed: onSignOut,
+            icon: const Icon(Icons.logout_rounded, color: Colors.white),
           ),
         ],
       ),

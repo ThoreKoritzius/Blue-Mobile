@@ -104,12 +104,6 @@ class _HomeShellState extends ConsumerState<HomeShell> {
             },
             icon: const Icon(Icons.settings_outlined),
           ),
-          IconButton(
-            tooltip: 'Logout',
-            onPressed: () =>
-                ref.read(authControllerProvider.notifier).signOut(),
-            icon: const Icon(Icons.logout_rounded),
-          ),
         ],
       ),
       body: IndexedStack(index: tabIndex, children: pages),

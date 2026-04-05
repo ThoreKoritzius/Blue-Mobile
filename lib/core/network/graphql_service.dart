@@ -96,6 +96,7 @@ class GraphqlService {
     Map<String, dynamic> variables = const {},
     required List<MultipartUploadFile> files,
     required void Function(int sentBytes, int totalBytes) onProgress,
+    Duration? timeout,
   }) async {
     try {
       final request = _ProgressMultipartRequest(
@@ -127,7 +128,7 @@ class GraphqlService {
         );
       }
 
-      final streamed = await request.send().timeout(requestTimeout);
+      final streamed = await request.send().timeout(timeout ?? requestTimeout);
       final response = await http.Response.fromStream(streamed);
       final decoded = jsonDecode(response.body);
       if (decoded is! Map<String, dynamic>) {
