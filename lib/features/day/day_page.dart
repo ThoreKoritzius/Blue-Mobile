@@ -1972,76 +1972,199 @@ class _DayPageState extends ConsumerState<DayPage> {
 
     final bounds = LatLngBounds.fromPoints(allPoints);
 
-    return SectionCard(
-      title: 'Movement',
-      padding: EdgeInsets.zero,
-      child: ClipRRect(
-        borderRadius: const BorderRadius.only(
-          bottomLeft: Radius.circular(16),
-          bottomRight: Radius.circular(16),
-        ),
-        child: SizedBox(
-          height: 260,
-          child: FlutterMap(
-            options: MapOptions(
-              initialCameraFit: CameraFit.bounds(
-                bounds: bounds,
-                padding: const EdgeInsets.all(32),
-              ),
-              interactionOptions: const InteractionOptions(
-                flags: InteractiveFlag.pinchZoom | InteractiveFlag.drag,
+    void openMapPage() {
+      if (_activeDayKey != null) {
+        ref.read(selectedDateProvider.notifier).state = parseYmd(_activeDayKey!);
+      }
+      ref.read(selectedTabProvider.notifier).state = 4;
+    }
+
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header row — same style as SectionCard
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 8, 0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Movement',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: openMapPage,
+                  icon: const Icon(Icons.open_in_new_rounded, size: 16),
+                  label: const Text('Open map'),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          // Non-interactive map — wrapped in GestureDetector to intercept taps
+          GestureDetector(
+            onTap: openMapPage,
+            child: SizedBox(
+              height: 220,
+              child: AbsorbPointer(
+                child: FlutterMap(
+                  options: MapOptions(
+                    initialCameraFit: CameraFit.bounds(
+                      bounds: bounds,
+                      padding: const EdgeInsets.all(28),
+                    ),
+                    interactionOptions: const InteractionOptions(
+                      flags: InteractiveFlag.none,
+                    ),
+                  ),
+                  children: [
+                    TileLayer(
+                      urlTemplate:
+                          'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+                      subdomains: const ['a', 'b', 'c'],
+                      userAgentPackageName: 'com.blue.app',
+                    ),
+                    if (walkLatLngs.length > 1)
+                      PolylineLayer(
+                        polylines: [
+                          Polyline(
+                            points: walkLatLngs,
+                            color: colorScheme.primary.withValues(alpha: 0.85),
+                            strokeWidth: 3,
+                          ),
+                        ],
+                      ),
+                    if (runPolylines.isNotEmpty)
+                      PolylineLayer(
+                        polylines: runPolylines
+                            .map((pts) => Polyline(
+                                  points: pts,
+                                  color: Colors.orange.withValues(alpha: 0.9),
+                                  strokeWidth: 4,
+                                ))
+                            .toList(),
+                      ),
+                    if (data.imageLocations.isNotEmpty)
+                      MarkerLayer(
+                        markers: data.imageLocations
+                            .map((img) => Marker(
+                                  point: LatLng(img.lat, img.lon),
+                                  width: 10,
+                                  height: 10,
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: colorScheme.primary,
+                                        width: 2,
+                                      ),
+                                    ),
+                                  ),
+                                ))
+                            .toList(),
+                      ),
+                  ],
+                ),
               ),
             ),
-            children: [
-              TileLayer(
-                urlTemplate: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-                subdomains: const ['a', 'b', 'c'],
-                userAgentPackageName: 'com.blue.app',
-              ),
-              if (walkLatLngs.length > 1)
-                PolylineLayer(
-                  polylines: [
-                    Polyline(
-                      points: walkLatLngs,
-                      color: colorScheme.primary.withValues(alpha: 0.85),
-                      strokeWidth: 3,
+          ),
+          // Stats row
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+            child: Wrap(
+              spacing: 16,
+              runSpacing: 4,
+              children: [
+                if (walkLatLngs.isNotEmpty)
+                  _mapStat(context,
+                      icon: Icons.route_outlined,
+                      label: '${walkLatLngs.length} GPS points'),
+                if (runPolylines.isNotEmpty)
+                  _mapStat(context,
+                      icon: Icons.directions_run_outlined,
+                      label: '${runPolylines.length} run${runPolylines.length > 1 ? 's' : ''}',
+                      color: Colors.orange),
+                if (data.imageLocations.isNotEmpty)
+                  _mapStat(context,
+                      icon: Icons.photo_outlined,
+                      label: '${data.imageLocations.length} photo${data.imageLocations.length > 1 ? 's' : ''} with GPS'),
+              ],
+            ),
+          ),
+          // Key places list
+          if (data.visits.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            const Divider(height: 1, indent: 16, endIndent: 16),
+            const SizedBox(height: 4),
+            ...data.visits.map((v) {
+              final hours = v.durationMinutes ~/ 60;
+              final mins = v.durationMinutes % 60;
+              final durationLabel = hours > 0
+                  ? '${hours}h ${mins}m'
+                  : '${mins}m';
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.location_on_outlined,
+                      size: 15,
+                      color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.8),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        v.placeId,
+                        style: Theme.of(context).textTheme.bodySmall,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      durationLabel,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
+                      ),
                     ),
                   ],
                 ),
-              if (runPolylines.isNotEmpty)
-                PolylineLayer(
-                  polylines: runPolylines
-                      .map((pts) => Polyline(
-                            points: pts,
-                            color: Colors.orange.withValues(alpha: 0.9),
-                            strokeWidth: 4,
-                          ))
-                      .toList(),
-                ),
-              if (data.imageLocations.isNotEmpty)
-                MarkerLayer(
-                  markers: data.imageLocations
-                      .map((img) => Marker(
-                            point: LatLng(img.lat, img.lon),
-                            width: 10,
-                            height: 10,
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: colorScheme.primary,
-                                  width: 2,
-                                ),
-                              ),
-                            ),
-                          ))
-                      .toList(),
-                ),
-            ],
-          ),
-        ),
+              );
+            }),
+            const SizedBox(height: 8),
+          ] else
+            const SizedBox(height: 14),
+        ],
       ),
+    );
+  }
+
+  Widget _mapStat(
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+    Color? color,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final c = color ?? colorScheme.primary;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 14, color: c.withValues(alpha: 0.8)),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(color: c),
+        ),
+      ],
     );
   }
 

@@ -59,18 +59,34 @@ class TimelineWalkPoint {
   final double lon;
 }
 
+class TimelineVisit {
+  const TimelineVisit({
+    required this.placeId,
+    required this.durationMinutes,
+    this.lat,
+    this.lon,
+  });
+
+  final String placeId;
+  final int durationMinutes;
+  final double? lat;
+  final double? lon;
+}
+
 class TimelineDayData {
   const TimelineDayData({
     required this.date,
     required this.walkPoints,
     required this.runs,
     required this.imageLocations,
+    this.visits = const [],
   });
 
   final String date;
   final List<TimelineWalkPoint> walkPoints;
   final List<TimelineRun> runs;
   final List<TimelineImageLocation> imageLocations;
+  final List<TimelineVisit> visits;
 
   bool get hasData =>
       walkPoints.isNotEmpty ||
@@ -271,11 +287,33 @@ class MapRepository {
       }
       debugPrint('[TIMELINE] parsed ${imageLocations.length} imageLocations');
 
+      final visits = <TimelineVisit>[];
+      final rawSegs = timeline['segments'];
+      final segList = rawSegs is List
+          ? rawSegs
+          : (rawSegs is String ? [] : (rawSegs as List<dynamic>? ?? []));
+      for (final raw in segList) {
+        final s = raw as Map<String, dynamic>;
+        if ((s['segmentType'] as String?) != 'VISIT') continue;
+        final placeId = (s['placeId'] ?? '').toString();
+        if (placeId.isEmpty) continue;
+        final duration = (s['durationMinutes'] as num?)?.toInt() ?? 0;
+        if (duration < 5) continue;
+        visits.add(TimelineVisit(
+          placeId: placeId,
+          durationMinutes: duration,
+          lat: (s['placeLat'] as num?)?.toDouble(),
+          lon: (s['placeLon'] as num?)?.toDouble(),
+        ));
+      }
+      debugPrint('[TIMELINE] parsed ${visits.length} visits');
+
       return TimelineDayData(
         date: date,
         walkPoints: walkPoints,
         runs: runs,
         imageLocations: imageLocations,
+        visits: visits,
       );
     } catch (error, stackTrace) {
       debugPrint('[TIMELINE] parse failed date=$date error=$error');

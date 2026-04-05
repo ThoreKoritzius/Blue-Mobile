@@ -331,6 +331,7 @@ query TimelineDay($date: String!) {
     polyline(date: $date)
     runs(date: $date)
     imageLocations(date: $date)
+    segments(date: $date)
   }
 }
 ''';
