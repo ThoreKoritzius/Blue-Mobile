@@ -26,7 +26,7 @@ class SettingsPage extends ConsumerWidget {
           const SizedBox(height: 20),
           _SectionCard(
             title: 'Appearance',
-            subtitle: 'Control how Blue Mobile looks on this device.',
+            subtitle: '',
             child: Column(
               children: [
                 _SettingRow(
@@ -34,21 +34,17 @@ class SettingsPage extends ConsumerWidget {
                       ? Icons.dark_mode_rounded
                       : Icons.light_mode_rounded,
                   title: 'Theme',
-                  subtitle: isDark
-                      ? 'Dark mode is active'
-                      : 'Light mode is active',
+                  subtitle: isDark ? 'Dark mode' : 'Light mode',
                   trailing: SegmentedButton<ThemeMode>(
                     showSelectedIcon: false,
                     segments: const [
                       ButtonSegment<ThemeMode>(
                         value: ThemeMode.dark,
                         icon: Icon(Icons.dark_mode_outlined),
-                        label: Text('Dark'),
                       ),
                       ButtonSegment<ThemeMode>(
                         value: ThemeMode.light,
                         icon: Icon(Icons.light_mode_outlined),
-                        label: Text('Light'),
                       ),
                     ],
                     selected: {themeMode},
@@ -59,91 +55,8 @@ class SettingsPage extends ConsumerWidget {
                     },
                   ),
                 ),
-                const SizedBox(height: 12),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: colorScheme.surfaceContainerHighest.withValues(
-                      alpha: 0.5,
-                    ),
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  child: Text(
-                    'Theme preference is stored locally and applied on launch.',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
               ],
             ),
-          ),
-          const SizedBox(height: 16),
-          _SectionCard(
-            title: 'Account',
-            subtitle: 'Current sign-in context for this device.',
-            child: Column(
-              children: [
-                _DetailTile(
-                  icon: Icons.person_outline_rounded,
-                  label: 'Username',
-                  value: session?.username ?? 'Not signed in',
-                ),
-                const SizedBox(height: 12),
-                _DetailTile(
-                  icon: Icons.lock_outline_rounded,
-                  label: 'Auth mode',
-                  value: AppConfig.authModeDescription,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          _SectionCard(
-            title: 'App',
-            subtitle: 'Runtime configuration and service endpoints.',
-            child: Column(
-              children: [
-                _DetailTile(
-                  icon: Icons.cloud_outlined,
-                  label: 'Backend',
-                  value: backendUri?.host.isNotEmpty == true
-                      ? backendUri!.host
-                      : AppConfig.backendUrl,
-                ),
-                const SizedBox(height: 12),
-                _DetailTile(
-                  icon: Icons.hub_outlined,
-                  label: 'GraphQL HTTP',
-                  value: AppConfig.graphqlHttpUrl,
-                ),
-                const SizedBox(height: 12),
-                _DetailTile(
-                  icon: Icons.sync_alt_rounded,
-                  label: 'GraphQL WebSocket',
-                  value: AppConfig.graphqlWsUrl,
-                ),
-                const SizedBox(height: 12),
-                _DetailTile(
-                  icon: Icons.map_outlined,
-                  label: 'Maps',
-                  value: AppConfig.hasMapboxToken
-                      ? 'Mapbox configured'
-                      : 'OpenStreetMap fallback',
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-          FilledButton.icon(
-            onPressed: () => _confirmSignOut(context, ref),
-            style: FilledButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 18),
-              backgroundColor: const Color(0xFFB3261E),
-            ),
-            icon: const Icon(Icons.logout_rounded),
-            label: const Text('Sign out'),
           ),
         ],
       ),
@@ -235,9 +148,7 @@ class _AccountHero extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  hasUser
-                      ? 'Signed in and syncing with your Blue account.'
-                      : 'No active account session on this device.',
+                  'Your personal diary',
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: Colors.white.withValues(alpha: 0.86),
                   ),

@@ -351,26 +351,35 @@ class _DayPageState extends ConsumerState<DayPage> {
     required bool detailsLoaded,
     bool clearStatus = false,
   }) {
-    _syncingControllers = true;
-    _place.text = payload.story.place;
-    _country.text = payload.story.country;
-    _description.text = payload.story.description;
-    _syncingControllers = false;
-
     final heroAsset = _resolveHeroAssetForModel(payload.story, payload.media);
 
     if (!mounted) return;
-    setState(() {
-      _original = payload.story;
-      _current = payload.story;
-      _media = payload.media;
-      _runs = payload.runs;
-      _dailyActivity = payload.activity;
-      _heroAsset = heroAsset;
-      if (clearStatus) {
-        _status = '';
-      }
-    });
+
+    if (!_dirty) {
+      // Safe to overwrite text and story — user hasn't edited anything
+      _syncingControllers = true;
+      _place.text = payload.story.place;
+      _country.text = payload.story.country;
+      _description.text = payload.story.description;
+      _syncingControllers = false;
+      setState(() {
+        _original = payload.story;
+        _current = payload.story;
+        _media = payload.media;
+        _runs = payload.runs;
+        _dailyActivity = payload.activity;
+        _heroAsset = heroAsset;
+        if (clearStatus) _status = '';
+      });
+    } else {
+      // User is editing — never touch text or story model
+      setState(() {
+        _media = payload.media;
+        _runs = payload.runs;
+        if (payload.activity != null) _dailyActivity = payload.activity;
+        _heroAsset = heroAsset;
+      });
+    }
     _syncDraftStatus();
   }
 
@@ -484,8 +493,7 @@ class _DayPageState extends ConsumerState<DayPage> {
       return false;
     }
     if (_dirty) {
-      final saved = await _saveNow();
-      if (!saved) return false;
+      unawaited(_saveNow());
     }
     return true;
   }

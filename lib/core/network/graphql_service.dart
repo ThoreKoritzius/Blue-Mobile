@@ -15,6 +15,8 @@ class GraphqlService {
   final AuthTokenStore _tokenStore;
   static const Duration requestTimeout = Duration(seconds: 20);
   late final http.Client _httpClient = createGraphqlHttpClient();
+  // Separate client for mutations so saves never queue behind heavy read requests
+  late final http.Client _mutationHttpClient = createGraphqlHttpClient();
   late final GraphQLClient _multipartGraphqlClient = _buildMultipartClient();
 
   void _log(String message) {
@@ -81,7 +83,7 @@ class GraphqlService {
         _throwIfError(result);
         return result.data ?? <String, dynamic>{};
       }
-      return await _postJsonGraphql(document, variables: variables);
+      return await _postJsonGraphql(document, variables: variables, client: _mutationHttpClient);
     } on TimeoutException {
       throw Exception('Request timeout after ${requestTimeout.inSeconds}s.');
     } catch (error) {
@@ -154,8 +156,9 @@ class GraphqlService {
   Future<Map<String, dynamic>> _postJsonGraphql(
     String document, {
     Map<String, dynamic> variables = const {},
+    http.Client? client,
   }) async {
-    final response = await _httpClient
+    final response = await (client ?? _httpClient)
         .post(
           Uri.parse(AppConfig.graphqlHttpUrl),
           headers: {
