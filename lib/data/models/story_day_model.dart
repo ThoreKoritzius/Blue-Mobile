@@ -104,7 +104,7 @@ class StoryDayModel {
       description: (json['description'] ?? '').toString(),
       food: (json['food'] ?? '').toString(),
       sport: (json['sport'] ?? '').toString(),
-      highlightImage: (json['highlight_image'] ?? '').toString(),
+      highlightImage: (json['highlightImage'] ?? json['highlight_image'] ?? '').toString(),
       keywords: (json['keywords'] ?? '').toString(),
       country: (json['country'] ?? '').toString(),
     );

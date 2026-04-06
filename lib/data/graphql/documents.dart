@@ -30,7 +30,14 @@ query Me {
   static const storiesDay = r'''
 query StoriesDay($day: String!) {
   stories {
-    day(day: $day)
+    day(day: $day) {
+      story {
+        date place names description food sport highlightImage keywords country latitude longitude
+      }
+      run {
+        id name type distance movingTime elapsedTime averageSpeed maxSpeed totalElevationGain startDateLocal startTime
+      }
+    }
   }
 }
 ''';
@@ -45,7 +52,9 @@ query StoriesList($first: Int!, $after: String) {
         endCursor
       }
       edges {
-        node
+        node {
+          date place names description food sport highlightImage keywords country latitude longitude
+        }
       }
     }
   }
@@ -67,7 +76,9 @@ query FilesDay($day: String!, $first: Int!) {
   files {
     day(day: $day, first: $first) {
       edges {
-        node
+        node {
+          path date favorite imageTags type size gps
+        }
       }
     }
   }
@@ -79,7 +90,9 @@ query FilesList($first: Int!) {
   files {
     list(first: $first) {
       edges {
-        node
+        node {
+          path date favorite imageTags type size gps
+        }
       }
     }
   }
@@ -115,7 +128,9 @@ query RunsList($first: Int!) {
   runs {
     list(first: $first) {
       edges {
-        node
+        node {
+          id name type distance movingTime elapsedTime averageSpeed maxSpeed totalElevationGain startDateLocal summaryPolyline startTime
+        }
       }
     }
   }
@@ -127,7 +142,9 @@ query RunsByDate($date: String!, $first: Int!) {
   runs {
     byDate(date: $date, first: $first) {
       edges {
-        node
+        node {
+          id name type distance movingTime elapsedTime averageSpeed maxSpeed totalElevationGain startDateLocal summaryPolyline startTime
+        }
       }
     }
   }
@@ -139,7 +156,9 @@ query RunsMonthly($first: Int!) {
   runs {
     monthly(first: $first) {
       edges {
-        node
+        node {
+          year month distance
+        }
       }
     }
   }
@@ -186,26 +205,39 @@ query CalendarEvents($date: String) {
   static const dayBundle = r'''
 query DayBundle($day: String!, $filesFirst: Int!, $runsFirst: Int!) {
   stories {
-    day(day: $day)
+    day(day: $day) {
+      story {
+        date place names description food sport highlightImage keywords country latitude longitude
+      }
+      run {
+        id name type distance movingTime elapsedTime averageSpeed maxSpeed totalElevationGain startDateLocal startTime
+      }
+    }
   }
   files {
     day(day: $day, first: $filesFirst) {
       edges {
-        node
+        node {
+          path date favorite imageTags type size gps
+        }
       }
     }
   }
   runs {
     byDate(date: $day, first: $runsFirst) {
       edges {
-        node
+        node {
+          id name type distance movingTime elapsedTime averageSpeed maxSpeed totalElevationGain startDateLocal summaryPolyline startTime
+        }
       }
     }
   }
   health {
     dailyActivity(dateFrom: $day, dateTo: $day, first: 1) {
       edges {
-        node
+        node {
+          date moveMinutes caloriesKcal distanceM heartPoints heartMinutes stepCount avgWeightKg cyclingDurationMs walkingDurationMs runningDurationMs
+        }
       }
     }
   }
@@ -226,7 +258,9 @@ query PersonSearch($query: String!, $first: Int!) {
   persons {
     search(query: $query, first: $first) {
       edges {
-        node
+        node {
+          id vorname nachname geburtsdatum todesdatum relation beruf studiengang sprachen mail telefon adresse wichtiges lebenslauf photoPath
+        }
       }
     }
   }
@@ -238,7 +272,9 @@ query PersonPopular($first: Int!) {
   persons {
     popular(first: $first) {
       edges {
-        node
+        node {
+          id vorname nachname geburtsdatum todesdatum relation beruf studiengang sprachen mail telefon adresse wichtiges lebenslauf photoPath
+        }
       }
     }
   }
@@ -330,7 +366,15 @@ subscription ChatStream($messages: [ChatMessageInput!]!) {
   static const timelineWhenWasINear = r'''
 query TimelineWhenWasINear($location: String!) {
   timeline {
-    whenWasINear(location: $location)
+    whenWasINear(location: $location) {
+      location
+      dates
+      totalDays
+      error
+      boundingBox {
+        latMin latMax lonMin lonMax
+      }
+    }
   }
 }
 ''';
@@ -338,10 +382,18 @@ query TimelineWhenWasINear($location: String!) {
   static const timelineDay = r'''
 query TimelineDay($date: String!) {
   timeline {
-    polyline(date: $date)
-    runs(date: $date)
-    imageLocations(date: $date)
-    segments(date: $date)
+    polyline(date: $date) {
+      lat lon timestamp
+    }
+    runs(date: $date) {
+      id name type distanceMeters movingTimeSeconds summaryPolyline startTime
+    }
+    imageLocations(date: $date) {
+      lat lon path
+    }
+    segments(date: $date) {
+      id segmentType startTime endTime durationMinutes placeId placeName placeAddress placeLat placeLon activityType startLat startLon endLat endLon distanceMeters
+    }
   }
 }
 ''';
@@ -351,7 +403,9 @@ query DailyActivity($date: String!) {
   health {
     dailyActivity(dateFrom: $date, dateTo: $date, first: 1) {
       edges {
-        node
+        node {
+          date moveMinutes caloriesKcal distanceM heartPoints heartMinutes stepCount avgWeightKg cyclingDurationMs walkingDurationMs runningDurationMs
+        }
       }
     }
   }

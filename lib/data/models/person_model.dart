@@ -143,7 +143,7 @@ class PersonModel {
       address: (json['adresse'] ?? '').toString(),
       notes: (json['wichtiges'] ?? '').toString(),
       biography: (json['lebenslauf'] ?? '').toString(),
-      photoPath: (json['photo_path'] ?? '').toString(),
+      photoPath: (json['photoPath'] ?? json['photo_path'] ?? '').toString(),
     );
   }
 }

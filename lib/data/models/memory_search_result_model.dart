@@ -44,7 +44,7 @@ class MemorySearchResultModel {
       description: (json['description'] ?? '').toString(),
       keywords: (json['keywords'] ?? '').toString(),
       country: (json['country'] ?? '').toString(),
-      highlightImage: (json['highlight_image'] ?? '').toString(),
+      highlightImage: (json['highlightImage'] ?? json['highlight_image'] ?? '').toString(),
       path: (json['path'] ?? '').toString(),
     );
   }

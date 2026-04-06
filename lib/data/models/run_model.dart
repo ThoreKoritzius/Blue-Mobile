@@ -26,12 +26,12 @@ class RunModel {
     return {
       'id': id,
       'name': name,
-      'start_date_local': startDateLocal,
+      'startDateLocal': startDateLocal,
       'distance': distance,
-      'summary_polyline': summaryPolyline,
-      'moving_time': movingTime,
-      'average_speed': averageSpeed,
-      'start_time': startTime,
+      'summaryPolyline': summaryPolyline,
+      'movingTime': movingTime,
+      'averageSpeed': averageSpeed,
+      'startTime': startTime,
     };
   }
 
@@ -39,12 +39,12 @@ class RunModel {
     return RunModel(
       id: (json['id'] ?? '').toString(),
       name: (json['name'] ?? '').toString(),
-      startDateLocal: (json['start_date_local'] ?? '').toString(),
+      startDateLocal: (json['startDateLocal'] ?? json['start_date_local'] ?? '').toString(),
       distance: (json['distance'] as num?)?.toDouble() ?? 0,
-      summaryPolyline: (json['summary_polyline'] ?? '').toString(),
-      movingTime: (json['moving_time'] as num?)?.toInt() ?? 0,
-      averageSpeed: (json['average_speed'] as num?)?.toDouble() ?? 0,
-      startTime: (json['start_time'] ?? '').toString(),
+      summaryPolyline: (json['summaryPolyline'] ?? json['summary_polyline'] ?? '').toString(),
+      movingTime: (json['movingTime'] ?? json['moving_time'] as num?)?.toInt() ?? 0,
+      averageSpeed: (json['averageSpeed'] ?? json['average_speed'] as num?)?.toDouble() ?? 0,
+      startTime: (json['startTime'] ?? json['start_time'] ?? '').toString(),
     );
   }
 }
