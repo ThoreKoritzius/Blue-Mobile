@@ -259,7 +259,7 @@ query PersonSearch($query: String!, $first: Int!) {
     search(query: $query, first: $first) {
       edges {
         node {
-          id vorname nachname geburtsdatum todesdatum relation beruf studiengang sprachen mail telefon adresse wichtiges lebenslauf photoPath
+          id firstName lastName birthDate deathDate relation profession studyProgram languages email phone address notes biography photoPath
         }
       }
     }
@@ -273,7 +273,7 @@ query PersonPopular($first: Int!) {
     popular(first: $first) {
       edges {
         node {
-          id vorname nachname geburtsdatum todesdatum relation beruf studiengang sprachen mail telefon adresse wichtiges lebenslauf photoPath
+          id firstName lastName birthDate deathDate relation profession studyProgram languages email phone address notes biography photoPath
         }
       }
     }
