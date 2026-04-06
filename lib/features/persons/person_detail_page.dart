@@ -1,9 +1,9 @@
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:crop_your_image/crop_your_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:image_cropper/image_cropper.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -423,32 +423,16 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
     );
     if (picked == null || !mounted) return;
 
-    final colorScheme = Theme.of(context).colorScheme;
-    final cropped = await ImageCropper().cropImage(
-      sourcePath: picked.path,
-      aspectRatio: const CropAspectRatio(ratioX: 1, ratioY: 1),
-      compressQuality: 85,
-      maxWidth: 512,
-      maxHeight: 512,
-      uiSettings: [
-        AndroidUiSettings(
-          toolbarTitle: 'Crop photo',
-          toolbarColor: colorScheme.surface,
-          toolbarWidgetColor: colorScheme.onSurface,
-          activeControlsWidgetColor: colorScheme.primary,
-          lockAspectRatio: true,
-        ),
-        IOSUiSettings(
-          title: 'Crop photo',
-          aspectRatioLockEnabled: true,
-          resetAspectRatioEnabled: false,
-        ),
-      ],
-    );
-    if (cropped == null || !mounted) return;
+    final imageBytes = await picked.readAsBytes();
 
-    final bytes = await File(cropped.path).readAsBytes();
-    final filename = cropped.path.split('/').last;
+    final croppedBytes = await Navigator.of(context).push<Uint8List>(
+      MaterialPageRoute<Uint8List>(
+        fullscreenDialog: true,
+        builder: (_) => _CropPage(imageBytes: imageBytes),
+      ),
+    );
+    if (croppedBytes == null || !mounted) return;
+
     final personId = _payload?.person.id;
     if (personId == null) return;
 
@@ -456,7 +440,7 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
     try {
       final photoPath = await ref
           .read(personRepositoryProvider)
-          .uploadPhoto(personId, filename, bytes);
+          .uploadPhoto(personId, 'photo.jpg', croppedBytes);
       if (!mounted) return;
       setState(() {
         _payload = _payload?.copyWith(
@@ -1176,6 +1160,65 @@ class _ContactTile extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _CropPage extends StatefulWidget {
+  const _CropPage({required this.imageBytes});
+
+  final Uint8List imageBytes;
+
+  @override
+  State<_CropPage> createState() => _CropPageState();
+}
+
+class _CropPageState extends State<_CropPage> {
+  final _controller = CropController();
+  bool _cropping = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        foregroundColor: Colors.white,
+        title: const Text('Crop photo'),
+        actions: [
+          _cropping
+              ? const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  ),
+                )
+              : IconButton(
+                  icon: const Icon(Icons.check_rounded),
+                  onPressed: () {
+                    setState(() => _cropping = true);
+                    _controller.crop();
+                  },
+                ),
+        ],
+      ),
+      body: Crop(
+        image: widget.imageBytes,
+        controller: _controller,
+        aspectRatio: 1,
+        withCircleUi: true,
+        baseColor: Colors.black,
+        maskColor: Colors.black.withValues(alpha: 0.7),
+        cornerDotBuilder: (_, __) => const SizedBox.shrink(),
+        onCropped: (croppedBytes) {
+          Navigator.of(context).pop(croppedBytes);
+        },
       ),
     );
   }

@@ -63,6 +63,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
   TimelineDayData? _timelineDay;
   List<UploadItemStateModel> _uploadQueue = const [];
   double _uploadProgress = 0.0;
+  Map<String, PersonModel> _personLookup = const {};
 
   bool _loading = true;
   bool _saving = false;
@@ -415,6 +416,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
         _heroAsset = heroAsset;
         if (clearStatus) _status = '';
       });
+      unawaited(_refreshPersonLookup(payload.story.people));
     } else {
       // User is editing — never touch text or story model
       setState(() {
@@ -922,6 +924,30 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
         );
       },
     );
+  }
+
+  Future<void> _refreshPersonLookup(List<String> names) async {
+    if (names.isEmpty) {
+      if (_personLookup.isNotEmpty) setState(() => _personLookup = const {});
+      return;
+    }
+    final cache = ref.read(personCacheStoreProvider);
+    final lookup = <String, PersonModel>{};
+    final allCached = await cache.readAllPersons();
+    for (final name in names) {
+      final needle = name.trim().toLowerCase();
+      if (needle.isEmpty) continue;
+      for (final person in allCached) {
+        final display = person.displayName.toLowerCase();
+        final first = person.firstName.trim().toLowerCase();
+        if (display == needle || first == needle) {
+          lookup[name] = person;
+          break;
+        }
+      }
+    }
+    if (!mounted) return;
+    setState(() => _personLookup = lookup);
   }
 
   void _removePerson(String name) {
@@ -2316,40 +2342,65 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
   }
 
   Widget _buildPeopleEditor(BuildContext context, List<String> items) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (items.isEmpty)
-          _buildEmptyState(
-            context,
-            icon: Icons.people_outline_rounded,
-            title: 'No people yet',
-            subtitle: '',
-          )
-        else
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: items
-                .map(
-                  (item) => InputChip(
-                    backgroundColor: colorScheme.secondaryContainer,
-                    labelStyle: TextStyle(
-                      color: colorScheme.onSecondaryContainer,
-                      fontWeight: FontWeight.w700,
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    if (items.isEmpty) {
+      return Text(
+        'No people yet',
+        style: theme.textTheme.bodyMedium?.copyWith(
+          color: colorScheme.onSurfaceVariant,
+        ),
+      );
+    }
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: items.map((name) {
+        final person = _personLookup[name];
+        final firstName = name.trim().split(' ').first;
+        final initial = firstName.isEmpty ? '?' : firstName[0].toUpperCase();
+        final photoUrl = _personPhotoUrl(person);
+
+        return InputChip(
+          avatar: CircleAvatar(
+            radius: 14,
+            backgroundColor: colorScheme.primary.withValues(alpha: 0.15),
+            backgroundImage: photoUrl != null
+                ? NetworkImage(photoUrl, headers: _authHeaders())
+                : null,
+            child: photoUrl == null
+                ? Text(
+                    initial,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: colorScheme.primary,
                     ),
-                    side: BorderSide.none,
-                    label: Text(item),
-                    onPressed: () => _openPersonFromName(item),
-                    deleteIconColor: colorScheme.onSecondaryContainer,
-                    onDeleted: () => _removePerson(item),
-                  ),
-                )
-                .toList(),
+                  )
+                : null,
           ),
-      ],
+          backgroundColor: colorScheme.surfaceContainer,
+          labelStyle: TextStyle(
+            color: colorScheme.onSurface,
+            fontWeight: FontWeight.w600,
+          ),
+          side: BorderSide.none,
+          label: Text(firstName),
+          onPressed: () => _openPersonFromName(name),
+          deleteIconColor: colorScheme.onSurfaceVariant,
+          onDeleted: () => _removePerson(name),
+        );
+      }).toList(),
     );
+  }
+
+  String? _personPhotoUrl(PersonModel? person) {
+    if (person == null) return null;
+    final photo = person.photoPath.trim();
+    if (photo.isNotEmpty) {
+      return '${AppConfig.backendUrl}/api/person/$photo';
+    }
+    return null;
   }
 
   Widget _buildActivityBar(BuildContext context) {

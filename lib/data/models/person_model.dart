@@ -98,7 +98,7 @@ class PersonModel {
       'adresse': address,
       'wichtiges': notes,
       'lebenslauf': biography,
-      'photo_path': photoPath,
+      'photoPath': photoPath,
     };
   }
 
