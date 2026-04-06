@@ -20,6 +20,10 @@ class _LoginPageState extends ConsumerState<LoginPage> {
   @override
   void initState() {
     super.initState();
+    final stored = ref.read(authTokenStoreProvider).peekUsername();
+    if (stored != null && stored.isNotEmpty) {
+      _username.text = stored;
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref
           .read(authUiStateProvider.notifier)

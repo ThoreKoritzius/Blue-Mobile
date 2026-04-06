@@ -119,6 +119,6 @@ class AuthTokenStore {
     await clearToken();
     await clearRefreshToken();
     await clearLoginTicket();
-    await clearUsername();
+    // Username intentionally preserved so login page can prefill it.
   }
 }

@@ -96,6 +96,7 @@ class _MapPageState extends ConsumerState<MapPage>
   List<String> _dayViewDates = const [];
   int _dayViewDateIndex = 0;
   String? _selectedVisitPlaceId;
+  String? _selectedRunId;
   final DraggableScrollableController _sheetController =
       DraggableScrollableController();
 
@@ -873,6 +874,7 @@ class _MapPageState extends ConsumerState<MapPage>
               onSegmentTapped: _onSegmentTapped,
               onRunTapped: _onRunTapped,
               selectedVisitPlaceId: _selectedVisitPlaceId,
+              selectedRunId: _selectedRunId,
               sheetController: _sheetController,
               authHeaders: _authHeaders(),
               runColors: {
@@ -1323,6 +1325,7 @@ class _MapPageState extends ConsumerState<MapPage>
       _dayViewError = '';
       _dayViewLoading = false;
       _selectedVisitPlaceId = null;
+      _selectedRunId = null;
     });
   }
 
@@ -1333,6 +1336,7 @@ class _MapPageState extends ConsumerState<MapPage>
       _dayViewData = null;
       _dayViewDate = date;
       _selectedVisitPlaceId = null;
+      _selectedRunId = null;
     });
     try {
       final data = await ref.read(mapRepositoryProvider).loadTimelineDay(date);
@@ -1419,7 +1423,10 @@ class _MapPageState extends ConsumerState<MapPage>
   }
 
   void _onVisitMarkerTapped(TimelineVisit visit) {
-    setState(() => _selectedVisitPlaceId = visit.placeId);
+    setState(() {
+      _selectedVisitPlaceId = visit.placeId;
+      _selectedRunId = null;
+    });
     if (_sheetController.isAttached) {
       _sheetController.animateTo(
         0.6,
@@ -1430,7 +1437,10 @@ class _MapPageState extends ConsumerState<MapPage>
   }
 
   void _onBottomSheetVisitTapped(TimelineVisit visit) {
-    setState(() => _selectedVisitPlaceId = visit.placeId);
+    setState(() {
+      _selectedVisitPlaceId = visit.placeId;
+      _selectedRunId = null;
+    });
     if (visit.lat != null && visit.lon != null) {
       _animatedMove(
         LatLng(visit.lat!, visit.lon!),
@@ -1440,6 +1450,10 @@ class _MapPageState extends ConsumerState<MapPage>
   }
 
   void _onRunTapped(TimelineRun run) {
+    setState(() {
+      _selectedRunId = run.id;
+      _selectedVisitPlaceId = null;
+    });
     if (run.summaryPolyline.isEmpty) return;
     try {
       final pts = decodePolyline(run.summaryPolyline)
@@ -1455,7 +1469,10 @@ class _MapPageState extends ConsumerState<MapPage>
 
   void _onSegmentTapped(TimelineSegment segment) {
     if (segment.isVisit) {
-      setState(() => _selectedVisitPlaceId = segment.placeId);
+      setState(() {
+        _selectedVisitPlaceId = segment.placeId;
+        _selectedRunId = null;
+      });
       if (segment.placeLat != null && segment.placeLon != null) {
         _animatedMove(
           LatLng(segment.placeLat!, segment.placeLon!),
@@ -1547,6 +1564,7 @@ class _DayBottomSheet extends StatelessWidget {
     required this.runColors,
     required this.onRunTapped,
     this.selectedVisitPlaceId,
+    this.selectedRunId,
   });
 
   final List<String> dates;
@@ -1557,6 +1575,7 @@ class _DayBottomSheet extends StatelessWidget {
   final void Function(TimelineSegment segment) onSegmentTapped;
   final void Function(TimelineRun run) onRunTapped;
   final String? selectedVisitPlaceId;
+  final String? selectedRunId;
   final DraggableScrollableController sheetController;
   final Map<String, String> authHeaders;
   final Map<String, Color> runColors;
@@ -1579,9 +1598,23 @@ class _DayBottomSheet extends StatelessWidget {
       runById[r.id] = r;
     }
 
-    // --- Aggregate consecutive same-type segments ---
-    final segments = <TimelineSegment>[];
+    // --- Remove activity segments replaced by Strava runs, then aggregate ---
+    final matchedRunIds = <String>{};
     for (final seg in rawSegments) {
+      if (seg.isActivity && seg.matchedRunId != null) {
+        matchedRunIds.add(seg.matchedRunId!);
+      }
+    }
+    // Filter out matched activity segments first.
+    final filtered = rawSegments
+        .where((seg) => !(seg.isActivity &&
+            seg.matchedRunId != null &&
+            matchedRunIds.contains(seg.matchedRunId)))
+        .toList();
+
+    // Aggregate consecutive same-type segments.
+    final segments = <TimelineSegment>[];
+    for (final seg in filtered) {
       if (segments.isNotEmpty) {
         final prev = segments.last;
         // Aggregate consecutive same-type activities.
@@ -1632,35 +1665,17 @@ class _DayBottomSheet extends StatelessWidget {
       segments.add(seg);
     }
 
-    // --- Build a unified timeline: segments + standalone run entries ---
-    // Collect run IDs already referenced by segments.
-    final usedRunIds = <String>{};
+    // --- Build unified timeline: segments + runs, sorted by time ---
+    final entries = <({TimelineSegment? seg, TimelineRun? run, DateTime time})>[];
     for (final seg in segments) {
-      if (seg.matchedRunId != null) usedRunIds.add(seg.matchedRunId!);
+      entries.add((seg: seg, run: null, time: seg.startTime));
     }
-
-    // Timeline entries: each is either a segment or a standalone run.
-    final entries = <({TimelineSegment? seg, TimelineRun? run})>[];
-    // Merge segments and unmatched runs by time.
-    final unmatchedRuns = runs
-        .where((r) => !usedRunIds.contains(r.id) && r.startTime != null)
-        .toList()
-      ..sort((a, b) => a.startTime!.compareTo(b.startTime!));
-    var runIdx = 0;
-    for (final seg in segments) {
-      // Insert any unmatched runs that come before this segment.
-      while (runIdx < unmatchedRuns.length &&
-          unmatchedRuns[runIdx].startTime!.isBefore(seg.startTime)) {
-        entries.add((seg: null, run: unmatchedRuns[runIdx]));
-        runIdx++;
+    for (final run in runs) {
+      if (run.startTime != null) {
+        entries.add((seg: null, run: run, time: run.startTime!));
       }
-      entries.add((seg: seg, run: null));
     }
-    // Remaining unmatched runs after all segments.
-    while (runIdx < unmatchedRuns.length) {
-      entries.add((seg: null, run: unmatchedRuns[runIdx]));
-      runIdx++;
-    }
+    entries.sort((a, b) => a.time.compareTo(b.time));
 
     // Assign images to nearest visit segment by lat/lon proximity.
     final imagesByEntryIndex = <int, List<TimelineImageLocation>>{};
@@ -1888,27 +1903,37 @@ class _DayBottomSheet extends StatelessWidget {
                 ),
               ),
             ),
-            // Timeline dot
-            Padding(
-              padding: const EdgeInsets.only(top: 3),
-              child: Container(
-                width: 10,
-                height: 10,
-                decoration: BoxDecoration(
+            // Timeline icon
+            Container(
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                color: isSelected
+                    ? const Color(0xFF6EB1FF).withValues(alpha: 0.25)
+                    : hasLocation
+                        ? const Color(0xCC6EB1FF).withValues(alpha: 0.25)
+                        : const Color(0x336EB1FF),
+                shape: BoxShape.circle,
+                border: Border.all(
                   color: isSelected
                       ? const Color(0xFF6EB1FF)
                       : hasLocation
                           ? const Color(0xCC6EB1FF)
                           : const Color(0x556EB1FF),
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: isSelected ? Colors.white : Colors.white38,
-                    width: 1.5,
-                  ),
+                  width: 1.5,
                 ),
               ),
+              child: Icon(
+                Icons.location_on,
+                size: 12,
+                color: isSelected
+                    ? const Color(0xFF6EB1FF)
+                    : hasLocation
+                        ? const Color(0xCC6EB1FF)
+                        : const Color(0x556EB1FF),
+              ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 8),
             // Content
             Expanded(
               child: Column(
@@ -2103,7 +2128,6 @@ class _DayBottomSheet extends StatelessWidget {
     final run = seg.matchedRunId != null ? runById[seg.matchedRunId] : null;
     final timeLabel = _formatTime(seg.startTime);
     final hasLocation = seg.startLat != null && seg.startLon != null;
-
     final isRunning = seg.activityType == 'RUNNING';
     final activityColor = isRunning
         ? const Color(0xCCF79C70)
@@ -2127,6 +2151,7 @@ class _DayBottomSheet extends StatelessWidget {
     }
 
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: () => onSegmentTapped(seg),
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
@@ -2199,8 +2224,9 @@ class _DayBottomSheet extends StatelessWidget {
   }
 
   Widget _buildRunEntryTile(BuildContext context, TimelineRun run) {
-    final color = runColors[run.id] ?? const Color(0xCCF79C70);
+    const color = Color(0xCCF79C70);
     final timeLabel = run.startTime != null ? _formatTime(run.startTime!) : '';
+    final isSelected = run.id == selectedRunId;
 
     final subtitleParts = <String>[];
     if (run.distanceMeters != null && run.distanceMeters! > 0) {
@@ -2215,10 +2241,16 @@ class _DayBottomSheet extends StatelessWidget {
     }
 
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: () => onRunTapped(run),
-      child: Container(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
         margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0x336EB1FF) : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+        ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -2294,7 +2326,7 @@ class _DayBottomSheet extends StatelessWidget {
     final remaining = imgs.length - showCount;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(62, 2, 16, 6),
+      padding: const EdgeInsets.fromLTRB(72, 2, 16, 6),
       child: SizedBox(
         height: 56,
         child: ListView.separated(
