@@ -3,6 +3,9 @@ import 'chat_attachment_model.dart';
 class ChatToolCallModel {
   const ChatToolCallModel({
     required this.name,
+    this.query,
+    this.variables = const {},
+    this.errors,
     this.sql,
     this.sqlParams = const {},
     this.embeddingQuery,
@@ -12,6 +15,11 @@ class ChatToolCallModel {
   });
 
   final String name;
+  // GraphQL fields
+  final String? query;
+  final Map<String, dynamic> variables;
+  final List<String>? errors;
+  // Legacy SQL fields (backwards compatible)
   final String? sql;
   final Map<String, dynamic> sqlParams;
   final String? embeddingQuery;
@@ -19,10 +27,27 @@ class ChatToolCallModel {
   final int? searchedCount;
   final bool? truncated;
 
+  String get displayQuery => query ?? sql ?? '';
+
+  String get displaySummary {
+    if (errors != null && errors!.isNotEmpty) {
+      return 'Error: ${errors!.first}';
+    }
+    if (query != null) {
+      return name == 'graphql_query' ? 'GraphQL query' : name;
+    }
+    return 'Searched\u2248${searchedCount ?? '?'} returned=${rowCount ?? '?'}';
+  }
+
   factory ChatToolCallModel.fromJson(Map<String, dynamic> json) {
     final params = json['sql_params'];
+    final vars = json['variables'];
+    final errs = json['errors'];
     return ChatToolCallModel(
       name: (json['name'] ?? '').toString(),
+      query: json['query']?.toString(),
+      variables: vars is Map<String, dynamic> ? vars : const {},
+      errors: errs is List ? errs.map((e) => e.toString()).toList() : null,
       sql: json['sql']?.toString(),
       sqlParams: params is Map<String, dynamic> ? params : const {},
       embeddingQuery: json['embedding_query']?.toString(),

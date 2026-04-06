@@ -28,6 +28,7 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
   bool _loading = true;
   bool _saving = false;
   String? _error;
+  int _photoCacheBust = 0;
 
   @override
   void initState() {
@@ -393,7 +394,7 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
   String? _heroUrl(PersonDetailPayloadModel payload) {
     final photo = payload.person.photoPath.trim();
     if (photo.isNotEmpty) {
-      return '${AppConfig.backendUrl}/api/person/$photo';
+      return '${AppConfig.backendUrl}/api/person/$photo?v=$_photoCacheBust';
     }
     for (final face in payload.faces) {
       if (face.isReference && face.cropPath.trim().isNotEmpty) {
@@ -446,7 +447,9 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
         _payload = _payload?.copyWith(
           person: _payload!.person.copyWith(photoPath: photoPath),
         );
+        _photoCacheBust++;
         _saving = false;
+        imageCache.clear();
       });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Photo updated.')),
@@ -1213,6 +1216,8 @@ class _CropPageState extends State<_CropPage> {
         controller: _controller,
         aspectRatio: 1,
         withCircleUi: true,
+        interactive: true,
+        fixCropRect: true,
         baseColor: Colors.black,
         maskColor: Colors.black.withValues(alpha: 0.7),
         cornerDotBuilder: (_, __) => const SizedBox.shrink(),

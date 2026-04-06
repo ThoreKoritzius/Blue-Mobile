@@ -312,10 +312,25 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 : ListView.builder(
                     controller: _scrollController,
                     padding: const EdgeInsets.fromLTRB(14, 18, 14, 18),
-                    itemCount: _messages.length,
+                    itemCount: _messages.length + 1,
                     itemBuilder: (context, index) {
-                      final item = _messages[index];
-                      return _buildMessageBubble(context, theme, item);
+                      if (index < _messages.length) {
+                        return _buildMessageBubble(context, theme, _messages[index]);
+                      }
+                      if (_sending) return const SizedBox.shrink();
+                      return Padding(
+                        padding: const EdgeInsets.only(top: 24, bottom: 8),
+                        child: Center(
+                          child: TextButton.icon(
+                            onPressed: () => setState(() => _messages.clear()),
+                            icon: Icon(Icons.delete_outline, size: 18, color: colorScheme.onSurfaceVariant),
+                            label: Text(
+                              'Clear chat',
+                              style: theme.textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+                            ),
+                          ),
+                        ),
+                      );
                     },
                   ),
           ),
@@ -629,7 +644,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   Widget _buildToolCallInline(ThemeData theme, ChatToolCallModel call) {
-    final id = 'tool_${call.name}_${call.sql.hashCode}';
+    final id = 'tool_${call.name}_${call.displayQuery.hashCode}';
     final expanded = _expandedDetailIds.contains(id);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -650,11 +665,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  'Searched≈${call.searchedCount ?? '?'} returned=${call.rowCount ?? '?'}',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w600,
+                Icon(
+                  Icons.data_object,
+                  size: 14,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    call.displaySummary,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 const SizedBox(width: 6),
@@ -679,8 +703,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if ((call.sql ?? '').trim().isNotEmpty)
-                  _buildDetailBlock('SQL', call.sql!.trim()),
+                if (call.displayQuery.trim().isNotEmpty)
+                  _buildDetailBlock(
+                    call.query != null ? 'GraphQL' : 'SQL',
+                    call.displayQuery.trim(),
+                  ),
+                if (call.variables.isNotEmpty)
+                  _buildDetailBlock('Variables', call.variables.toString()),
                 if (call.sqlParams.isNotEmpty)
                   _buildDetailBlock('Params', call.sqlParams.toString()),
                 if ((call.embeddingQuery ?? '').trim().isNotEmpty)
@@ -688,6 +717,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     'Embedding Query',
                     call.embeddingQuery!.trim(),
                   ),
+                if (call.errors != null && call.errors!.isNotEmpty)
+                  _buildDetailBlock('Errors', call.errors!.join('\n')),
               ],
             ),
           ),
