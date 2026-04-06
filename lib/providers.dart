@@ -49,7 +49,14 @@ final personCacheStoreProvider = Provider<PersonCacheStore>(
 
 final graphqlServiceProvider = Provider<GraphqlService>((ref) {
   final tokenStore = ref.watch(authTokenStoreProvider);
-  return GraphqlService(tokenStore);
+  return GraphqlService(
+    tokenStore,
+    // Tokens are already cleared inside GraphqlService._tryRefresh before this
+    // is called — just flip the auth state so the UI returns to LoginPage.
+    onSessionExpired: () async {
+      ref.read(authControllerProvider.notifier).setSession(null);
+    },
+  );
 });
 
 final authRepositoryProvider = Provider<AuthRepository>((ref) {

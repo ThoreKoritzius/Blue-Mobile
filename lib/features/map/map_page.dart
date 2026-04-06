@@ -620,7 +620,9 @@ class _MapPageState extends ConsumerState<MapPage> {
               heroTag: 'map_day_toggle',
               tooltip: 'Day view',
               onPressed: _runs.isNotEmpty
-                  ? () => _enterDayView(_runs.last.run.startDateLocal.split('T').first)
+                  ? () => _enterDayView(
+                      _runs.last.run.startDateLocal.split('T').first,
+                    )
                   : null,
               child: const Icon(Icons.calendar_today),
             ),
@@ -651,14 +653,16 @@ class _MapPageState extends ConsumerState<MapPage> {
       for (final run in data.runs) {
         if (run.summaryPolyline.isEmpty) continue;
         try {
-          final pts = decodePolyline(run.summaryPolyline)
-              .map((p) => LatLng(p[0].toDouble(), p[1].toDouble()))
-              .toList();
+          final pts = decodePolyline(
+            run.summaryPolyline,
+          ).map((p) => LatLng(p[0].toDouble(), p[1].toDouble())).toList();
           if (pts.length < 2) continue;
           final color = _colorForSeed(run.id);
           runPolylines.add(Polyline(points: pts, strokeWidth: 3, color: color));
           // Try to find the matching full RunOverlay for the sheet.
-          final matchingOverlay = _runs.where((r) => r.run.id == run.id).firstOrNull;
+          final matchingOverlay = _runs
+              .where((r) => r.run.id == run.id)
+              .firstOrNull;
           runMarkers.add(
             Marker(
               point: pts.first,
@@ -678,7 +682,11 @@ class _MapPageState extends ConsumerState<MapPage> {
                     shape: BoxShape.circle,
                     border: Border.all(color: Colors.white),
                   ),
-                  child: const Icon(Icons.directions_run, size: 16, color: Colors.white),
+                  child: const Icon(
+                    Icons.directions_run,
+                    size: 16,
+                    color: Colors.white,
+                  ),
                 ),
               ),
             ),
@@ -703,9 +711,15 @@ class _MapPageState extends ConsumerState<MapPage> {
                   color: imageBorderColor.withValues(alpha: 0.92),
                   shape: BoxShape.circle,
                   border: Border.all(color: Colors.white),
-                  boxShadow: const [BoxShadow(blurRadius: 6, color: Color(0x33000000))],
+                  boxShadow: const [
+                    BoxShadow(blurRadius: 6, color: Color(0x33000000)),
+                  ],
                 ),
-                child: const Icon(Icons.photo_camera, size: 14, color: Colors.white),
+                child: const Icon(
+                  Icons.photo_camera,
+                  size: 14,
+                  color: Colors.white,
+                ),
               ),
             ),
           ),
@@ -738,15 +752,16 @@ class _MapPageState extends ConsumerState<MapPage> {
             if (walkPoints.length >= 2)
               PolylineLayer(
                 polylines: [
-                  Polyline(points: walkPoints, strokeWidth: 4, color: walkColor),
+                  Polyline(
+                    points: walkPoints,
+                    strokeWidth: 4,
+                    color: walkColor,
+                  ),
                 ],
               ),
-            if (runPolylines.isNotEmpty)
-              PolylineLayer(polylines: runPolylines),
-            if (runMarkers.isNotEmpty)
-              MarkerLayer(markers: runMarkers),
-            if (imageMarkers.isNotEmpty)
-              MarkerLayer(markers: imageMarkers),
+            if (runPolylines.isNotEmpty) PolylineLayer(polylines: runPolylines),
+            if (runMarkers.isNotEmpty) MarkerLayer(markers: runMarkers),
+            if (imageMarkers.isNotEmpty) MarkerLayer(markers: imageMarkers),
           ],
         ),
         // Top bar: back button + date label + loading/error
@@ -772,39 +787,6 @@ class _MapPageState extends ConsumerState<MapPage> {
                         Text('Overview', style: TextStyle(color: Colors.white)),
                       ],
                     ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Material(
-                  color: const Color(0xD9222222),
-                  borderRadius: BorderRadius.circular(20),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    child: _dayViewLoading
-                        ? const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                              ),
-                              SizedBox(width: 8),
-                              Text('Loading…', style: TextStyle(color: Colors.white)),
-                            ],
-                          )
-                        : _dayViewError.isNotEmpty
-                            ? Text(
-                                _dayViewError,
-                                style: const TextStyle(color: Color(0xFFFF8A80)),
-                                overflow: TextOverflow.ellipsis,
-                              )
-                            : Text(
-                                _dayViewDate,
-                                style: const TextStyle(color: Colors.white),
-                              ),
                   ),
                 ),
               ),
@@ -1016,22 +998,6 @@ class _MapPageState extends ConsumerState<MapPage> {
                           .toList(),
                     ),
                     const SizedBox(height: 12),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Different route colors'),
-                      value: _differentRouteColors,
-                      onChanged: (value) => update(() {
-                        _differentRouteColors = value;
-                      }),
-                    ),
-                    if (!AppConfig.hasMapboxToken)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Text(
-                          'MAPBOX_ACCESS_TOKEN is not set. Using fallback tiles.',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ),
                   ],
                 ),
               ),
@@ -1175,12 +1141,13 @@ class _MapPageState extends ConsumerState<MapPage> {
         '${today.year.toString().padLeft(4, '0')}-'
         '${today.month.toString().padLeft(2, '0')}-'
         '${today.day.toString().padLeft(2, '0')}';
-    final dates = _runs
-        .map((r) => r.run.startDateLocal.split('T').first)
-        .where((d) => d.isNotEmpty && d.compareTo(todayStr) <= 0)
-        .toSet()
-        .toList()
-      ..sort();
+    final dates =
+        _runs
+            .map((r) => r.run.startDateLocal.split('T').first)
+            .where((d) => d.isNotEmpty && d.compareTo(todayStr) <= 0)
+            .toSet()
+            .toList()
+          ..sort();
 
     // Always include today as the rightmost tick.
     if (!dates.contains(todayStr)) dates.add(todayStr);
@@ -1219,9 +1186,7 @@ class _MapPageState extends ConsumerState<MapPage> {
       _dayViewDate = date;
     });
     try {
-      final data = await ref
-          .read(mapRepositoryProvider)
-          .loadTimelineDay(date);
+      final data = await ref.read(mapRepositoryProvider).loadTimelineDay(date);
       if (!mounted) return;
       setState(() {
         _dayViewData = data;
@@ -1249,8 +1214,9 @@ class _MapPageState extends ConsumerState<MapPage> {
       if (run.summaryPolyline.isEmpty) continue;
       try {
         points.addAll(
-          decodePolyline(run.summaryPolyline)
-              .map((p) => LatLng(p[0].toDouble(), p[1].toDouble())),
+          decodePolyline(
+            run.summaryPolyline,
+          ).map((p) => LatLng(p[0].toDouble(), p[1].toDouble())),
         );
       } catch (_) {}
     }

@@ -243,10 +243,7 @@ class _DayPageState extends ConsumerState<DayPage> {
           .read(dayRepositoryProvider)
           .getDayCorePayload(day);
       final payload = isFutureDay
-          ? basePayload.copyWith(
-              runs: const <RunModel>[],
-              detailsLoaded: true,
-            )
+          ? basePayload.copyWith(runs: const <RunModel>[], detailsLoaded: true)
           : basePayload;
       _cachePut(day, payload);
 
@@ -319,8 +316,10 @@ class _DayPageState extends ConsumerState<DayPage> {
         variables: {'date': day},
       );
       if (!mounted) return;
-      final edges = (((response['health'] as Map<String, dynamic>?)?['dailyActivity']
-              as Map<String, dynamic>?)?['edges'] as List<dynamic>?) ??
+      final edges =
+          (((response['health'] as Map<String, dynamic>?)?['dailyActivity']
+                  as Map<String, dynamic>?)?['edges']
+              as List<dynamic>?) ??
           [];
       if (edges.isNotEmpty) {
         final node = (edges.first as Map<String, dynamic>)['node'];
@@ -452,7 +451,9 @@ class _DayPageState extends ConsumerState<DayPage> {
     }
 
     try {
-      final payload = await ref.read(dayRepositoryProvider).getDayCorePayload(day);
+      final payload = await ref
+          .read(dayRepositoryProvider)
+          .getDayCorePayload(day);
       _cachePut(day, payload.copyWith(events: const [], detailsLoaded: true));
       await _precacheDayImages(
         payload,
@@ -1486,7 +1487,6 @@ class _DayPageState extends ConsumerState<DayPage> {
               controller: _scrollController,
               physics: const AlwaysScrollableScrollPhysics(),
               keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-              padding: EdgeInsets.fromLTRB(16, 16, 16, 28 + bottomInset),
               children: [
                 _buildHeroCard(
                   context,
@@ -1498,16 +1498,13 @@ class _DayPageState extends ConsumerState<DayPage> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                _buildOverviewCard(context, draft),
-                const SizedBox(height: 12),
                 TextField(
                   controller: _description,
                   maxLines: 11,
                   onTapOutside: (_) => _dismissKeyboard(),
                   decoration: const InputDecoration(
                     alignLabelWithHint: true,
-                    hintText:
-                        'Write the atmosphere of the day, what surprised you, who you met, what stayed with you...',
+                    hintText: 'Diary text...',
                   ),
                 ),
                 if (_timelineDay != null && _timelineDay!.hasData) ...[
@@ -1560,11 +1557,6 @@ class _DayPageState extends ConsumerState<DayPage> {
                 const SizedBox(height: 12),
                 SectionCard(
                   title: 'Gallery',
-                  action: FilledButton.tonalIcon(
-                    onPressed: draft.uploading ? null : _uploadFiles,
-                    icon: const Icon(Icons.add_photo_alternate_outlined),
-                    label: const Text('Upload'),
-                  ),
                   padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1604,6 +1596,22 @@ class _DayPageState extends ConsumerState<DayPage> {
               ],
             ),
           ),
+          Positioned(
+            right: 18,
+            bottom: (_dirty ? (18 + bottomInset + 64) : (18 + bottomInset)),
+            child: FloatingActionButton(
+              heroTag: 'upload_fab',
+              onPressed: draft.uploading ? null : _uploadFiles,
+              elevation: 4,
+              child: draft.uploading
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2.5),
+                    )
+                  : const Icon(Icons.add_photo_alternate_rounded),
+            ),
+          ),
           AnimatedPositioned(
             duration: const Duration(milliseconds: 220),
             curve: Curves.easeOutCubic,
@@ -1613,6 +1621,7 @@ class _DayPageState extends ConsumerState<DayPage> {
               duration: const Duration(milliseconds: 180),
               opacity: _dirty ? 1.0 : 0.0,
               child: FloatingActionButton.extended(
+                heroTag: 'save_fab',
                 onPressed: _saving ? null : () => unawaited(_saveNow()),
                 backgroundColor: _heroAccent,
                 foregroundColor: Colors.white,
@@ -1676,20 +1685,10 @@ class _DayPageState extends ConsumerState<DayPage> {
     required bool canGoForward,
   }) {
     return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(30),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x26000000),
-            blurRadius: 28,
-            offset: Offset(0, 18),
-          ),
-        ],
-      ),
+      decoration: BoxDecoration(boxShadow: const [BoxShadow()]),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(30),
         child: AspectRatio(
-          aspectRatio: 1.05,
+          aspectRatio: 1.1,
           child: Stack(
             fit: StackFit.expand,
             children: [
@@ -1952,13 +1951,17 @@ class _DayPageState extends ConsumerState<DayPage> {
     final data = _timelineDay!;
     final colorScheme = Theme.of(context).colorScheme;
 
-    final walkLatLngs = data.walkPoints.map((p) => LatLng(p.lat, p.lon)).toList();
+    final walkLatLngs = data.walkPoints
+        .map((p) => LatLng(p.lat, p.lon))
+        .toList();
 
     final runPolylines = data.runs
         .where((r) => r.summaryPolyline.isNotEmpty)
         .map((r) {
           final decoded = decodePolyline(r.summaryPolyline);
-          return decoded.map((p) => LatLng(p[0].toDouble(), p[1].toDouble())).toList();
+          return decoded
+              .map((p) => LatLng(p[0].toDouble(), p[1].toDouble()))
+              .toList();
         })
         .where((pts) => pts.isNotEmpty)
         .toList();
@@ -1976,7 +1979,9 @@ class _DayPageState extends ConsumerState<DayPage> {
       // Switch to map tab first so the map's date listener sees the tab as active
       ref.read(selectedTabProvider.notifier).state = 4;
       if (_activeDayKey != null) {
-        ref.read(selectedDateProvider.notifier).state = parseYmd(_activeDayKey!);
+        ref.read(selectedDateProvider.notifier).state = parseYmd(
+          _activeDayKey!,
+        );
       }
     }
 
@@ -2046,31 +2051,35 @@ class _DayPageState extends ConsumerState<DayPage> {
                     if (runPolylines.isNotEmpty)
                       PolylineLayer(
                         polylines: runPolylines
-                            .map((pts) => Polyline(
-                                  points: pts,
-                                  color: Colors.orange.withValues(alpha: 0.9),
-                                  strokeWidth: 4,
-                                ))
+                            .map(
+                              (pts) => Polyline(
+                                points: pts,
+                                color: Colors.orange.withValues(alpha: 0.9),
+                                strokeWidth: 4,
+                              ),
+                            )
                             .toList(),
                       ),
                     if (data.imageLocations.isNotEmpty)
                       MarkerLayer(
                         markers: data.imageLocations
-                            .map((img) => Marker(
-                                  point: LatLng(img.lat, img.lon),
-                                  width: 10,
-                                  height: 10,
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      shape: BoxShape.circle,
-                                      border: Border.all(
-                                        color: colorScheme.primary,
-                                        width: 2,
-                                      ),
+                            .map(
+                              (img) => Marker(
+                                point: LatLng(img.lat, img.lon),
+                                width: 10,
+                                height: 10,
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: colorScheme.primary,
+                                      width: 2,
                                     ),
                                   ),
-                                ))
+                                ),
+                              ),
+                            )
                             .toList(),
                       ),
                   ],
@@ -2086,18 +2095,26 @@ class _DayPageState extends ConsumerState<DayPage> {
               runSpacing: 4,
               children: [
                 if (walkLatLngs.isNotEmpty)
-                  _mapStat(context,
-                      icon: Icons.route_outlined,
-                      label: '${walkLatLngs.length} GPS points'),
+                  _mapStat(
+                    context,
+                    icon: Icons.route_outlined,
+                    label: '${walkLatLngs.length} GPS points',
+                  ),
                 if (runPolylines.isNotEmpty)
-                  _mapStat(context,
-                      icon: Icons.directions_run_outlined,
-                      label: '${runPolylines.length} run${runPolylines.length > 1 ? 's' : ''}',
-                      color: Colors.orange),
+                  _mapStat(
+                    context,
+                    icon: Icons.directions_run_outlined,
+                    label:
+                        '${runPolylines.length} run${runPolylines.length > 1 ? 's' : ''}',
+                    color: Colors.orange,
+                  ),
                 if (data.imageLocations.isNotEmpty)
-                  _mapStat(context,
-                      icon: Icons.photo_outlined,
-                      label: '${data.imageLocations.length} photo${data.imageLocations.length > 1 ? 's' : ''} with GPS'),
+                  _mapStat(
+                    context,
+                    icon: Icons.photo_outlined,
+                    label:
+                        '${data.imageLocations.length} photo${data.imageLocations.length > 1 ? 's' : ''} with GPS',
+                  ),
               ],
             ),
           ),
@@ -2109,10 +2126,15 @@ class _DayPageState extends ConsumerState<DayPage> {
             ...data.visits.map((v) {
               final hours = v.durationMinutes ~/ 60;
               final mins = v.durationMinutes % 60;
-              final durationLabel = hours > 0 ? '${hours}h ${mins}m' : '${mins}m';
+              final durationLabel = hours > 0
+                  ? '${hours}h ${mins}m'
+                  : '${mins}m';
               final displayName = v.placeName ?? v.placeId;
               return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 5,
+                ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -2121,7 +2143,9 @@ class _DayPageState extends ConsumerState<DayPage> {
                       child: Icon(
                         Icons.location_on_outlined,
                         size: 15,
-                        color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.8),
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.primary.withValues(alpha: 0.8),
                       ),
                     ),
                     const SizedBox(width: 6),
@@ -2137,10 +2161,14 @@ class _DayPageState extends ConsumerState<DayPage> {
                           if (v.placeAddress != null)
                             Text(
                               v.placeAddress!,
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.45),
-                                fontSize: 11,
-                              ),
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurface
+                                        .withValues(alpha: 0.45),
+                                    fontSize: 11,
+                                  ),
                               overflow: TextOverflow.ellipsis,
                             ),
                         ],
@@ -2150,7 +2178,9 @@ class _DayPageState extends ConsumerState<DayPage> {
                     Text(
                       durationLabel,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withValues(alpha: 0.5),
                       ),
                     ),
                   ],
@@ -2216,7 +2246,6 @@ class _DayPageState extends ConsumerState<DayPage> {
       ),
     );
   }
-
 
   Widget _buildChipEditor({
     required TextEditingController controller,
@@ -2502,7 +2531,6 @@ class _DayPageState extends ConsumerState<DayPage> {
       ),
     );
   }
-
 
   Widget _buildEmptyState(
     BuildContext context, {

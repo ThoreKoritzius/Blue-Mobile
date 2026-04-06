@@ -10,14 +10,19 @@ import 'auth_token_store.dart';
 import 'http_client/http_client_factory.dart';
 
 class GraphqlService {
-  GraphqlService(this._tokenStore);
+  GraphqlService(this._tokenStore, {this.onSessionExpired});
 
   final AuthTokenStore _tokenStore;
+  final Future<void> Function()? onSessionExpired;
+
   static const Duration requestTimeout = Duration(seconds: 20);
   late final http.Client _httpClient = createGraphqlHttpClient();
   // Separate client for mutations so saves never queue behind heavy read requests
   late final http.Client _mutationHttpClient = createGraphqlHttpClient();
   late final GraphQLClient _multipartGraphqlClient = _buildMultipartClient();
+
+  bool _refreshing = false;
+  Completer<bool>? _refreshCompleter;
 
   void _log(String message) {
     debugPrint('[AUTH] $message');
@@ -46,6 +51,72 @@ class GraphqlService {
         subscribe: Policies(fetch: FetchPolicy.networkOnly),
       ),
     );
+  }
+
+  /// Attempts to refresh the access token using the stored refresh token.
+  /// Returns true if refresh succeeded (new tokens stored), false otherwise.
+  /// Concurrent callers wait for the in-flight refresh via a Completer.
+  Future<bool> _tryRefresh() async {
+    if (_refreshing) return _refreshCompleter!.future;
+    _refreshing = true;
+    _refreshCompleter = Completer<bool>();
+
+    try {
+      final refreshToken = _tokenStore.peekRefreshToken();
+      if (refreshToken == null || refreshToken.isEmpty) {
+        _log('no refresh token — forcing logout');
+        await _tokenStore.clear();
+        await onSessionExpired?.call();
+        _refreshCompleter!.complete(false);
+        return false;
+      }
+
+      final deviceId = _tokenStore.peekDeviceId() ?? '';
+      final client = createGraphqlHttpClient();
+      try {
+        final response = await client
+            .post(
+              Uri.parse('${AppConfig.backendUrl}/api/auth/refresh'),
+              headers: const {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-Blue-Client': 'mobile',
+              },
+              body: jsonEncode({
+                'refresh_token': refreshToken,
+                'device_id': deviceId,
+              }),
+            )
+            .timeout(const Duration(seconds: 12));
+
+        if (response.statusCode == 200) {
+          final body = jsonDecode(response.body) as Map<String, dynamic>;
+          await _tokenStore.writeToken((body['accessToken'] ?? '').toString());
+          await _tokenStore.writeRefreshToken(
+            (body['refreshToken'] ?? '').toString(),
+          );
+          _log('token refresh succeeded');
+          _refreshCompleter!.complete(true);
+          return true;
+        }
+      } finally {
+        client.close();
+      }
+
+      _log('token refresh failed — forcing logout');
+      await _tokenStore.clear();
+      await onSessionExpired?.call();
+      _refreshCompleter!.complete(false);
+      return false;
+    } catch (e) {
+      _log('token refresh error: $e — forcing logout');
+      await _tokenStore.clear();
+      await onSessionExpired?.call();
+      _refreshCompleter?.complete(false);
+      return false;
+    } finally {
+      _refreshing = false;
+    }
   }
 
   Future<Map<String, dynamic>> query(
@@ -99,54 +170,13 @@ class GraphqlService {
     Duration? timeout,
   }) async {
     try {
-      final request = _ProgressMultipartRequest(
-        'POST',
-        Uri.parse(AppConfig.graphqlHttpUrl),
+      return await _doMultipartWithProgress(
+        document,
+        variables: variables,
+        files: files,
         onProgress: onProgress,
+        timeout: timeout,
       );
-      request.headers.addAll(buildAuthHeaders());
-
-      final operationsVariables = <String, dynamic>{
-        ...variables,
-        'files': List<dynamic>.filled(files.length, null),
-      };
-      request.fields['operations'] = jsonEncode({
-        'query': document,
-        'variables': operationsVariables,
-      });
-      request.fields['map'] = jsonEncode({
-        for (var i = 0; i < files.length; i++) '$i': ['variables.files.$i'],
-      });
-
-      for (var i = 0; i < files.length; i++) {
-        request.files.add(
-          http.MultipartFile.fromBytes(
-            '$i',
-            files[i].bytes,
-            filename: files[i].filename,
-          ),
-        );
-      }
-
-      final streamed = await request.send().timeout(timeout ?? requestTimeout);
-      final response = await http.Response.fromStream(streamed);
-      final decoded = jsonDecode(response.body);
-      if (decoded is! Map<String, dynamic>) {
-        throw Exception('Invalid GraphQL response.');
-      }
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        final errors = decoded['errors'];
-        if (errors is List && errors.isNotEmpty) {
-          throw Exception(_graphqlErrorsToMessage(errors));
-        }
-        throw Exception('GraphQL HTTP ${response.statusCode}.');
-      }
-      final errors = decoded['errors'];
-      if (errors is List && errors.isNotEmpty) {
-        throw Exception(_graphqlErrorsToMessage(errors));
-      }
-      final data = decoded['data'];
-      return data is Map<String, dynamic> ? data : <String, dynamic>{};
     } on TimeoutException {
       throw Exception('Request timeout after ${requestTimeout.inSeconds}s.');
     } catch (error) {
@@ -154,10 +184,85 @@ class GraphqlService {
     }
   }
 
+  Future<Map<String, dynamic>> _doMultipartWithProgress(
+    String document, {
+    Map<String, dynamic> variables = const {},
+    required List<MultipartUploadFile> files,
+    required void Function(int sentBytes, int totalBytes) onProgress,
+    Duration? timeout,
+    bool isRetry = false,
+  }) async {
+    final request = _ProgressMultipartRequest(
+      'POST',
+      Uri.parse(AppConfig.graphqlHttpUrl),
+      onProgress: onProgress,
+    );
+    request.headers.addAll(buildAuthHeaders());
+
+    final operationsVariables = <String, dynamic>{
+      ...variables,
+      'files': List<dynamic>.filled(files.length, null),
+    };
+    request.fields['operations'] = jsonEncode({
+      'query': document,
+      'variables': operationsVariables,
+    });
+    request.fields['map'] = jsonEncode({
+      for (var i = 0; i < files.length; i++) '$i': ['variables.files.$i'],
+    });
+
+    for (var i = 0; i < files.length; i++) {
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          '$i',
+          files[i].bytes,
+          filename: files[i].filename,
+        ),
+      );
+    }
+
+    final streamed = await request.send().timeout(timeout ?? requestTimeout);
+    final response = await http.Response.fromStream(streamed);
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw Exception('Invalid GraphQL response.');
+    }
+
+    if (response.statusCode == 401 && !isRetry) {
+      final refreshed = await _tryRefresh();
+      if (refreshed) {
+        return _doMultipartWithProgress(
+          document,
+          variables: variables,
+          files: files,
+          onProgress: onProgress,
+          timeout: timeout,
+          isRetry: true,
+        );
+      }
+      throw Exception('Session expired. Please sign in again.');
+    }
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final errors = decoded['errors'];
+      if (errors is List && errors.isNotEmpty) {
+        throw Exception(_graphqlErrorsToMessage(errors));
+      }
+      throw Exception('GraphQL HTTP ${response.statusCode}.');
+    }
+    final errors = decoded['errors'];
+    if (errors is List && errors.isNotEmpty) {
+      throw Exception(_graphqlErrorsToMessage(errors));
+    }
+    final data = decoded['data'];
+    return data is Map<String, dynamic> ? data : <String, dynamic>{};
+  }
+
   Future<Map<String, dynamic>> _postJsonGraphql(
     String document, {
     Map<String, dynamic> variables = const {},
     http.Client? client,
+    bool isRetry = false,
   }) async {
     final response = await (client ?? _httpClient)
         .post(
@@ -175,6 +280,20 @@ class GraphqlService {
     if (decoded is! Map<String, dynamic>) {
       throw Exception('Invalid GraphQL response.');
     }
+
+    if (response.statusCode == 401 && !isRetry) {
+      final refreshed = await _tryRefresh();
+      if (refreshed) {
+        return _postJsonGraphql(
+          document,
+          variables: variables,
+          client: client,
+          isRetry: true,
+        );
+      }
+      throw Exception('Session expired. Please sign in again.');
+    }
+
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final errors = decoded['errors'];
       if (errors is List && errors.isNotEmpty) {
@@ -220,22 +339,21 @@ class GraphqlService {
     String document, {
     Map<String, dynamic> variables = const {},
   }) async* {
-    final headers = buildAuthHeaders();
     Link link = HttpLink(
       AppConfig.graphqlHttpUrl,
       httpClient: createGraphqlHttpClient(),
     );
-    if (headers.isNotEmpty) {
-      final wsLink = WebSocketLink(
-        AppConfig.graphqlWsUrl,
-        config: SocketClientConfig(
-          autoReconnect: true,
-          inactivityTimeout: const Duration(seconds: 30),
-          initialPayload: () => headers,
-        ),
-      );
-      link = Link.split((request) => request.isSubscription, wsLink, link);
-    }
+    final wsLink = WebSocketLink(
+      AppConfig.graphqlWsUrl,
+      config: SocketClientConfig(
+        autoReconnect: true,
+        inactivityTimeout: const Duration(seconds: 30),
+        // Use a live closure so reconnects pick up refreshed tokens
+        initialPayload: () => buildAuthHeaders(),
+      ),
+    );
+    link = Link.split((request) => request.isSubscription, wsLink, link);
+
     final client = GraphQLClient(
       cache: GraphQLCache(store: InMemoryStore()),
       link: link,
@@ -249,7 +367,7 @@ class GraphqlService {
       SubscriptionOptions(
         document: gql(document),
         variables: variables,
-        context: Context.fromList([HttpLinkHeaders(headers: headers)]),
+        context: Context.fromList([HttpLinkHeaders(headers: buildAuthHeaders())]),
       ),
     );
     await for (final result in stream) {
@@ -295,7 +413,7 @@ class GraphqlService {
     if (text.contains('timeout')) {
       return 'Network timeout while contacting ${AppConfig.backendUrl}.';
     }
-    if (text.contains('not authenticated')) {
+    if (text.contains('not authenticated') || text.contains('session expired')) {
       return 'Not authenticated. Sign in again.';
     }
     return cleaned;
