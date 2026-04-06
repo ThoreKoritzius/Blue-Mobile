@@ -46,7 +46,8 @@ class MapPage extends ConsumerStatefulWidget {
   ConsumerState<MapPage> createState() => _MapPageState();
 }
 
-class _MapPageState extends ConsumerState<MapPage> {
+class _MapPageState extends ConsumerState<MapPage>
+    with TickerProviderStateMixin {
   static const double _imageLoadZoomThreshold = 3.5;
   static const int _mapTabIndex = 4;
   static const int _imagePageSize = 60;
@@ -94,6 +95,9 @@ class _MapPageState extends ConsumerState<MapPage> {
   // All dates with run data, used to build the slider
   List<String> _dayViewDates = const [];
   int _dayViewDateIndex = 0;
+  String? _selectedVisitPlaceId;
+  final DraggableScrollableController _sheetController =
+      DraggableScrollableController();
 
   @override
   void initState() {
@@ -154,6 +158,7 @@ class _MapPageState extends ConsumerState<MapPage> {
     _nextImagePageTimer?.cancel();
     _selectedTabSubscription.close();
     _selectedDateSubscription.close();
+    _sheetController.dispose();
     super.dispose();
   }
 
@@ -727,6 +732,68 @@ class _MapPageState extends ConsumerState<MapPage> {
       }
     }
 
+    // Visit markers
+    final visitMarkers = <Marker>[];
+    if (data != null) {
+      for (final visit in data.visits) {
+        if (visit.lat == null || visit.lon == null) continue;
+        final isSelected = visit.placeId == _selectedVisitPlaceId;
+        visitMarkers.add(
+          Marker(
+            point: LatLng(visit.lat!, visit.lon!),
+            width: isSelected ? 36 : 28,
+            height: isSelected ? 36 : 28,
+            child: GestureDetector(
+              onTap: () => _onVisitMarkerTapped(visit),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: isSelected ? 36 : 28,
+                height: isSelected ? 36 : 28,
+                decoration: BoxDecoration(
+                  color: const Color(0xE06EB1FF),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: Colors.white,
+                    width: isSelected ? 2.5 : 1.0,
+                  ),
+                  boxShadow: [
+                    if (isSelected)
+                      const BoxShadow(
+                        blurRadius: 8,
+                        spreadRadius: 1,
+                        color: Color(0x556EB1FF),
+                      )
+                    else
+                      const BoxShadow(
+                        blurRadius: 6,
+                        color: Color(0x33000000),
+                      ),
+                  ],
+                ),
+                child: Icon(
+                  Icons.location_on,
+                  size: isSelected ? 20 : 14,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+      // Move selected marker to end so it renders on top.
+      if (_selectedVisitPlaceId != null && visitMarkers.length > 1) {
+        final geoVisits = data.visits
+            .where((v) => v.lat != null && v.lon != null)
+            .toList();
+        final idx = geoVisits.indexWhere(
+          (v) => v.placeId == _selectedVisitPlaceId,
+        );
+        if (idx >= 0 && idx < visitMarkers.length - 1) {
+          visitMarkers.add(visitMarkers.removeAt(idx));
+        }
+      }
+    }
+
     final hasSlider = _dayViewDates.length > 1;
 
     return Stack(
@@ -762,6 +829,7 @@ class _MapPageState extends ConsumerState<MapPage> {
             if (runPolylines.isNotEmpty) PolylineLayer(polylines: runPolylines),
             if (runMarkers.isNotEmpty) MarkerLayer(markers: runMarkers),
             if (imageMarkers.isNotEmpty) MarkerLayer(markers: imageMarkers),
+            if (visitMarkers.isNotEmpty) MarkerLayer(markers: visitMarkers),
           ],
         ),
         // Top bar: back button + date label + loading/error
@@ -801,6 +869,16 @@ class _MapPageState extends ConsumerState<MapPage> {
               currentIndex: _dayViewDateIndex,
               onDateChanged: _onDaySliderChanged,
               data: data,
+              onVisitTapped: _onBottomSheetVisitTapped,
+              onSegmentTapped: _onSegmentTapped,
+              onRunTapped: _onRunTapped,
+              selectedVisitPlaceId: _selectedVisitPlaceId,
+              sheetController: _sheetController,
+              authHeaders: _authHeaders(),
+              runColors: {
+                for (final r in data?.runs ?? <TimelineRun>[])
+                  r.id: _colorForSeed(r.id),
+              },
             ),
           ),
         // Controls FAB
@@ -1244,6 +1322,7 @@ class _MapPageState extends ConsumerState<MapPage> {
       _dayViewData = null;
       _dayViewError = '';
       _dayViewLoading = false;
+      _selectedVisitPlaceId = null;
     });
   }
 
@@ -1253,6 +1332,7 @@ class _MapPageState extends ConsumerState<MapPage> {
       _dayViewError = '';
       _dayViewData = null;
       _dayViewDate = date;
+      _selectedVisitPlaceId = null;
     });
     try {
       final data = await ref.read(mapRepositoryProvider).loadTimelineDay(date);
@@ -1277,6 +1357,8 @@ class _MapPageState extends ConsumerState<MapPage> {
   void _fitDayViewBounds(TimelineDayData data) {
     final points = <LatLng>[
       for (final img in data.imageLocations) LatLng(img.lat, img.lon),
+      for (final v in data.visits)
+        if (v.lat != null && v.lon != null) LatLng(v.lat!, v.lon!),
     ];
     points.addAll(data.walkPoints.map((p) => LatLng(p.lat, p.lon)));
     for (final run in data.runs) {
@@ -1301,6 +1383,104 @@ class _MapPageState extends ConsumerState<MapPage> {
     if (idx == _dayViewDateIndex) return;
     setState(() => _dayViewDateIndex = idx);
     _loadDayView(_dayViewDates[idx]);
+  }
+
+  void _animatedMove(LatLng target, double zoom) {
+    final camera = _mapController.camera;
+    final latTween = Tween<double>(
+      begin: camera.center.latitude,
+      end: target.latitude,
+    );
+    final lngTween = Tween<double>(
+      begin: camera.center.longitude,
+      end: target.longitude,
+    );
+    final zoomTween = Tween<double>(begin: camera.zoom, end: zoom);
+
+    final controller = AnimationController(
+      duration: const Duration(milliseconds: 500),
+      vsync: this,
+    );
+    final curved = CurvedAnimation(parent: controller, curve: Curves.easeInOut);
+
+    controller.addListener(() {
+      _mapController.move(
+        LatLng(latTween.evaluate(curved), lngTween.evaluate(curved)),
+        zoomTween.evaluate(curved),
+      );
+    });
+    controller.addStatusListener((status) {
+      if (status == AnimationStatus.completed ||
+          status == AnimationStatus.dismissed) {
+        controller.dispose();
+      }
+    });
+    controller.forward();
+  }
+
+  void _onVisitMarkerTapped(TimelineVisit visit) {
+    setState(() => _selectedVisitPlaceId = visit.placeId);
+    if (_sheetController.isAttached) {
+      _sheetController.animateTo(
+        0.6,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeOut,
+      );
+    }
+  }
+
+  void _onBottomSheetVisitTapped(TimelineVisit visit) {
+    setState(() => _selectedVisitPlaceId = visit.placeId);
+    if (visit.lat != null && visit.lon != null) {
+      _animatedMove(
+        LatLng(visit.lat!, visit.lon!),
+        math.max(_currentZoom, 15.0),
+      );
+    }
+  }
+
+  void _onRunTapped(TimelineRun run) {
+    if (run.summaryPolyline.isEmpty) return;
+    try {
+      final pts = decodePolyline(run.summaryPolyline)
+          .map((p) => LatLng(p[0].toDouble(), p[1].toDouble()))
+          .toList();
+      if (pts.length < 2) return;
+      final bounds = LatLngBounds.fromPoints(pts);
+      _mapController.fitCamera(
+        CameraFit.bounds(bounds: bounds, padding: const EdgeInsets.all(50)),
+      );
+    } catch (_) {}
+  }
+
+  void _onSegmentTapped(TimelineSegment segment) {
+    if (segment.isVisit) {
+      setState(() => _selectedVisitPlaceId = segment.placeId);
+      if (segment.placeLat != null && segment.placeLon != null) {
+        _animatedMove(
+          LatLng(segment.placeLat!, segment.placeLon!),
+          math.max(_currentZoom, 15.0),
+        );
+      }
+    } else if (segment.isActivity) {
+      // If matched to a run, fly to the run's polyline bounds.
+      if (segment.matchedRunId != null) {
+        final run = _dayViewData?.runs
+            .where((r) => r.id == segment.matchedRunId)
+            .firstOrNull;
+        if (run != null) {
+          _onRunTapped(run);
+          return;
+        }
+      }
+      // Otherwise fly to the activity start location.
+      if (segment.startLat != null && segment.startLon != null) {
+        _animatedMove(
+          LatLng(segment.startLat!, segment.startLon!),
+          math.max(_currentZoom, 13.0),
+        );
+      }
+    }
   }
 
   Map<String, String> _authHeaders() {
@@ -1360,29 +1540,161 @@ class _DayBottomSheet extends StatelessWidget {
     required this.currentIndex,
     required this.onDateChanged,
     required this.data,
+    required this.onVisitTapped,
+    required this.onSegmentTapped,
+    required this.sheetController,
+    required this.authHeaders,
+    required this.runColors,
+    required this.onRunTapped,
+    this.selectedVisitPlaceId,
   });
 
   final List<String> dates;
   final int currentIndex;
   final ValueChanged<double> onDateChanged;
   final TimelineDayData? data;
+  final void Function(TimelineVisit visit) onVisitTapped;
+  final void Function(TimelineSegment segment) onSegmentTapped;
+  final void Function(TimelineRun run) onRunTapped;
+  final String? selectedVisitPlaceId;
+  final DraggableScrollableController sheetController;
+  final Map<String, String> authHeaders;
+  final Map<String, Color> runColors;
 
-  // Collapsed: just the slider (~120px). Max: 60% of screen.
   static const double _collapsedHeight = 120;
+  /// Max photos to show inline per visit. Remaining are aggregated.
+  static const int _maxInlinePhotos = 4;
 
   @override
   Widget build(BuildContext context) {
     final screenHeight = MediaQuery.of(context).size.height;
     final minFraction = (_collapsedHeight / screenHeight).clamp(0.08, 0.25);
-    final visits = data?.visits ?? const [];
+    final rawSegments = data?.segments ?? const [];
+    final images = data?.imageLocations ?? const [];
     final runs = data?.runs ?? const [];
 
+    // Build run lookup by ID.
+    final runById = <String, TimelineRun>{};
+    for (final r in runs) {
+      runById[r.id] = r;
+    }
+
+    // --- Aggregate consecutive same-type segments ---
+    final segments = <TimelineSegment>[];
+    for (final seg in rawSegments) {
+      if (segments.isNotEmpty) {
+        final prev = segments.last;
+        // Aggregate consecutive same-type activities.
+        if (seg.isActivity &&
+            prev.isActivity &&
+            _activityGroupKey(prev.activityType) ==
+                _activityGroupKey(seg.activityType)) {
+          segments.removeLast();
+          segments.add(TimelineSegment(
+            segmentType: prev.segmentType,
+            startTime: prev.startTime,
+            endTime: seg.endTime ?? prev.endTime,
+            durationMinutes: prev.durationMinutes + seg.durationMinutes,
+            activityType: prev.activityType,
+            distanceMeters:
+                (prev.distanceMeters ?? 0) + (seg.distanceMeters ?? 0),
+            startLat: prev.startLat,
+            startLon: prev.startLon,
+            endLat: seg.endLat ?? prev.endLat,
+            endLon: seg.endLon ?? prev.endLon,
+            matchedRunId: prev.matchedRunId ?? seg.matchedRunId,
+          ));
+          continue;
+        }
+        // Aggregate consecutive visits to the same place.
+        if (seg.isVisit &&
+            prev.isVisit &&
+            seg.placeId != null &&
+            (seg.placeId == prev.placeId ||
+                (seg.placeName != null &&
+                    seg.placeName == prev.placeName &&
+                    seg.placeAddress == prev.placeAddress))) {
+          segments.removeLast();
+          segments.add(TimelineSegment(
+            segmentType: prev.segmentType,
+            startTime: prev.startTime,
+            endTime: seg.endTime ?? prev.endTime,
+            durationMinutes: prev.durationMinutes + seg.durationMinutes,
+            placeId: prev.placeId,
+            placeName: prev.placeName ?? seg.placeName,
+            placeAddress: prev.placeAddress ?? seg.placeAddress,
+            placeLat: prev.placeLat ?? seg.placeLat,
+            placeLon: prev.placeLon ?? seg.placeLon,
+          ));
+          continue;
+        }
+      }
+      segments.add(seg);
+    }
+
+    // --- Build a unified timeline: segments + standalone run entries ---
+    // Collect run IDs already referenced by segments.
+    final usedRunIds = <String>{};
+    for (final seg in segments) {
+      if (seg.matchedRunId != null) usedRunIds.add(seg.matchedRunId!);
+    }
+
+    // Timeline entries: each is either a segment or a standalone run.
+    final entries = <({TimelineSegment? seg, TimelineRun? run})>[];
+    // Merge segments and unmatched runs by time.
+    final unmatchedRuns = runs
+        .where((r) => !usedRunIds.contains(r.id) && r.startTime != null)
+        .toList()
+      ..sort((a, b) => a.startTime!.compareTo(b.startTime!));
+    var runIdx = 0;
+    for (final seg in segments) {
+      // Insert any unmatched runs that come before this segment.
+      while (runIdx < unmatchedRuns.length &&
+          unmatchedRuns[runIdx].startTime!.isBefore(seg.startTime)) {
+        entries.add((seg: null, run: unmatchedRuns[runIdx]));
+        runIdx++;
+      }
+      entries.add((seg: seg, run: null));
+    }
+    // Remaining unmatched runs after all segments.
+    while (runIdx < unmatchedRuns.length) {
+      entries.add((seg: null, run: unmatchedRuns[runIdx]));
+      runIdx++;
+    }
+
+    // Assign images to nearest visit segment by lat/lon proximity.
+    final imagesByEntryIndex = <int, List<TimelineImageLocation>>{};
+    final unassignedImages = <TimelineImageLocation>[];
+    for (final img in images) {
+      int? bestIdx;
+      double bestDist = 0.005; // ~500m threshold in degrees²
+      for (var i = 0; i < entries.length; i++) {
+        final seg = entries[i].seg;
+        if (seg == null || !seg.isVisit || seg.placeLat == null || seg.placeLon == null) {
+          continue;
+        }
+        final d = _coordDist(img.lat, img.lon, seg.placeLat!, seg.placeLon!);
+        if (d < bestDist) {
+          bestDist = d;
+          bestIdx = i;
+        }
+      }
+      if (bestIdx != null) {
+        (imagesByEntryIndex[bestIdx] ??= []).add(img);
+      } else {
+        unassignedImages.add(img);
+      }
+    }
+
+    final hasTimeline = entries.isNotEmpty || unassignedImages.isNotEmpty;
+
     return DraggableScrollableSheet(
+      controller: sheetController,
       initialChildSize: minFraction,
       minChildSize: minFraction,
-      maxChildSize: 0.6,
+      maxChildSize: 0.65,
       snap: true,
-      snapSizes: [minFraction, 0.6],
+      snapSizes: [minFraction, 0.65],
       builder: (context, scrollController) {
         return Container(
           decoration: const BoxDecoration(
@@ -1407,20 +1719,19 @@ class _DayBottomSheet extends StatelessWidget {
               ),
               // Date slider
               _buildSlider(context),
-              // Divider before expanded content
-              if (visits.isNotEmpty || runs.isNotEmpty)
+              // Timeline
+              if (hasTimeline)
                 const Divider(
                   color: Colors.white12,
                   height: 1,
                   indent: 16,
                   endIndent: 16,
                 ),
-              // Visits
-              if (visits.isNotEmpty) ...[
+              if (entries.isNotEmpty)
                 const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 14, 16, 6),
+                  padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
                   child: Text(
-                    'PLACES',
+                    'TIMELINE',
                     style: TextStyle(
                       color: Colors.white54,
                       fontSize: 11,
@@ -1429,14 +1740,20 @@ class _DayBottomSheet extends StatelessWidget {
                     ),
                   ),
                 ),
-                ...visits.map((v) => _buildVisitTile(context, v)),
+              for (var i = 0; i < entries.length; i++) ...[
+                if (entries[i].seg != null)
+                  _buildSegmentTile(context, entries[i].seg!, runById)
+                else
+                  _buildRunEntryTile(context, entries[i].run!),
+                if (imagesByEntryIndex.containsKey(i))
+                  _buildImageStrip(context, imagesByEntryIndex[i]!),
               ],
-              // Runs
-              if (runs.isNotEmpty) ...[
+              // Unassigned photos at the end
+              if (unassignedImages.isNotEmpty) ...[
                 const Padding(
                   padding: EdgeInsets.fromLTRB(16, 14, 16, 6),
                   child: Text(
-                    'ACTIVITIES',
+                    'PHOTOS',
                     style: TextStyle(
                       color: Colors.white54,
                       fontSize: 11,
@@ -1445,9 +1762,9 @@ class _DayBottomSheet extends StatelessWidget {
                     ),
                   ),
                 ),
-                ...runs.map((r) => _buildRunTile(context, r)),
+                _buildImageStrip(context, unassignedImages),
               ],
-              if (visits.isEmpty && runs.isEmpty)
+              if (!hasTimeline)
                 const Padding(
                   padding: EdgeInsets.all(24),
                   child: Center(
@@ -1457,13 +1774,30 @@ class _DayBottomSheet extends StatelessWidget {
                     ),
                   ),
                 ),
-              // Bottom safe area padding
               SizedBox(height: MediaQuery.of(context).padding.bottom + 16),
             ],
           ),
         );
       },
     );
+  }
+
+  double _coordDist(double lat1, double lon1, double lat2, double lon2) {
+    final dLat = lat1 - lat2;
+    final dLon = lon1 - lon2;
+    return dLat * dLat + dLon * dLon; // squared distance is fine for comparison
+  }
+
+  String _formatTime(DateTime dt) {
+    final h = dt.hour.toString().padLeft(2, '0');
+    final m = dt.minute.toString().padLeft(2, '0');
+    return '$h:$m';
+  }
+
+  String _formatDuration(int minutes) {
+    final hours = minutes ~/ 60;
+    final mins = minutes % 60;
+    return hours > 0 ? '${hours}h ${mins}m' : '${mins}m';
   }
 
   Widget _buildSlider(BuildContext context) {
@@ -1507,76 +1841,514 @@ class _DayBottomSheet extends StatelessWidget {
     );
   }
 
-  Widget _buildVisitTile(BuildContext context, TimelineVisit v) {
-    final hours = v.durationMinutes ~/ 60;
-    final mins = v.durationMinutes % 60;
-    final durationLabel = hours > 0 ? '${hours}h ${mins}m' : '${mins}m';
-    final displayName = v.placeName ?? v.placeId;
+  Widget _buildSegmentTile(
+    BuildContext context,
+    TimelineSegment segment,
+    Map<String, TimelineRun> runById,
+  ) {
+    if (segment.isVisit) {
+      return _buildVisitSegmentTile(context, segment);
+    } else {
+      return _buildActivitySegmentTile(context, segment, runById);
+    }
+  }
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Padding(
-            padding: EdgeInsets.only(top: 2),
-            child: Icon(
-              Icons.location_on_outlined,
-              size: 16,
-              color: Color(0xCC6EB1FF),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  displayName,
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                  overflow: TextOverflow.ellipsis,
+  Widget _buildVisitSegmentTile(BuildContext context, TimelineSegment seg) {
+    final isSelected = seg.placeId == selectedVisitPlaceId;
+    final hasLocation = seg.placeLat != null && seg.placeLon != null;
+    final displayName = seg.placeName ?? seg.placeId ?? 'Unknown';
+    final timeLabel = _formatTime(seg.startTime);
+    final durationLabel = _formatDuration(seg.durationMinutes);
+
+    return GestureDetector(
+      onTap: () => onSegmentTapped(seg),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0x336EB1FF) : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Time column
+            SizedBox(
+              width: 42,
+              child: Text(
+                timeLabel,
+                style: TextStyle(
+                  color: isSelected
+                      ? const Color(0xFF6EB1FF)
+                      : Colors.white54,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  fontFeatures: const [FontFeature.tabularFigures()],
                 ),
-                if (v.placeAddress != null)
+              ),
+            ),
+            // Timeline dot
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? const Color(0xFF6EB1FF)
+                      : hasLocation
+                          ? const Color(0xCC6EB1FF)
+                          : const Color(0x556EB1FF),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: isSelected ? Colors.white : Colors.white38,
+                    width: 1.5,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            // Content
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Text(
-                    v.placeAddress!,
-                    style: const TextStyle(
-                      color: Colors.white38,
-                      fontSize: 11,
+                    displayName,
+                    style: TextStyle(
+                      color: hasLocation ? Colors.white : Colors.white54,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
                     ),
                     overflow: TextOverflow.ellipsis,
                   ),
-              ],
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      if (seg.placeAddress != null) ...[
+                        Flexible(
+                          child: Text(
+                            seg.placeAddress!,
+                            style: const TextStyle(
+                              color: Colors.white30,
+                              fontSize: 11,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const Text(
+                          '  ·  ',
+                          style: TextStyle(color: Colors.white24, fontSize: 11),
+                        ),
+                      ],
+                      Text(
+                        durationLabel,
+                        style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            durationLabel,
-            style: const TextStyle(color: Colors.white54, fontSize: 12),
-          ),
-        ],
+            if (hasLocation)
+              Icon(
+                Icons.chevron_right,
+                size: 16,
+                color: isSelected
+                    ? const Color(0xFF6EB1FF)
+                    : const Color(0x44FFFFFF),
+              ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildRunTile(BuildContext context, TimelineRun r) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      child: Row(
-        children: [
-          const Icon(
-            Icons.directions_run_outlined,
-            size: 16,
-            color: Color(0xCCF79C70),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              r.name,
-              style: const TextStyle(color: Colors.white, fontSize: 13),
-              overflow: TextOverflow.ellipsis,
+  /// Canonical key for aggregation — groups equivalent types together.
+  static String _activityGroupKey(String? type) {
+    switch (type) {
+      case 'IN_PASSENGER_VEHICLE':
+      case 'IN_ROAD_VEHICLE':
+      case 'IN_VEHICLE':
+        return 'DRIVING';
+      case 'WALKING':
+      case 'ON_FOOT':
+      case 'HIKING':
+        return type == 'HIKING' ? 'HIKING' : 'WALKING';
+      case 'ON_BICYCLE':
+        return 'CYCLING';
+      case 'IN_RAIL_VEHICLE':
+        return 'IN_TRAIN';
+      default:
+        return type ?? 'UNKNOWN';
+    }
+  }
+
+  static String _activityTypeLabel(String? type) {
+    switch (type) {
+      case 'IN_PASSENGER_VEHICLE':
+      case 'IN_ROAD_VEHICLE':
+      case 'IN_VEHICLE':
+        return 'Driving';
+      case 'WALKING':
+      case 'ON_FOOT':
+        return 'Walking';
+      case 'HIKING':
+        return 'Hiking';
+      case 'IN_TRAIN':
+      case 'IN_RAIL_VEHICLE':
+        return 'Train';
+      case 'IN_TRAM':
+        return 'Tram';
+      case 'IN_SUBWAY':
+        return 'Subway';
+      case 'IN_BUS':
+        return 'Bus';
+      case 'IN_FERRY':
+        return 'Ferry';
+      case 'IN_CABLECAR':
+        return 'Cable car';
+      case 'IN_FUNICULAR':
+        return 'Funicular';
+      case 'IN_GONDOLA_LIFT':
+        return 'Gondola';
+      case 'CYCLING':
+      case 'ON_BICYCLE':
+        return 'Cycling';
+      case 'RUNNING':
+        return 'Running';
+      case 'MOTORCYCLING':
+        return 'Motorcycle';
+      case 'BOATING':
+        return 'Boating';
+      case 'SAILING':
+        return 'Sailing';
+      case 'FLYING':
+        return 'Flying';
+      case 'SKIING':
+        return 'Skiing';
+      case 'HORSEBACK_RIDING':
+        return 'Horseback riding';
+      case 'STILL':
+        return 'Stationary';
+      case 'EXITING_VEHICLE':
+      case 'TILTING':
+        return 'Transition';
+      default:
+        return 'Moving';
+    }
+  }
+
+  static IconData _activityTypeIcon(String? type) {
+    switch (type) {
+      case 'IN_PASSENGER_VEHICLE':
+      case 'IN_ROAD_VEHICLE':
+      case 'IN_VEHICLE':
+        return Icons.directions_car_outlined;
+      case 'WALKING':
+      case 'ON_FOOT':
+        return Icons.directions_walk_outlined;
+      case 'HIKING':
+        return Icons.hiking_outlined;
+      case 'IN_TRAIN':
+      case 'IN_RAIL_VEHICLE':
+        return Icons.train_outlined;
+      case 'IN_TRAM':
+        return Icons.tram_outlined;
+      case 'IN_SUBWAY':
+        return Icons.subway_outlined;
+      case 'IN_BUS':
+        return Icons.directions_bus_outlined;
+      case 'IN_FERRY':
+      case 'BOATING':
+      case 'SAILING':
+        return Icons.directions_boat_outlined;
+      case 'IN_CABLECAR':
+      case 'IN_FUNICULAR':
+      case 'IN_GONDOLA_LIFT':
+        return Icons.airline_seat_legroom_extra_outlined;
+      case 'CYCLING':
+      case 'ON_BICYCLE':
+        return Icons.directions_bike_outlined;
+      case 'RUNNING':
+        return Icons.directions_run_outlined;
+      case 'MOTORCYCLING':
+        return Icons.two_wheeler_outlined;
+      case 'FLYING':
+        return Icons.flight_outlined;
+      case 'SKIING':
+        return Icons.downhill_skiing_outlined;
+      case 'HORSEBACK_RIDING':
+        return Icons.pets_outlined;
+      case 'STILL':
+        return Icons.pause_circle_outline;
+      case 'EXITING_VEHICLE':
+      case 'TILTING':
+        return Icons.swap_horiz;
+      default:
+        return Icons.moving_outlined;
+    }
+  }
+
+
+  Widget _buildActivitySegmentTile(
+    BuildContext context,
+    TimelineSegment seg,
+    Map<String, TimelineRun> runById,
+  ) {
+    final run = seg.matchedRunId != null ? runById[seg.matchedRunId] : null;
+    final timeLabel = _formatTime(seg.startTime);
+    final hasLocation = seg.startLat != null && seg.startLon != null;
+
+    final isRunning = seg.activityType == 'RUNNING';
+    final activityColor = isRunning
+        ? const Color(0xCCF79C70)
+        : const Color(0xCCBDBDBD);
+    final activityIcon = _activityTypeIcon(seg.activityType);
+    // For running: prefer the Strava run name if matched.
+    final typeLabel = isRunning && run != null && run.name.isNotEmpty
+        ? run.name
+        : _activityTypeLabel(seg.activityType);
+
+    // Build subtitle parts
+    final subtitleParts = <String>[];
+    if (seg.durationMinutes > 0) {
+      subtitleParts.add(_formatDuration(seg.durationMinutes));
+    }
+    if (seg.distanceMeters != null && seg.distanceMeters! > 0) {
+      final km = seg.distanceMeters! / 1000;
+      subtitleParts.add(
+        km >= 1 ? '${km.toStringAsFixed(1)} km' : '${seg.distanceMeters} m',
+      );
+    }
+
+    return GestureDetector(
+      onTap: () => onSegmentTapped(seg),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Time column
+            SizedBox(
+              width: 42,
+              child: Text(
+                timeLabel,
+                style: const TextStyle(
+                  color: Colors.white54,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ),
+            // Timeline dot with activity icon
+            Container(
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                color: activityColor.withValues(alpha: 0.25),
+                shape: BoxShape.circle,
+                border: Border.all(color: activityColor, width: 1.5),
+              ),
+              child: Icon(activityIcon, size: 12, color: activityColor),
+            ),
+            const SizedBox(width: 8),
+            // Content
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    typeLabel,
+                    style: TextStyle(
+                      color: activityColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (subtitleParts.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitleParts.join('  ·  '),
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            if (hasLocation)
+              const Icon(
+                Icons.chevron_right,
+                size: 16,
+                color: Color(0x44FFFFFF),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRunEntryTile(BuildContext context, TimelineRun run) {
+    final color = runColors[run.id] ?? const Color(0xCCF79C70);
+    final timeLabel = run.startTime != null ? _formatTime(run.startTime!) : '';
+
+    final subtitleParts = <String>[];
+    if (run.distanceMeters != null && run.distanceMeters! > 0) {
+      final km = run.distanceMeters! / 1000;
+      subtitleParts.add(
+        km >= 1 ? '${km.toStringAsFixed(1)} km' : '${run.distanceMeters} m',
+      );
+    }
+    if (run.movingTimeSeconds != null && run.movingTimeSeconds! > 0) {
+      final mins = run.movingTimeSeconds! ~/ 60;
+      subtitleParts.add(_formatDuration(mins));
+    }
+
+    return GestureDetector(
+      onTap: () => onRunTapped(run),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Time column
+            SizedBox(
+              width: 42,
+              child: Text(
+                timeLabel,
+                style: const TextStyle(
+                  color: Colors.white54,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ),
+            // Run icon circle in run color
+            Container(
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.25),
+                shape: BoxShape.circle,
+                border: Border.all(color: color, width: 1.5),
+              ),
+              child: Icon(Icons.directions_run, size: 12, color: color),
+            ),
+            const SizedBox(width: 8),
+            // Content
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    run.name.isNotEmpty ? run.name : 'Run',
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                ),
+                if (subtitleParts.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitleParts.join('  ·  '),
+                    style: const TextStyle(
+                      color: Colors.white38,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
-        ],
+          if (run.summaryPolyline.isNotEmpty)
+            Icon(
+              Icons.chevron_right,
+              size: 16,
+              color: color.withValues(alpha: 0.5),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildImageStrip(
+    BuildContext context,
+    List<TimelineImageLocation> imgs,
+  ) {
+    final showCount = imgs.length > _maxInlinePhotos ? _maxInlinePhotos : imgs.length;
+    final remaining = imgs.length - showCount;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(62, 2, 16, 6),
+      child: SizedBox(
+        height: 56,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: showCount + (remaining > 0 ? 1 : 0),
+          separatorBuilder: (_, __) => const SizedBox(width: 6),
+          itemBuilder: (context, index) {
+            if (index >= showCount) {
+              // "+N more" badge
+              return Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: const Color(0x33FFFFFF),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  '+$remaining',
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              );
+            }
+            return ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: CachedNetworkImage(
+                imageUrl: imgs[index].path,
+                httpHeaders: authHeaders,
+                width: 56,
+                height: 56,
+                fit: BoxFit.cover,
+                placeholder: (_, __) => Container(
+                  width: 56,
+                  height: 56,
+                  color: const Color(0x22FFFFFF),
+                ),
+                errorWidget: (_, __, ___) => Container(
+                  width: 56,
+                  height: 56,
+                  color: const Color(0x22FFFFFF),
+                  child: const Icon(
+                    Icons.image_not_supported_outlined,
+                    size: 16,
+                    color: Colors.white30,
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
       ),
     );
   }

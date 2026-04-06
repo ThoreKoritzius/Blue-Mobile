@@ -45,11 +45,17 @@ class TimelineRun {
     required this.id,
     required this.name,
     required this.summaryPolyline,
+    this.startTime,
+    this.distanceMeters,
+    this.movingTimeSeconds,
   });
 
   final String id;
   final String name;
   final String summaryPolyline;
+  final DateTime? startTime;
+  final int? distanceMeters;
+  final int? movingTimeSeconds;
 }
 
 class TimelineWalkPoint {
@@ -67,6 +73,8 @@ class TimelineVisit {
     this.placeAddress,
     this.lat,
     this.lon,
+    this.startTime,
+    this.endTime,
   });
 
   final String placeId;
@@ -75,6 +83,53 @@ class TimelineVisit {
   final String? placeAddress;
   final double? lat;
   final double? lon;
+  final DateTime? startTime;
+  final DateTime? endTime;
+}
+
+/// A unified segment from the timeline (VISIT or ACTIVITY), ordered by startTime.
+class TimelineSegment {
+  const TimelineSegment({
+    required this.segmentType,
+    required this.startTime,
+    this.endTime,
+    this.durationMinutes = 0,
+    this.placeId,
+    this.placeName,
+    this.placeAddress,
+    this.placeLat,
+    this.placeLon,
+    this.activityType,
+    this.distanceMeters,
+    this.startLat,
+    this.startLon,
+    this.endLat,
+    this.endLon,
+    this.matchedRunId,
+  });
+
+  final String segmentType; // 'VISIT' or 'ACTIVITY'
+  final DateTime startTime;
+  final DateTime? endTime;
+  final int durationMinutes;
+  // Visit fields
+  final String? placeId;
+  final String? placeName;
+  final String? placeAddress;
+  final double? placeLat;
+  final double? placeLon;
+  // Activity fields
+  final String? activityType;
+  final int? distanceMeters;
+  final double? startLat;
+  final double? startLon;
+  final double? endLat;
+  final double? endLon;
+  /// Run ID matched from the runs list (by start time proximity).
+  final String? matchedRunId;
+
+  bool get isVisit => segmentType == 'VISIT';
+  bool get isActivity => segmentType == 'ACTIVITY';
 }
 
 class TimelineDayData {
@@ -84,6 +139,7 @@ class TimelineDayData {
     required this.runs,
     required this.imageLocations,
     this.visits = const [],
+    this.segments = const [],
   });
 
   final String date;
@@ -91,6 +147,7 @@ class TimelineDayData {
   final List<TimelineRun> runs;
   final List<TimelineImageLocation> imageLocations;
   final List<TimelineVisit> visits;
+  final List<TimelineSegment> segments;
 
   bool get hasData =>
       walkPoints.isNotEmpty ||
@@ -256,11 +313,21 @@ class MapRepository {
           : (rawRuns is String ? [] : (rawRuns as List<dynamic>? ?? []));
       for (final raw in runsList) {
         final r = raw as Map<String, dynamic>;
+        DateTime? startTime;
+        final rawStart = r['startTime'];
+        if (rawStart is String && rawStart.isNotEmpty) {
+          // startTime may be time-of-day ("06:30:00") or ISO datetime
+          startTime = DateTime.tryParse(rawStart) ??
+              DateTime.tryParse('${date}T$rawStart');
+        }
         runs.add(
           TimelineRun(
             id: (r['id'] ?? '').toString(),
             name: (r['name'] ?? '').toString(),
             summaryPolyline: (r['summaryPolyline'] ?? '').toString(),
+            startTime: startTime,
+            distanceMeters: (r['distanceMeters'] as num?)?.toInt(),
+            movingTimeSeconds: (r['movingTimeSeconds'] as num?)?.toInt(),
           ),
         );
       }
@@ -292,27 +359,84 @@ class MapRepository {
       debugPrint('[TIMELINE] parsed ${imageLocations.length} imageLocations');
 
       final visits = <TimelineVisit>[];
+      final segments = <TimelineSegment>[];
       final rawSegs = timeline['segments'];
       final segList = rawSegs is List
           ? rawSegs
           : (rawSegs is String ? [] : (rawSegs as List<dynamic>? ?? []));
       for (final raw in segList) {
         final s = raw as Map<String, dynamic>;
-        if ((s['segmentType'] as String?) != 'VISIT') continue;
-        final placeId = (s['placeId'] ?? '').toString();
-        if (placeId.isEmpty) continue;
+        final segType = (s['segmentType'] as String?) ?? '';
+        final rawStart = s['startTime'] as String?;
+        final rawEnd = s['endTime'] as String?;
+        final startTime = rawStart != null ? DateTime.tryParse(rawStart) : null;
+        final endTime = rawEnd != null ? DateTime.tryParse(rawEnd) : null;
         final duration = (s['durationMinutes'] as num?)?.toInt() ?? 0;
-        if (duration < 5) continue;
-        visits.add(TimelineVisit(
-          placeId: placeId,
-          durationMinutes: duration,
-          placeName: (s['placeName'] as String?)?.isNotEmpty == true ? s['placeName'] as String : null,
-          placeAddress: (s['placeAddress'] as String?)?.isNotEmpty == true ? s['placeAddress'] as String : null,
-          lat: (s['placeLat'] as num?)?.toDouble(),
-          lon: (s['placeLon'] as num?)?.toDouble(),
-        ));
+
+        if (segType == 'VISIT') {
+          final placeId = (s['placeId'] ?? '').toString();
+          if (placeId.isEmpty) continue;
+          if (duration < 5) continue;
+          final placeName = (s['placeName'] as String?)?.isNotEmpty == true ? s['placeName'] as String : null;
+          final placeAddress = (s['placeAddress'] as String?)?.isNotEmpty == true ? s['placeAddress'] as String : null;
+          final lat = (s['placeLat'] as num?)?.toDouble();
+          final lon = (s['placeLon'] as num?)?.toDouble();
+          visits.add(TimelineVisit(
+            placeId: placeId,
+            durationMinutes: duration,
+            placeName: placeName,
+            placeAddress: placeAddress,
+            lat: lat,
+            lon: lon,
+            startTime: startTime,
+            endTime: endTime,
+          ));
+          if (startTime != null) {
+            segments.add(TimelineSegment(
+              segmentType: segType,
+              startTime: startTime,
+              endTime: endTime,
+              durationMinutes: duration,
+              placeId: placeId,
+              placeName: placeName,
+              placeAddress: placeAddress,
+              placeLat: lat,
+              placeLon: lon,
+            ));
+          }
+        } else if (segType == 'ACTIVITY' && startTime != null) {
+          // Try to match to a run by closest start time
+          String? matchedRunId;
+          if (runs.isNotEmpty) {
+            TimelineRun? best;
+            Duration bestDiff = const Duration(hours: 2);
+            for (final run in runs) {
+              if (run.startTime == null) continue;
+              final diff = run.startTime!.difference(startTime).abs();
+              if (diff < bestDiff) {
+                bestDiff = diff;
+                best = run;
+              }
+            }
+            matchedRunId = best?.id;
+          }
+          segments.add(TimelineSegment(
+            segmentType: segType,
+            startTime: startTime,
+            endTime: endTime,
+            durationMinutes: duration,
+            activityType: (s['activityType'] as String?),
+            distanceMeters: (s['distanceMeters'] as num?)?.toInt(),
+            startLat: (s['startLat'] as num?)?.toDouble(),
+            startLon: (s['startLon'] as num?)?.toDouble(),
+            endLat: (s['endLat'] as num?)?.toDouble(),
+            endLon: (s['endLon'] as num?)?.toDouble(),
+            matchedRunId: matchedRunId,
+          ));
+        }
       }
-      debugPrint('[TIMELINE] parsed ${visits.length} visits');
+      segments.sort((a, b) => a.startTime.compareTo(b.startTime));
+      debugPrint('[TIMELINE] parsed ${visits.length} visits, ${segments.length} segments');
 
       return TimelineDayData(
         date: date,
@@ -320,6 +444,7 @@ class MapRepository {
         runs: runs,
         imageLocations: imageLocations,
         visits: visits,
+        segments: segments,
       );
     } catch (error, stackTrace) {
       debugPrint('[TIMELINE] parse failed date=$date error=$error');
