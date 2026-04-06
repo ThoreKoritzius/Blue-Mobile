@@ -604,8 +604,8 @@ class _MapPageState extends ConsumerState<MapPage> {
           ),
         Positioned(
           right: 16,
-          bottom: 16,
-          child: FloatingActionButton(
+          top: 16,
+          child: FloatingActionButton.small(
             heroTag: 'map_controls',
             onPressed: _showControlsSheet,
             child: const Icon(Icons.tune),
@@ -793,23 +793,21 @@ class _MapPageState extends ConsumerState<MapPage> {
             ],
           ),
         ),
-        // Bottom: date slider
+        // Bottom: date slider + visits sheet
         if (hasSlider)
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: _DaySlider(
+          Positioned.fill(
+            child: _DayBottomSheet(
               dates: _dayViewDates,
               currentIndex: _dayViewDateIndex,
-              onChanged: _onDaySliderChanged,
+              onDateChanged: _onDaySliderChanged,
+              data: data,
             ),
           ),
         // Controls FAB
         Positioned(
           right: 16,
-          bottom: hasSlider ? 80 : 16,
-          child: FloatingActionButton(
+          top: 16,
+          child: FloatingActionButton.small(
             heroTag: 'map_controls',
             onPressed: _showControlsSheet,
             child: const Icon(Icons.tune),
@@ -933,10 +931,20 @@ class _MapPageState extends ConsumerState<MapPage> {
     return 34;
   }
 
+  IconData _mapStyleIcon(_MapStyle style) {
+    switch (style) {
+      case _MapStyle.light:
+        return Icons.light_mode_outlined;
+      case _MapStyle.dark:
+        return Icons.dark_mode_outlined;
+      case _MapStyle.normal:
+        return Icons.map_outlined;
+    }
+  }
+
   Future<void> _showControlsSheet() {
-    return showModalBottomSheet<void>(
+    return showDialog<void>(
       context: context,
-      showDragHandle: true,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setModalState) {
@@ -945,62 +953,123 @@ class _MapPageState extends ConsumerState<MapPage> {
               setModalState(() {});
             }
 
-            return SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Map Controls',
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Map Style',
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      children: _MapStyle.values
-                          .map(
-                            (style) => ChoiceChip(
-                              label: Text(_mapStyleLabel(style)),
-                              selected: _mapStyle == style,
-                              onSelected: (_) => update(() {
-                                _mapStyle = style;
-                              }),
+            final theme = Theme.of(context);
+            final colorScheme = theme.colorScheme;
+
+            Widget buildStyleCard(_MapStyle style) {
+              final selected = _mapStyle == style;
+              return Expanded(
+                child: GestureDetector(
+                  onTap: () => update(() => _mapStyle = style),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? colorScheme.primaryContainer
+                          : colorScheme.surfaceContainerHighest.withValues(
+                              alpha: 0.5,
                             ),
-                          )
-                          .toList(),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: selected
+                            ? colorScheme.primary
+                            : colorScheme.outlineVariant.withValues(alpha: 0.4),
+                        width: selected ? 2 : 1,
+                      ),
                     ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Visible Layers',
-                      style: Theme.of(context).textTheme.titleSmall,
+                    child: Column(
+                      children: [
+                        Icon(
+                          _mapStyleIcon(style),
+                          size: 26,
+                          color: selected
+                              ? colorScheme.primary
+                              : colorScheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          _mapStyleLabel(style),
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            fontWeight: selected
+                                ? FontWeight.w600
+                                : FontWeight.w400,
+                            color: selected
+                                ? colorScheme.primary
+                                : colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      children: _DisplayType.values
-                          .map(
-                            (displayType) => ChoiceChip(
-                              label: Text(_displayTypeLabel(displayType)),
-                              selected: _displayType == displayType,
-                              onSelected: (_) => update(() {
-                                _displayType = displayType;
-                                _ensureImagesLoadedIfNeeded();
-                              }),
-                            ),
-                          )
-                          .toList(),
-                    ),
-                    const SizedBox(height: 12),
-                  ],
+                  ),
                 ),
+              );
+            }
+
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
               ),
+              titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+              title: Row(
+                children: [
+                  Icon(Icons.tune, size: 22, color: colorScheme.primary),
+                  const SizedBox(width: 10),
+                  const Text('Map Controls'),
+                ],
+              ),
+              contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 8),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'STYLE',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      letterSpacing: 1.2,
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    spacing: 10,
+                    children: _MapStyle.values
+                        .map((s) => buildStyleCard(s))
+                        .toList(),
+                  ),
+                  const SizedBox(height: 22),
+                  Text(
+                    'VISIBLE LAYERS',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      letterSpacing: 1.2,
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  SegmentedButton<_DisplayType>(
+                    segments: _DisplayType.values
+                        .map(
+                          (dt) => ButtonSegment<_DisplayType>(
+                            value: dt,
+                            label: Text(_displayTypeLabel(dt)),
+                          ),
+                        )
+                        .toList(),
+                    selected: {_displayType},
+                    onSelectionChanged: (selection) => update(() {
+                      _displayType = selection.first;
+                      _ensureImagesLoadedIfNeeded();
+                    }),
+                    showSelectedIcon: false,
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Done'),
+                ),
+              ],
             );
           },
         );
@@ -1285,23 +1354,122 @@ class _MapPageState extends ConsumerState<MapPage> {
   }
 }
 
-class _DaySlider extends StatelessWidget {
-  const _DaySlider({
+class _DayBottomSheet extends StatelessWidget {
+  const _DayBottomSheet({
     required this.dates,
     required this.currentIndex,
-    required this.onChanged,
+    required this.onDateChanged,
+    required this.data,
   });
 
   final List<String> dates;
   final int currentIndex;
-  final ValueChanged<double> onChanged;
+  final ValueChanged<double> onDateChanged;
+  final TimelineDayData? data;
+
+  // Collapsed: just the slider (~120px). Max: 60% of screen.
+  static const double _collapsedHeight = 120;
 
   @override
   Widget build(BuildContext context) {
+    final screenHeight = MediaQuery.of(context).size.height;
+    final minFraction = (_collapsedHeight / screenHeight).clamp(0.08, 0.25);
+    final visits = data?.visits ?? const [];
+    final runs = data?.runs ?? const [];
+
+    return DraggableScrollableSheet(
+      initialChildSize: minFraction,
+      minChildSize: minFraction,
+      maxChildSize: 0.6,
+      snap: true,
+      snapSizes: [minFraction, 0.6],
+      builder: (context, scrollController) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Color(0xF0222222),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+          ),
+          child: ListView(
+            controller: scrollController,
+            padding: EdgeInsets.zero,
+            children: [
+              // Drag handle
+              Center(
+                child: Container(
+                  margin: const EdgeInsets.only(top: 10, bottom: 4),
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white38,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              // Date slider
+              _buildSlider(context),
+              // Divider before expanded content
+              if (visits.isNotEmpty || runs.isNotEmpty)
+                const Divider(
+                  color: Colors.white12,
+                  height: 1,
+                  indent: 16,
+                  endIndent: 16,
+                ),
+              // Visits
+              if (visits.isNotEmpty) ...[
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 14, 16, 6),
+                  child: Text(
+                    'PLACES',
+                    style: TextStyle(
+                      color: Colors.white54,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                ),
+                ...visits.map((v) => _buildVisitTile(context, v)),
+              ],
+              // Runs
+              if (runs.isNotEmpty) ...[
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 14, 16, 6),
+                  child: Text(
+                    'ACTIVITIES',
+                    style: TextStyle(
+                      color: Colors.white54,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                ),
+                ...runs.map((r) => _buildRunTile(context, r)),
+              ],
+              if (visits.isEmpty && runs.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Center(
+                    child: Text(
+                      'No location details for this day',
+                      style: TextStyle(color: Colors.white38, fontSize: 13),
+                    ),
+                  ),
+                ),
+              // Bottom safe area padding
+              SizedBox(height: MediaQuery.of(context).padding.bottom + 16),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildSlider(BuildContext context) {
     final date = dates[currentIndex];
-    return Container(
-      color: const Color(0xD9222222),
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1330,9 +1498,83 @@ class _DaySlider extends StatelessWidget {
             min: 0,
             max: (dates.length - 1).toDouble(),
             divisions: dates.length - 1,
-            onChanged: onChanged,
+            onChanged: onDateChanged,
             activeColor: Colors.white,
             inactiveColor: Colors.white30,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVisitTile(BuildContext context, TimelineVisit v) {
+    final hours = v.durationMinutes ~/ 60;
+    final mins = v.durationMinutes % 60;
+    final durationLabel = hours > 0 ? '${hours}h ${mins}m' : '${mins}m';
+    final displayName = v.placeName ?? v.placeId;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(top: 2),
+            child: Icon(
+              Icons.location_on_outlined,
+              size: 16,
+              color: Color(0xCC6EB1FF),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  displayName,
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (v.placeAddress != null)
+                  Text(
+                    v.placeAddress!,
+                    style: const TextStyle(
+                      color: Colors.white38,
+                      fontSize: 11,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            durationLabel,
+            style: const TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRunTile(BuildContext context, TimelineRun r) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.directions_run_outlined,
+            size: 16,
+            color: Color(0xCCF79C70),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              r.name,
+              style: const TextStyle(color: Colors.white, fontSize: 13),
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
         ],
       ),
@@ -1430,7 +1672,7 @@ class _StatusBanner extends StatelessWidget {
       child: Card(
         color: const Color(0xD9222222),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
           child: Text(
             'Showing $visibleImages images from $imagesLoaded cached points, $runsLoaded runs',
             key: _MapPageState._loadedTextKey,

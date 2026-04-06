@@ -38,7 +38,7 @@ class DayPage extends ConsumerStatefulWidget {
   ConsumerState<DayPage> createState() => _DayPageState();
 }
 
-class _DayPageState extends ConsumerState<DayPage> {
+class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
   static const _defaultHeroAccent = Color(0xFF174EA6);
   static const _maxDayCacheEntries = 7;
   static const _navigationBurstWindow = Duration(milliseconds: 260);
@@ -54,6 +54,8 @@ class _DayPageState extends ConsumerState<DayPage> {
   final List<String> _cacheOrder = <String>[];
 
   Timer? _pendingLoadTimer;
+  Timer? _debounceTimer;
+  Timer? _autosaveTimer;
   StoryDayModel? _original;
   StoryDayModel? _current;
   List<DayMediaModel> _media = const [];
@@ -79,8 +81,18 @@ class _DayPageState extends ConsumerState<DayPage> {
   _HeroImageAsset? _heroAsset;
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused && _dirty && !_saving) {
+      _debounceTimer?.cancel();
+      _autosaveTimer?.cancel();
+      _saveNow();
+    }
+  }
+
+  @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _place = TextEditingController();
     _country = TextEditingController();
     _description = TextEditingController();
@@ -107,6 +119,9 @@ class _DayPageState extends ConsumerState<DayPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _debounceTimer?.cancel();
+    _autosaveTimer?.cancel();
     _place.dispose();
     _country.dispose();
     _description.dispose();
@@ -131,16 +146,20 @@ class _DayPageState extends ConsumerState<DayPage> {
 
   void _syncForm() {
     if (_syncingControllers) return;
-    final model = _current;
-    if (model == null) return;
-    setState(() {
-      _current = model.copyWith(
-        place: _place.text.trim(),
-        country: _country.text.trim(),
-        description: _description.text,
-      );
+    _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 400), () {
+      if (!mounted) return;
+      final model = _current;
+      if (model == null) return;
+      setState(() {
+        _current = model.copyWith(
+          place: _place.text.trim(),
+          country: _country.text.trim(),
+          description: _description.text,
+        );
+      });
+      _markDirtyAndScheduleAutosave();
     });
-    _markDirtyAndScheduleAutosave();
   }
 
   void _syncDraftStatus([String? text]) {
@@ -164,10 +183,16 @@ class _DayPageState extends ConsumerState<DayPage> {
 
   void _markDirtyAndScheduleAutosave() {
     if (!_dirty) {
+      _autosaveTimer?.cancel();
       _syncDraftStatus();
       return;
     }
     _syncDraftStatus('Unsaved changes');
+    _autosaveTimer?.cancel();
+    _autosaveTimer = Timer(const Duration(seconds: 3), () {
+      if (!mounted || !_dirty || _saving) return;
+      _saveNow();
+    });
   }
 
   Future<void> _loadDate(DateTime date) async {
@@ -509,8 +534,10 @@ class _DayPageState extends ConsumerState<DayPage> {
       _queueNavigation(next, 'Finishing save');
       return false;
     }
+    _debounceTimer?.cancel();
+    _autosaveTimer?.cancel();
     if (_dirty) {
-      unawaited(_saveNow());
+      await _saveNow();
     }
     return true;
   }
@@ -1598,7 +1625,7 @@ class _DayPageState extends ConsumerState<DayPage> {
           ),
           Positioned(
             right: 18,
-            bottom: (_dirty ? (18 + bottomInset + 64) : (18 + bottomInset)),
+            bottom: 18 + bottomInset,
             child: FloatingActionButton(
               heroTag: 'upload_fab',
               onPressed: draft.uploading ? null : _uploadFiles,
@@ -1610,34 +1637,6 @@ class _DayPageState extends ConsumerState<DayPage> {
                       child: CircularProgressIndicator(strokeWidth: 2.5),
                     )
                   : const Icon(Icons.add_photo_alternate_rounded),
-            ),
-          ),
-          AnimatedPositioned(
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOutCubic,
-            right: 18,
-            bottom: _dirty ? (18 + bottomInset) : -(72 + bottomInset),
-            child: AnimatedOpacity(
-              duration: const Duration(milliseconds: 180),
-              opacity: _dirty ? 1.0 : 0.0,
-              child: FloatingActionButton.extended(
-                heroTag: 'save_fab',
-                onPressed: _saving ? null : () => unawaited(_saveNow()),
-                backgroundColor: _heroAccent,
-                foregroundColor: Colors.white,
-                elevation: 6,
-                icon: _saving
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Icon(Icons.check_rounded),
-                label: Text(_saving ? 'Saving…' : 'Save'),
-              ),
             ),
           ),
           if (_transitioningDay)
@@ -1734,12 +1733,21 @@ class _DayPageState extends ConsumerState<DayPage> {
                     ),
                     const Spacer(),
                     if (draft.statusText.isNotEmpty)
-                      _glassStatusPill(
-                        context,
-                        draft.statusText,
-                        color: draft.hasError
-                            ? const Color(0xFF832C2C)
-                            : _heroAccent,
+                      GestureDetector(
+                        onTap: (_dirty && !_saving)
+                            ? () => _saveNow()
+                            : draft.hasError
+                                ? () => _saveNow()
+                                : null,
+                        child: _glassStatusPill(
+                          context,
+                          _saving
+                              ? 'Saving…'
+                              : draft.statusText,
+                          color: draft.hasError
+                              ? const Color(0xFF832C2C)
+                              : _heroAccent,
+                        ),
                       ),
                     if (draft.statusText.isNotEmpty) const SizedBox(width: 8),
                     _glassIconButton(
