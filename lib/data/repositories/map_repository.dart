@@ -63,12 +63,16 @@ class TimelineVisit {
   const TimelineVisit({
     required this.placeId,
     required this.durationMinutes,
+    this.placeName,
+    this.placeAddress,
     this.lat,
     this.lon,
   });
 
   final String placeId;
   final int durationMinutes;
+  final String? placeName;
+  final String? placeAddress;
   final double? lat;
   final double? lon;
 }
@@ -302,6 +306,8 @@ class MapRepository {
         visits.add(TimelineVisit(
           placeId: placeId,
           durationMinutes: duration,
+          placeName: (s['placeName'] as String?)?.isNotEmpty == true ? s['placeName'] as String : null,
+          placeAddress: (s['placeAddress'] as String?)?.isNotEmpty == true ? s['placeAddress'] as String : null,
           lat: (s['placeLat'] as num?)?.toDouble(),
           lon: (s['placeLon'] as num?)?.toDouble(),
         ));

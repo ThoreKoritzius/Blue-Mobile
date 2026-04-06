@@ -1973,10 +1973,11 @@ class _DayPageState extends ConsumerState<DayPage> {
     final bounds = LatLngBounds.fromPoints(allPoints);
 
     void openMapPage() {
+      // Switch to map tab first so the map's date listener sees the tab as active
+      ref.read(selectedTabProvider.notifier).state = 4;
       if (_activeDayKey != null) {
         ref.read(selectedDateProvider.notifier).state = parseYmd(_activeDayKey!);
       }
-      ref.read(selectedTabProvider.notifier).state = 4;
     }
 
     return Card(
@@ -2108,24 +2109,41 @@ class _DayPageState extends ConsumerState<DayPage> {
             ...data.visits.map((v) {
               final hours = v.durationMinutes ~/ 60;
               final mins = v.durationMinutes % 60;
-              final durationLabel = hours > 0
-                  ? '${hours}h ${mins}m'
-                  : '${mins}m';
+              final durationLabel = hours > 0 ? '${hours}h ${mins}m' : '${mins}m';
+              final displayName = v.placeName ?? v.placeId;
               return Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
                 child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(
-                      Icons.location_on_outlined,
-                      size: 15,
-                      color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.8),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 1),
+                      child: Icon(
+                        Icons.location_on_outlined,
+                        size: 15,
+                        color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.8),
+                      ),
                     ),
                     const SizedBox(width: 6),
                     Expanded(
-                      child: Text(
-                        v.placeId,
-                        style: Theme.of(context).textTheme.bodySmall,
-                        overflow: TextOverflow.ellipsis,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            displayName,
+                            style: Theme.of(context).textTheme.bodySmall,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          if (v.placeAddress != null)
+                            Text(
+                              v.placeAddress!,
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.45),
+                                fontSize: 11,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                        ],
                       ),
                     ),
                     const SizedBox(width: 8),
