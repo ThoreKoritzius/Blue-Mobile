@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import '../cache/person_cache_store.dart';
 import '../../core/network/graphql_service.dart';
 import '../graphql/documents.dart';
@@ -13,6 +15,7 @@ abstract class PersonRepository {
   Future<PersonDetailPayloadModel> loadDetail(PersonModel person);
   Future<PersonModel> create(PersonModel person);
   Future<PersonModel> update(PersonModel person);
+  Future<String> uploadPhoto(int personId, String filename, Uint8List bytes);
 }
 
 class GraphqlPersonRepository implements PersonRepository {
@@ -154,5 +157,22 @@ class GraphqlPersonRepository implements PersonRepository {
       return personModel;
     }
     return person;
+  }
+
+  @override
+  Future<String> uploadPhoto(int personId, String filename, Uint8List bytes) async {
+    final data = await _gql.mutateMultipartWithProgress(
+      GqlDocuments.uploadPersonPhoto,
+      variables: {'personId': personId},
+      files: [MultipartUploadFile(filename: filename, bytes: bytes)],
+      onProgress: (_, __) {},
+    );
+    final payload =
+        ((data['persons'] as Map<String, dynamic>)['uploadPhoto']
+            as Map<String, dynamic>)['data'];
+    if (payload is Map<String, dynamic>) {
+      return (payload['photo_path'] ?? '').toString();
+    }
+    return '';
   }
 }

@@ -2193,11 +2193,11 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
               spacing: 16,
               runSpacing: 4,
               children: [
-                if (walkLatLngs.isNotEmpty)
+                if (data.visits.isNotEmpty)
                   _mapStat(
                     context,
                     icon: Icons.route_outlined,
-                    label: '${walkLatLngs.length} GPS points',
+                    label: '${data.visits.length} Places',
                   ),
                 if (runPolylines.isNotEmpty)
                   _mapStat(
@@ -2314,7 +2314,6 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
       ],
     );
   }
-
 
   Widget _buildPeopleEditor(BuildContext context, List<String> items) {
     final colorScheme = Theme.of(context).colorScheme;

@@ -1,6 +1,11 @@
+import 'dart:io';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_cropper/image_cropper.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/config/app_config.dart';
 import '../../core/widgets/section_card.dart';
@@ -178,10 +183,30 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
-                            _ProfileAvatar(
-                              imageUrl: heroUrl,
-                              headers: _authHeaders(),
-                              fallback: _initials(person),
+                            GestureDetector(
+                              onTap: _pickAndUploadPhoto,
+                              child: Stack(
+                                children: [
+                                  _ProfileAvatar(
+                                    imageUrl: heroUrl,
+                                    headers: _authHeaders(),
+                                    fallback: _initials(person),
+                                  ),
+                                  Positioned(
+                                    right: 0,
+                                    bottom: 0,
+                                    child: Container(
+                                      padding: const EdgeInsets.all(6),
+                                      decoration: BoxDecoration(
+                                        color: colorScheme.primary,
+                                        shape: BoxShape.circle,
+                                        border: Border.all(color: colorScheme.surface, width: 2),
+                                      ),
+                                      child: const Icon(Icons.camera_alt_rounded, size: 16, color: Colors.white),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                             const SizedBox(width: 18),
                             Expanded(
@@ -301,14 +326,32 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
                       title: 'Contact',
                       padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
                       child: Column(
-                        children: contact
-                            .map(
-                              (row) => Padding(
-                                padding: const EdgeInsets.only(bottom: 12),
-                                child: _InfoRow(label: row.$1, value: row.$2),
-                              ),
-                            )
-                            .toList(),
+                        children: contact.map((row) {
+                          final type = row.$1;
+                          final value = row.$2;
+                          if (type == 'Phone') {
+                            return _ContactTile(
+                              icon: Icons.phone_rounded,
+                              label: type,
+                              value: value,
+                              onTap: () => launchUrl(Uri(scheme: 'tel', path: value)),
+                            );
+                          }
+                          if (type == 'Email') {
+                            return _ContactTile(
+                              icon: Icons.email_rounded,
+                              label: type,
+                              value: value,
+                              onTap: () => launchUrl(Uri(scheme: 'mailto', path: value)),
+                            );
+                          }
+                          return _ContactTile(
+                            icon: Icons.place_rounded,
+                            label: type,
+                            value: value,
+                            onTap: () => launchUrl(Uri.parse('geo:0,0?q=${Uri.encodeComponent(value)}')),
+                          );
+                        }).toList(),
                       ),
                     ),
                   ],
@@ -348,6 +391,10 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
   }
 
   String? _heroUrl(PersonDetailPayloadModel payload) {
+    final photo = payload.person.photoPath.trim();
+    if (photo.isNotEmpty) {
+      return '${AppConfig.backendUrl}/api/person/$photo';
+    }
     for (final face in payload.faces) {
       if (face.isReference && face.cropPath.trim().isNotEmpty) {
         return AppConfig.faceCropUrlFromPath(face.cropPath.trim());
@@ -364,6 +411,71 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
       }
     }
     return null;
+  }
+
+  Future<void> _pickAndUploadPhoto() async {
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1024,
+      maxHeight: 1024,
+      imageQuality: 85,
+    );
+    if (picked == null || !mounted) return;
+
+    final colorScheme = Theme.of(context).colorScheme;
+    final cropped = await ImageCropper().cropImage(
+      sourcePath: picked.path,
+      aspectRatio: const CropAspectRatio(ratioX: 1, ratioY: 1),
+      compressQuality: 85,
+      maxWidth: 512,
+      maxHeight: 512,
+      uiSettings: [
+        AndroidUiSettings(
+          toolbarTitle: 'Crop photo',
+          toolbarColor: colorScheme.surface,
+          toolbarWidgetColor: colorScheme.onSurface,
+          activeControlsWidgetColor: colorScheme.primary,
+          lockAspectRatio: true,
+        ),
+        IOSUiSettings(
+          title: 'Crop photo',
+          aspectRatioLockEnabled: true,
+          resetAspectRatioEnabled: false,
+        ),
+      ],
+    );
+    if (cropped == null || !mounted) return;
+
+    final bytes = await File(cropped.path).readAsBytes();
+    final filename = cropped.path.split('/').last;
+    final personId = _payload?.person.id;
+    if (personId == null) return;
+
+    setState(() => _saving = true);
+    try {
+      final photoPath = await ref
+          .read(personRepositoryProvider)
+          .uploadPhoto(personId, filename, bytes);
+      if (!mounted) return;
+      setState(() {
+        _payload = _payload?.copyWith(
+          person: _payload!.person.copyWith(photoPath: photoPath),
+        );
+        _saving = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Photo updated.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.toString().replaceFirst('Exception: ', '')),
+        ),
+      );
+    }
   }
 
   List<(String, String)> _stats(PersonModel person) {
@@ -982,39 +1094,89 @@ class _StatCard extends StatelessWidget {
   }
 }
 
-class _InfoRow extends StatelessWidget {
-  const _InfoRow({required this.label, required this.value});
+class _ContactTile extends StatelessWidget {
+  const _ContactTile({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.onTap,
+  });
 
+  final IconData icon;
   final String label;
   final String value;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 74,
-          child: Text(
-            label,
-            style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              color: colorScheme.onSurfaceVariant,
-              fontWeight: FontWeight.w700,
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final tappable = onTap != null;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: colorScheme.surfaceContainer,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: tappable
+                        ? colorScheme.primary.withValues(alpha: 0.12)
+                        : colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                  child: Icon(
+                    icon,
+                    size: 18,
+                    color: tappable
+                        ? colorScheme.primary
+                        : colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        label,
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        value,
+                        style: theme.textTheme.bodyLarge?.copyWith(
+                          color: tappable
+                              ? colorScheme.primary
+                              : colorScheme.onSurface,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (tappable)
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    size: 20,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+              ],
             ),
           ),
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Text(
-            value,
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-              color: colorScheme.onSurface,
-              height: 1.4,
-            ),
-          ),
-        ),
-      ],
+      ),
     );
   }
 }

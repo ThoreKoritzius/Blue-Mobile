@@ -39,6 +39,7 @@ dependencies:
   intl: ^0.20.2
   table_calendar: ^3.2.0
   image_picker: ^1.1.2
+  image_cropper: ^8.0.2
   file_picker: ^10.3.2
   cached_network_image: ^3.4.1
   mapbox_maps_flutter: ^2.9.0

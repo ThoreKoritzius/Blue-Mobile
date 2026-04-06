@@ -289,6 +289,16 @@ mutation CreatePerson($input: PersonInput!) {
 }
 ''';
 
+  static const uploadPersonPhoto = r'''
+mutation UploadPersonPhoto($personId: Int!, $files: [Upload!]!) {
+  persons {
+    uploadPhoto(personId: $personId, files: $files) {
+      data
+    }
+  }
+}
+''';
+
   static const chatComplete = r'''
 mutation ChatComplete($messages: [ChatMessageInput!]!) {
   chat {

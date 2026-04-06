@@ -14,6 +14,7 @@ class PersonModel {
     required this.address,
     required this.notes,
     required this.biography,
+    this.photoPath = '',
   });
 
   final int id;
@@ -30,6 +31,7 @@ class PersonModel {
   final String address;
   final String notes;
   final String biography;
+  final String photoPath;
 
   String get displayName {
     final parts = [
@@ -60,6 +62,7 @@ class PersonModel {
     String? address,
     String? notes,
     String? biography,
+    String? photoPath,
   }) {
     return PersonModel(
       id: id ?? this.id,
@@ -76,6 +79,7 @@ class PersonModel {
       address: address ?? this.address,
       notes: notes ?? this.notes,
       biography: biography ?? this.biography,
+      photoPath: photoPath ?? this.photoPath,
     );
   }
 
@@ -94,6 +98,7 @@ class PersonModel {
       'adresse': address,
       'wichtiges': notes,
       'lebenslauf': biography,
+      'photo_path': photoPath,
     };
   }
 
@@ -113,6 +118,7 @@ class PersonModel {
       'adresse': address,
       'wichtiges': notes,
       'lebenslauf': biography,
+      'photo_path': photoPath,
     };
   }
 
@@ -137,6 +143,7 @@ class PersonModel {
       address: (json['adresse'] ?? '').toString(),
       notes: (json['wichtiges'] ?? '').toString(),
       biography: (json['lebenslauf'] ?? '').toString(),
+      photoPath: (json['photo_path'] ?? '').toString(),
     );
   }
 }
