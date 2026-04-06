@@ -37,33 +37,34 @@ class StoryCacheStore {
   }
 
   Future<void> upsertStory(StoryDayModel story) async {
-    await upsertStories([story]);
+    await _storage.write(
+      key: _storyKey(story.date),
+      value: jsonEncode(story.toJson()),
+    );
+    final index = await _readIndex();
+    if (!index.contains(story.date)) {
+      final updated = [...index, story.date]..sort((a, b) => b.compareTo(a));
+      await _writeIndex(updated.take(maxCachedDays).toList());
+    }
   }
 
   Future<void> upsertStories(List<StoryDayModel> stories) async {
     if (stories.isEmpty) return;
-    final merged = <String, StoryDayModel>{};
+    final index = await _readIndex();
+    final indexSet = index.toSet();
 
-    for (final item in await readRecentDays()) {
-      merged[item.date] = item;
-    }
-    for (final item in stories) {
-      merged[item.date] = item;
-    }
-
-    final orderedDates = merged.keys.toList()..sort((a, b) => b.compareTo(a));
-    final retained = orderedDates.take(maxCachedDays).toList();
-
-    for (final day in retained) {
-      final story = merged[day]!;
+    for (final story in stories) {
       await _storage.write(
-        key: _storyKey(day),
+        key: _storyKey(story.date),
         value: jsonEncode(story.toJson()),
       );
+      indexSet.add(story.date);
     }
 
-    final previousIndex = await _readIndex();
-    for (final day in previousIndex) {
+    final orderedDates = indexSet.toList()..sort((a, b) => b.compareTo(a));
+    final retained = orderedDates.take(maxCachedDays).toList();
+
+    for (final day in index) {
       if (!retained.contains(day)) {
         await _storage.delete(key: _storyKey(day));
       }

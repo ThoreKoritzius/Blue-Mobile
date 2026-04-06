@@ -46,7 +46,6 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
   late final TextEditingController _place;
   late final TextEditingController _country;
   late final TextEditingController _description;
-  late final TextEditingController _tagInput;
   late final ScrollController _scrollController;
   late final ProviderSubscription<DateTime> _selectedDateSubscription;
 
@@ -63,6 +62,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
   DailyActivityModel? _dailyActivity;
   TimelineDayData? _timelineDay;
   List<UploadItemStateModel> _uploadQueue = const [];
+  double _uploadProgress = 0.0;
 
   bool _loading = true;
   bool _saving = false;
@@ -96,7 +96,6 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     _place = TextEditingController();
     _country = TextEditingController();
     _description = TextEditingController();
-    _tagInput = TextEditingController();
     _scrollController = ScrollController();
 
     _place.addListener(_syncForm);
@@ -125,7 +124,6 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     _place.dispose();
     _country.dispose();
     _description.dispose();
-    _tagInput.dispose();
     _pendingLoadTimer?.cancel();
     _scrollController.dispose();
     _selectedDateSubscription.close();
@@ -146,6 +144,9 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
 
   void _syncForm() {
     if (_syncingControllers) return;
+    final place = _place.text.trim();
+    final country = _country.text.trim();
+    final description = _description.text;
     _debounceTimer?.cancel();
     _debounceTimer = Timer(const Duration(milliseconds: 400), () {
       if (!mounted) return;
@@ -153,9 +154,9 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
       if (model == null) return;
       setState(() {
         _current = model.copyWith(
-          place: _place.text.trim(),
-          country: _country.text.trim(),
-          description: _description.text,
+          place: place,
+          country: country,
+          description: description,
         );
       });
       _markDirtyAndScheduleAutosave();
@@ -181,7 +182,10 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     notifier.markClean(text: text ?? _status);
   }
 
-  void _markDirtyAndScheduleAutosave() {
+  static const _autosaveDelayTyping = Duration(seconds: 3);
+  static const _autosaveDelayDiscrete = Duration(seconds: 1);
+
+  void _markDirtyAndScheduleAutosave({Duration delay = _autosaveDelayTyping}) {
     if (!_dirty) {
       _autosaveTimer?.cancel();
       _syncDraftStatus();
@@ -189,7 +193,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     }
     _syncDraftStatus('Unsaved changes');
     _autosaveTimer?.cancel();
-    _autosaveTimer = Timer(const Duration(seconds: 3), () {
+    _autosaveTimer = Timer(delay, () {
       if (!mounted || !_dirty || _saving) return;
       _saveNow();
     });
@@ -924,7 +928,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     if (_current == null) return;
     final people = [..._current!.people]..remove(name);
     setState(() => _current = _current!.copyWith(names: people.join(';')));
-    _markDirtyAndScheduleAutosave();
+    _markDirtyAndScheduleAutosave(delay: _autosaveDelayDiscrete);
   }
 
   bool _appendPersonName(String name) {
@@ -937,7 +941,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     setState(() {
       _current = _current!.copyWith(names: [...people, normalized].join(';'));
     });
-    _markDirtyAndScheduleAutosave();
+    _markDirtyAndScheduleAutosave(delay: _autosaveDelayDiscrete);
     return true;
   }
 
@@ -1102,26 +1106,94 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     );
   }
 
-  void _addTag() {
-    final value = _tagInput.text.trim();
-    if (value.isEmpty || _current == null) return;
-
-    final tags = [..._current!.tags, value];
-    setState(() {
-      _current = _current!.copyWith(keywords: tags.join(';'));
-      _tagInput.clear();
-    });
-    _markDirtyAndScheduleAutosave();
-  }
-
   void _removeTag(String tag) {
     if (_current == null) return;
     final tags = [..._current!.tags]..remove(tag);
     setState(() => _current = _current!.copyWith(keywords: tags.join(';')));
-    _markDirtyAndScheduleAutosave();
+    _markDirtyAndScheduleAutosave(delay: _autosaveDelayDiscrete);
+  }
+
+  Future<void> _showAddTagDialog() async {
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Add tag'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(hintText: 'Tag name'),
+            onSubmitted: (value) => Navigator.of(context).pop(value),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(controller.text),
+              child: const Text('Add'),
+            ),
+          ],
+        );
+      },
+    );
+    final value = result?.trim() ?? '';
+    if (value.isEmpty || _current == null) return;
+    final tags = [..._current!.tags, value];
+    setState(() {
+      _current = _current!.copyWith(keywords: tags.join(';'));
+    });
+    _markDirtyAndScheduleAutosave(delay: _autosaveDelayDiscrete);
+  }
+
+  Widget _buildTagsContent(List<String> tags) {
+    if (tags.isEmpty) {
+      return Text(
+        'No tags yet',
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
+      );
+    }
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: tags
+          .map(
+            (tag) => InputChip(
+              backgroundColor: const Color(0xFFDCEBFF),
+              labelStyle: const TextStyle(
+                color: Color(0xFF184A93),
+                fontWeight: FontWeight.w700,
+              ),
+              side: BorderSide.none,
+              label: Text(tag),
+              deleteIconColor: const Color(0xFF184A93),
+              onDeleted: () => _removeTag(tag),
+            ),
+          )
+          .toList(),
+    );
   }
 
   Future<bool> _saveNow() async {
+    // Flush any pending debounced text changes before saving
+    if (_debounceTimer?.isActive ?? false) {
+      _debounceTimer!.cancel();
+      final model = _current;
+      if (model != null) {
+        _current = model.copyWith(
+          place: _place.text.trim(),
+          country: _country.text.trim(),
+          description: _description.text,
+        );
+      }
+    }
+    _autosaveTimer?.cancel();
+
     final model = _current;
     if (model == null) return true;
     if (!_dirty) {
@@ -1196,6 +1268,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
         _uploadQueue = batch.items;
       });
       if (batch.uploading) {
+        _uploadProgress = batch.overallProgress;
         _status = 'Uploading ${(batch.overallProgress * 100).round()}%';
         ref
             .read(dayDraftControllerProvider.notifier)
@@ -1212,6 +1285,10 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
       final result = batch.result;
       if (result == null) continue;
       final media = [...result.media, ..._media];
+      // Evict any cached image errors for newly uploaded files
+      for (final item in result.media) {
+        CachedNetworkImage.evictFromCache(_galleryThumbUrl(item));
+      }
       final nextStory = result.highlightImage.isNotEmpty && _current != null
           ? _current!.copyWith(highlightImage: result.highlightImage)
           : _current;
@@ -1223,6 +1300,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
       }
       setState(() {
         _uploadQueue = const [];
+        _uploadProgress = 0.0;
         _media = media;
         _current = nextStory;
         _original = nextStory ?? _original;
@@ -1339,6 +1417,12 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
             imageUrl: _galleryFullUrl(media),
             fit: BoxFit.contain,
             httpHeaders: _authHeaders(),
+            fadeInDuration: const Duration(milliseconds: 200),
+            placeholder: (_, __) => Container(
+              height: 260,
+              color: colorScheme.surfaceContainerHighest,
+              child: const Center(child: CircularProgressIndicator()),
+            ),
             errorWidget: (_, __, ___) => Container(
               height: 260,
               color: colorScheme.surfaceContainerHighest,
@@ -1386,9 +1470,20 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
         _country.text.trim() == result.country.trim()) {
       return;
     }
+    _syncingControllers = true;
     _place.text = result.place.trim();
     _country.text = result.country.trim();
-    _markDirtyAndScheduleAutosave();
+    _syncingControllers = false;
+    final model = _current;
+    if (model != null) {
+      setState(() {
+        _current = model.copyWith(
+          place: result.place.trim(),
+          country: result.country.trim(),
+        );
+      });
+    }
+    _markDirtyAndScheduleAutosave(delay: _autosaveDelayDiscrete);
   }
 
   List<String> _placeSuggestions() {
@@ -1548,7 +1643,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                 ],
                 const SizedBox(height: 12),
                 SectionCard(
-                  title: 'People met',
+                  title: 'People',
                   action: IconButton.filledTonal(
                     onPressed: _showAddPersonSheet,
                     icon: const Icon(Icons.add_rounded),
@@ -1564,22 +1659,17 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                 const SizedBox(height: 12),
                 SectionCard(
                   title: 'Tags',
-                  padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
-                  child: _buildChipEditor(
-                    controller: _tagInput,
-                    hint: 'Add a tag',
-                    items: model.tags,
-                    onAdd: _addTag,
-                    onDelete: _removeTag,
-                    chipColor: const Color(0xFFDCEBFF),
-                    textColor: const Color(0xFF184A93),
+                  action: IconButton.filledTonal(
+                    onPressed: _showAddTagDialog,
+                    icon: const Icon(Icons.add_rounded),
+                    tooltip: 'Add tag',
+                    style: IconButton.styleFrom(
+                      backgroundColor: const Color(0xFFDCEBFF),
+                      foregroundColor: const Color(0xFF184A93),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                SectionCard(
-                  title: 'Runs & events',
                   padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
-                  child: _buildRunsEventsSection(context),
+                  child: _buildTagsContent(model.tags),
                 ),
                 const SizedBox(height: 12),
                 SectionCard(
@@ -1631,10 +1721,13 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
               onPressed: draft.uploading ? null : _uploadFiles,
               elevation: 4,
               child: draft.uploading
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2.5),
+                  ? SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(
+                        value: _uploadProgress >= 1.0 ? null : _uploadProgress,
+                        strokeWidth: 3,
+                      ),
                     )
                   : const Icon(Icons.add_photo_alternate_rounded),
             ),
@@ -1737,13 +1830,11 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                         onTap: (_dirty && !_saving)
                             ? () => _saveNow()
                             : draft.hasError
-                                ? () => _saveNow()
-                                : null,
+                            ? () => _saveNow()
+                            : null,
                         child: _glassStatusPill(
                           context,
-                          _saving
-                              ? 'Saving…'
-                              : draft.statusText,
+                          _saving ? 'Saving…' : draft.statusText,
                           color: draft.hasError
                               ? const Color(0xFF832C2C)
                               : _heroAccent,
@@ -2224,106 +2315,6 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildRunsEventsSection(BuildContext context) {
-    if (_isFutureDayActive) {
-      return _buildEmptyState(
-        context,
-        icon: Icons.edit_calendar_outlined,
-        title: 'Future day',
-        subtitle:
-            'No runs or events yet. Use it for planning, notes, and media.',
-      );
-    }
-
-    if (_runs.isEmpty) {
-      return _buildEmptyState(
-        context,
-        icon: Icons.directions_run_outlined,
-        title: 'No runs',
-        subtitle: 'Nothing synced for this date.',
-      );
-    }
-
-    return SizedBox(
-      height: 118,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: _runs.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 10),
-        itemBuilder: (context, index) => _buildRunTile(context, _runs[index]),
-      ),
-    );
-  }
-
-  Widget _buildChipEditor({
-    required TextEditingController controller,
-    required String hint,
-    required List<String> items,
-    required VoidCallback onAdd,
-    required ValueChanged<String> onDelete,
-    ValueChanged<String>? onTapItem,
-    required Color chipColor,
-    required Color textColor,
-  }) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: controller,
-                onSubmitted: (_) => onAdd(),
-                onTapOutside: (_) => _dismissKeyboard(),
-                decoration: InputDecoration(labelText: hint, hintText: hint),
-              ),
-            ),
-            const SizedBox(width: 10),
-            FilledButton(
-              onPressed: onAdd,
-              style: FilledButton.styleFrom(
-                backgroundColor: colorScheme.primary,
-                foregroundColor: colorScheme.onPrimary,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 18,
-                  vertical: 16,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-              ),
-              child: const Icon(Icons.add),
-            ),
-          ],
-        ),
-        const SizedBox(height: 14),
-        if (items.isEmpty)
-          const SizedBox.shrink()
-        else
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: items
-                .map(
-                  (item) => InputChip(
-                    backgroundColor: chipColor,
-                    labelStyle: TextStyle(
-                      color: textColor,
-                      fontWeight: FontWeight.w700,
-                    ),
-                    side: BorderSide.none,
-                    label: Text(item),
-                    deleteIconColor: textColor,
-                    onPressed: onTapItem == null ? null : () => onTapItem(item),
-                    onDeleted: () => onDelete(item),
-                  ),
-                )
-                .toList(),
-          ),
-      ],
-    );
-  }
 
   Widget _buildPeopleEditor(BuildContext context, List<String> items) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -2372,42 +2363,130 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
         ? (act.cyclingDurationMs! / 60000).round()
         : null;
 
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (steps != null)
-          Expanded(
-            child: _activityChip(
-              context,
-              icon: Icons.directions_walk_rounded,
-              value: _formatSteps(steps),
-              label: 'steps',
-              color: colorScheme.primary,
-            ),
-          ),
-        if (steps != null && distKm != null) const SizedBox(width: 10),
-        if (distKm != null)
-          Expanded(
-            child: _activityChip(
-              context,
-              icon: Icons.straighten_rounded,
-              value: '${distKm.toStringAsFixed(1)} km',
-              label: 'distance',
-              color: const Color(0xFF1A7A4A),
-            ),
-          ),
-        if (cyclingMin != null && cyclingMin > 0) ...[
-          const SizedBox(width: 10),
-          Expanded(
-            child: _activityChip(
-              context,
-              icon: Icons.directions_bike_rounded,
-              value: '$cyclingMin min',
-              label: 'cycling',
-              color: const Color(0xFF7C4DDB),
-            ),
-          ),
+        Row(
+          children: [
+            if (steps != null)
+              Expanded(
+                child: _activityChip(
+                  context,
+                  icon: Icons.directions_walk_rounded,
+                  value: _formatSteps(steps),
+                  label: 'steps',
+                  color: colorScheme.primary,
+                ),
+              ),
+            if (steps != null && distKm != null) const SizedBox(width: 10),
+            if (distKm != null)
+              Expanded(
+                child: _activityChip(
+                  context,
+                  icon: Icons.straighten_rounded,
+                  value: '${distKm.toStringAsFixed(1)} km',
+                  label: 'distance',
+                  color: const Color(0xFF1A7A4A),
+                ),
+              ),
+            if (cyclingMin != null && cyclingMin > 0) ...[
+              const SizedBox(width: 10),
+              Expanded(
+                child: _activityChip(
+                  context,
+                  icon: Icons.directions_bike_rounded,
+                  value: '$cyclingMin min',
+                  label: 'cycling',
+                  color: const Color(0xFF7C4DDB),
+                ),
+              ),
+            ],
+          ],
+        ),
+        if (_runs.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          for (var i = 0; i < _runs.length; i++) ...[
+            if (i > 0) const SizedBox(height: 8),
+            _buildRunRow(context, _runs[i]),
+          ],
         ],
       ],
+    );
+  }
+
+  Widget _buildRunRow(BuildContext context, RunModel run) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final pace = run.averageSpeed > 0 ? _formatRunPace(run.averageSpeed) : null;
+    final runColor = const Color(0xFFE8733A);
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: () => _openRunDetail(run),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: runColor.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: runColor.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(11),
+              ),
+              child: Icon(
+                Icons.directions_run_rounded,
+                size: 18,
+                color: runColor,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    run.name.isEmpty ? 'Run' : run.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    [
+                      '${run.distanceKm.toStringAsFixed(1)} km',
+                      if (run.movingMinutes > 0) '${run.movingMinutes} min',
+                      if (pace != null) pace,
+                    ].join(' · '),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (run.startTime.isNotEmpty)
+              Text(
+                run.startTime,
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+            const SizedBox(width: 4),
+            Icon(
+              Icons.chevron_right_rounded,
+              size: 18,
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -2801,11 +2880,41 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                       imageUrl: url,
                       fit: BoxFit.cover,
                       httpHeaders: _authHeaders(),
-                      errorWidget: (_, __, ___) => ColoredBox(
+                      fadeInDuration: const Duration(milliseconds: 200),
+                      placeholder: (_, __) => ColoredBox(
                         color: colorScheme.surfaceContainerHighest,
-                        child: Icon(
-                          Icons.broken_image_outlined,
-                          color: colorScheme.onSurfaceVariant,
+                        child: const Center(
+                          child: SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        ),
+                      ),
+                      errorWidget: (_, url, __) => GestureDetector(
+                        onTap: () {
+                          CachedNetworkImage.evictFromCache(url);
+                          setState(() {});
+                        },
+                        child: ColoredBox(
+                          color: colorScheme.surfaceContainerHighest,
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.broken_image_outlined,
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Tap to retry',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -2856,10 +2965,23 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     );
   }
 
+  static const _videoExtensions = {'.mp4', '.mov', '.avi', '.wmv'};
+
+  static bool _isVideoFile(String name) {
+    final lower = name.toLowerCase();
+    return _videoExtensions.any((ext) => lower.endsWith(ext));
+  }
+
   String _galleryThumbUrl(DayMediaModel media) {
     final date = media.date;
     final name = media.fileName;
     if (date.isNotEmpty && name.isNotEmpty) {
+      if (_isVideoFile(name)) {
+        final stem = name.contains('.')
+            ? name.substring(0, name.lastIndexOf('.'))
+            : name;
+        return '${AppConfig.backendUrl}/api/images/$date/compressed/$stem.jpg';
+      }
       return '${AppConfig.backendUrl}/api/images/$date/compressed/$name';
     }
     return AppConfig.imageUrlFromPath(media.path, date: media.date);
@@ -2899,9 +3021,12 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     }
 
     if (!highlight.contains('/') && model.date.isNotEmpty) {
+      final previewName = _isVideoFile(highlight)
+          ? '${highlight.substring(0, highlight.lastIndexOf('.'))}.jpg'
+          : highlight;
       return _HeroImageAsset(
         previewUrl:
-            '${AppConfig.backendUrl}/api/images/${model.date}/compressed/$highlight',
+            '${AppConfig.backendUrl}/api/images/${model.date}/compressed/$previewName',
         fullUrl: '${AppConfig.backendUrl}/api/images/${model.date}/$highlight',
       );
     }
@@ -3540,6 +3665,27 @@ class _ProgressiveHeroImageState extends State<_ProgressiveHeroImage> {
           fit: BoxFit.cover,
           httpHeaders: widget.headers,
           fadeInDuration: const Duration(milliseconds: 160),
+          placeholder: (_, __) => Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: isDark
+                    ? [
+                        colorScheme.surfaceContainerHighest,
+                        colorScheme.surfaceContainer,
+                      ]
+                    : const [Color(0xFF9FBEEA), Color(0xFFDCE8FA)],
+              ),
+            ),
+            child: const Center(
+              child: SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2.5),
+              ),
+            ),
+          ),
           errorWidget: (_, __, ___) => Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(

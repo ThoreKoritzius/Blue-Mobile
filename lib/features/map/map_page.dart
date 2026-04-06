@@ -146,6 +146,7 @@ class _MapPageState extends ConsumerState<MapPage>
         }
       },
     );
+    _sheetController.addListener(_onSheetChanged);
     if (_isVisibleTab) {
       _load();
     } else {
@@ -159,6 +160,7 @@ class _MapPageState extends ConsumerState<MapPage>
     _nextImagePageTimer?.cancel();
     _selectedTabSubscription.close();
     _selectedDateSubscription.close();
+    _sheetController.removeListener(_onSheetChanged);
     _sheetController.dispose();
     super.dispose();
   }
@@ -765,10 +767,7 @@ class _MapPageState extends ConsumerState<MapPage>
                         color: Color(0x556EB1FF),
                       )
                     else
-                      const BoxShadow(
-                        blurRadius: 6,
-                        color: Color(0x33000000),
-                      ),
+                      const BoxShadow(blurRadius: 6, color: Color(0x33000000)),
                   ],
                 ),
                 child: Icon(
@@ -873,6 +872,7 @@ class _MapPageState extends ConsumerState<MapPage>
               onVisitTapped: _onBottomSheetVisitTapped,
               onSegmentTapped: _onSegmentTapped,
               onRunTapped: _onRunTapped,
+              onImageTapped: (img) => _showDayImageSheet(img, _dayViewDate),
               selectedVisitPlaceId: _selectedVisitPlaceId,
               selectedRunId: _selectedRunId,
               sheetController: _sheetController,
@@ -1378,8 +1378,23 @@ class _MapPageState extends ConsumerState<MapPage>
     if (points.length < 2) return;
     final bounds = LatLngBounds.fromPoints(points);
     _mapController.fitCamera(
-      CameraFit.bounds(bounds: bounds, padding: const EdgeInsets.all(40)),
+      CameraFit.bounds(
+        bounds: bounds,
+        padding: EdgeInsets.fromLTRB(30, 30, 30, 30 + _sheetBottomPadding()),
+      ),
     );
+  }
+
+  double _sheetBottomPadding() {
+    if (!_sheetController.isAttached) return 120;
+    final extent = _sheetController.size;
+    final screenHeight = MediaQuery.of(context).size.height;
+    return screenHeight * extent * 0.8;
+  }
+
+  void _onSheetChanged() {
+    // Intentionally empty — we don't refit bounds during drag.
+    // Sheet padding is applied when the user taps a timeline item.
   }
 
   void _onDaySliderChanged(double value) {
@@ -1389,37 +1404,21 @@ class _MapPageState extends ConsumerState<MapPage>
     _loadDayView(_dayViewDates[idx]);
   }
 
-  void _animatedMove(LatLng target, double zoom) {
-    final camera = _mapController.camera;
-    final latTween = Tween<double>(
-      begin: camera.center.latitude,
-      end: target.latitude,
+  /// Fly to a single point, keeping it visible above the sheet.
+  void _flyToPoint(LatLng target) {
+    // Create a tiny bounds around the point so fitCamera can handle padding.
+    const offset = 0.001; // ~100m
+    final bounds = LatLngBounds(
+      LatLng(target.latitude - offset, target.longitude - offset),
+      LatLng(target.latitude + offset, target.longitude + offset),
     );
-    final lngTween = Tween<double>(
-      begin: camera.center.longitude,
-      end: target.longitude,
+    _mapController.fitCamera(
+      CameraFit.bounds(
+        bounds: bounds,
+        maxZoom: 16,
+        padding: EdgeInsets.fromLTRB(40, 40, 40, 20 + _sheetBottomPadding()),
+      ),
     );
-    final zoomTween = Tween<double>(begin: camera.zoom, end: zoom);
-
-    final controller = AnimationController(
-      duration: const Duration(milliseconds: 500),
-      vsync: this,
-    );
-    final curved = CurvedAnimation(parent: controller, curve: Curves.easeInOut);
-
-    controller.addListener(() {
-      _mapController.move(
-        LatLng(latTween.evaluate(curved), lngTween.evaluate(curved)),
-        zoomTween.evaluate(curved),
-      );
-    });
-    controller.addStatusListener((status) {
-      if (status == AnimationStatus.completed ||
-          status == AnimationStatus.dismissed) {
-        controller.dispose();
-      }
-    });
-    controller.forward();
   }
 
   void _onVisitMarkerTapped(TimelineVisit visit) {
@@ -1436,51 +1435,68 @@ class _MapPageState extends ConsumerState<MapPage>
     }
   }
 
+  void _deselectAndFitOverview() {
+    setState(() {
+      _selectedVisitPlaceId = null;
+      _selectedRunId = null;
+    });
+    final data = _dayViewData;
+    if (data != null) _fitDayViewBounds(data);
+  }
+
   void _onBottomSheetVisitTapped(TimelineVisit visit) {
+    if (_selectedVisitPlaceId == visit.placeId) {
+      _deselectAndFitOverview();
+      return;
+    }
     setState(() {
       _selectedVisitPlaceId = visit.placeId;
       _selectedRunId = null;
     });
     if (visit.lat != null && visit.lon != null) {
-      _animatedMove(
-        LatLng(visit.lat!, visit.lon!),
-        math.max(_currentZoom, 15.0),
-      );
+      _flyToPoint(LatLng(visit.lat!, visit.lon!));
     }
   }
 
   void _onRunTapped(TimelineRun run) {
+    if (_selectedRunId == run.id) {
+      _deselectAndFitOverview();
+      return;
+    }
     setState(() {
       _selectedRunId = run.id;
       _selectedVisitPlaceId = null;
     });
     if (run.summaryPolyline.isEmpty) return;
     try {
-      final pts = decodePolyline(run.summaryPolyline)
-          .map((p) => LatLng(p[0].toDouble(), p[1].toDouble()))
-          .toList();
+      final pts = decodePolyline(
+        run.summaryPolyline,
+      ).map((p) => LatLng(p[0].toDouble(), p[1].toDouble())).toList();
       if (pts.length < 2) return;
       final bounds = LatLngBounds.fromPoints(pts);
       _mapController.fitCamera(
-        CameraFit.bounds(bounds: bounds, padding: const EdgeInsets.all(50)),
+        CameraFit.bounds(
+          bounds: bounds,
+          padding: EdgeInsets.fromLTRB(30, 30, 30, 30 + _sheetBottomPadding()),
+        ),
       );
     } catch (_) {}
   }
 
   void _onSegmentTapped(TimelineSegment segment) {
     if (segment.isVisit) {
+      if (_selectedVisitPlaceId == segment.placeId) {
+        _deselectAndFitOverview();
+        return;
+      }
       setState(() {
         _selectedVisitPlaceId = segment.placeId;
         _selectedRunId = null;
       });
       if (segment.placeLat != null && segment.placeLon != null) {
-        _animatedMove(
-          LatLng(segment.placeLat!, segment.placeLon!),
-          math.max(_currentZoom, 15.0),
-        );
+        _flyToPoint(LatLng(segment.placeLat!, segment.placeLon!));
       }
     } else if (segment.isActivity) {
-      // If matched to a run, fly to the run's polyline bounds.
       if (segment.matchedRunId != null) {
         final run = _dayViewData?.runs
             .where((r) => r.id == segment.matchedRunId)
@@ -1490,12 +1506,8 @@ class _MapPageState extends ConsumerState<MapPage>
           return;
         }
       }
-      // Otherwise fly to the activity start location.
       if (segment.startLat != null && segment.startLon != null) {
-        _animatedMove(
-          LatLng(segment.startLat!, segment.startLon!),
-          math.max(_currentZoom, 13.0),
-        );
+        _flyToPoint(LatLng(segment.startLat!, segment.startLon!));
       }
     }
   }
@@ -1563,6 +1575,7 @@ class _DayBottomSheet extends StatelessWidget {
     required this.authHeaders,
     required this.runColors,
     required this.onRunTapped,
+    required this.onImageTapped,
     this.selectedVisitPlaceId,
     this.selectedRunId,
   });
@@ -1574,6 +1587,7 @@ class _DayBottomSheet extends StatelessWidget {
   final void Function(TimelineVisit visit) onVisitTapped;
   final void Function(TimelineSegment segment) onSegmentTapped;
   final void Function(TimelineRun run) onRunTapped;
+  final void Function(TimelineImageLocation img) onImageTapped;
   final String? selectedVisitPlaceId;
   final String? selectedRunId;
   final DraggableScrollableController sheetController;
@@ -1581,6 +1595,7 @@ class _DayBottomSheet extends StatelessWidget {
   final Map<String, Color> runColors;
 
   static const double _collapsedHeight = 120;
+
   /// Max photos to show inline per visit. Remaining are aggregated.
   static const int _maxInlinePhotos = 4;
 
@@ -1607,9 +1622,12 @@ class _DayBottomSheet extends StatelessWidget {
     }
     // Filter out matched activity segments first.
     final filtered = rawSegments
-        .where((seg) => !(seg.isActivity &&
-            seg.matchedRunId != null &&
-            matchedRunIds.contains(seg.matchedRunId)))
+        .where(
+          (seg) =>
+              !(seg.isActivity &&
+                  seg.matchedRunId != null &&
+                  matchedRunIds.contains(seg.matchedRunId)),
+        )
         .toList();
 
     // Aggregate consecutive same-type segments.
@@ -1623,20 +1641,22 @@ class _DayBottomSheet extends StatelessWidget {
             _activityGroupKey(prev.activityType) ==
                 _activityGroupKey(seg.activityType)) {
           segments.removeLast();
-          segments.add(TimelineSegment(
-            segmentType: prev.segmentType,
-            startTime: prev.startTime,
-            endTime: seg.endTime ?? prev.endTime,
-            durationMinutes: prev.durationMinutes + seg.durationMinutes,
-            activityType: prev.activityType,
-            distanceMeters:
-                (prev.distanceMeters ?? 0) + (seg.distanceMeters ?? 0),
-            startLat: prev.startLat,
-            startLon: prev.startLon,
-            endLat: seg.endLat ?? prev.endLat,
-            endLon: seg.endLon ?? prev.endLon,
-            matchedRunId: prev.matchedRunId ?? seg.matchedRunId,
-          ));
+          segments.add(
+            TimelineSegment(
+              segmentType: prev.segmentType,
+              startTime: prev.startTime,
+              endTime: seg.endTime ?? prev.endTime,
+              durationMinutes: prev.durationMinutes + seg.durationMinutes,
+              activityType: prev.activityType,
+              distanceMeters:
+                  (prev.distanceMeters ?? 0) + (seg.distanceMeters ?? 0),
+              startLat: prev.startLat,
+              startLon: prev.startLon,
+              endLat: seg.endLat ?? prev.endLat,
+              endLon: seg.endLon ?? prev.endLon,
+              matchedRunId: prev.matchedRunId ?? seg.matchedRunId,
+            ),
+          );
           continue;
         }
         // Aggregate consecutive visits to the same place.
@@ -1648,17 +1668,19 @@ class _DayBottomSheet extends StatelessWidget {
                     seg.placeName == prev.placeName &&
                     seg.placeAddress == prev.placeAddress))) {
           segments.removeLast();
-          segments.add(TimelineSegment(
-            segmentType: prev.segmentType,
-            startTime: prev.startTime,
-            endTime: seg.endTime ?? prev.endTime,
-            durationMinutes: prev.durationMinutes + seg.durationMinutes,
-            placeId: prev.placeId,
-            placeName: prev.placeName ?? seg.placeName,
-            placeAddress: prev.placeAddress ?? seg.placeAddress,
-            placeLat: prev.placeLat ?? seg.placeLat,
-            placeLon: prev.placeLon ?? seg.placeLon,
-          ));
+          segments.add(
+            TimelineSegment(
+              segmentType: prev.segmentType,
+              startTime: prev.startTime,
+              endTime: seg.endTime ?? prev.endTime,
+              durationMinutes: prev.durationMinutes + seg.durationMinutes,
+              placeId: prev.placeId,
+              placeName: prev.placeName ?? seg.placeName,
+              placeAddress: prev.placeAddress ?? seg.placeAddress,
+              placeLat: prev.placeLat ?? seg.placeLat,
+              placeLon: prev.placeLon ?? seg.placeLon,
+            ),
+          );
           continue;
         }
       }
@@ -1666,7 +1688,8 @@ class _DayBottomSheet extends StatelessWidget {
     }
 
     // --- Build unified timeline: segments + runs, sorted by time ---
-    final entries = <({TimelineSegment? seg, TimelineRun? run, DateTime time})>[];
+    final entries =
+        <({TimelineSegment? seg, TimelineRun? run, DateTime time})>[];
     for (final seg in segments) {
       entries.add((seg: seg, run: null, time: seg.startTime));
     }
@@ -1685,7 +1708,10 @@ class _DayBottomSheet extends StatelessWidget {
       double bestDist = 0.005; // ~500m threshold in degrees²
       for (var i = 0; i < entries.length; i++) {
         final seg = entries[i].seg;
-        if (seg == null || !seg.isVisit || seg.placeLat == null || seg.placeLon == null) {
+        if (seg == null ||
+            !seg.isVisit ||
+            seg.placeLat == null ||
+            seg.placeLon == null) {
           continue;
         }
         final d = _coordDist(img.lat, img.lon, seg.placeLat!, seg.placeLon!);
@@ -1713,7 +1739,7 @@ class _DayBottomSheet extends StatelessWidget {
       builder: (context, scrollController) {
         return Container(
           decoration: const BoxDecoration(
-            color: Color(0xF0222222),
+            color: Color(0xFF222222),
             borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
           ),
           child: ListView(
@@ -1894,9 +1920,7 @@ class _DayBottomSheet extends StatelessWidget {
               child: Text(
                 timeLabel,
                 style: TextStyle(
-                  color: isSelected
-                      ? const Color(0xFF6EB1FF)
-                      : Colors.white54,
+                  color: isSelected ? const Color(0xFF6EB1FF) : Colors.white54,
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
                   fontFeatures: const [FontFeature.tabularFigures()],
@@ -1911,15 +1935,15 @@ class _DayBottomSheet extends StatelessWidget {
                 color: isSelected
                     ? const Color(0xFF6EB1FF).withValues(alpha: 0.25)
                     : hasLocation
-                        ? const Color(0xCC6EB1FF).withValues(alpha: 0.25)
-                        : const Color(0x336EB1FF),
+                    ? const Color(0xCC6EB1FF).withValues(alpha: 0.25)
+                    : const Color(0x336EB1FF),
                 shape: BoxShape.circle,
                 border: Border.all(
                   color: isSelected
                       ? const Color(0xFF6EB1FF)
                       : hasLocation
-                          ? const Color(0xCC6EB1FF)
-                          : const Color(0x556EB1FF),
+                      ? const Color(0xCC6EB1FF)
+                      : const Color(0x556EB1FF),
                   width: 1.5,
                 ),
               ),
@@ -1929,8 +1953,8 @@ class _DayBottomSheet extends StatelessWidget {
                 color: isSelected
                     ? const Color(0xFF6EB1FF)
                     : hasLocation
-                        ? const Color(0xCC6EB1FF)
-                        : const Color(0x556EB1FF),
+                    ? const Color(0xCC6EB1FF)
+                    : const Color(0x556EB1FF),
               ),
             ),
             const SizedBox(width: 8),
@@ -2119,7 +2143,6 @@ class _DayBottomSheet extends StatelessWidget {
     }
   }
 
-
   Widget _buildActivitySegmentTile(
     BuildContext context,
     TimelineSegment seg,
@@ -2292,26 +2315,26 @@ class _DayBottomSheet extends StatelessWidget {
                       fontWeight: FontWeight.w600,
                     ),
                     overflow: TextOverflow.ellipsis,
-                ),
-                if (subtitleParts.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    subtitleParts.join('  ·  '),
-                    style: const TextStyle(
-                      color: Colors.white38,
-                      fontSize: 11,
-                    ),
                   ),
+                  if (subtitleParts.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitleParts.join('  ·  '),
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
-          if (run.summaryPolyline.isNotEmpty)
-            Icon(
-              Icons.chevron_right,
-              size: 16,
-              color: color.withValues(alpha: 0.5),
-            ),
+            if (run.summaryPolyline.isNotEmpty)
+              Icon(
+                Icons.chevron_right,
+                size: 16,
+                color: color.withValues(alpha: 0.5),
+              ),
           ],
         ),
       ),
@@ -2322,7 +2345,9 @@ class _DayBottomSheet extends StatelessWidget {
     BuildContext context,
     List<TimelineImageLocation> imgs,
   ) {
-    final showCount = imgs.length > _maxInlinePhotos ? _maxInlinePhotos : imgs.length;
+    final showCount = imgs.length > _maxInlinePhotos
+        ? _maxInlinePhotos
+        : imgs.length;
     final remaining = imgs.length - showCount;
 
     return Padding(
@@ -2354,27 +2379,30 @@ class _DayBottomSheet extends StatelessWidget {
                 ),
               );
             }
-            return ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: CachedNetworkImage(
-                imageUrl: imgs[index].path,
-                httpHeaders: authHeaders,
-                width: 56,
-                height: 56,
-                fit: BoxFit.cover,
-                placeholder: (_, __) => Container(
+            return GestureDetector(
+              onTap: () => onImageTapped(imgs[index]),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: CachedNetworkImage(
+                  imageUrl: imgs[index].path,
+                  httpHeaders: authHeaders,
                   width: 56,
                   height: 56,
-                  color: const Color(0x22FFFFFF),
-                ),
-                errorWidget: (_, __, ___) => Container(
-                  width: 56,
-                  height: 56,
-                  color: const Color(0x22FFFFFF),
-                  child: const Icon(
-                    Icons.image_not_supported_outlined,
-                    size: 16,
-                    color: Colors.white30,
+                  fit: BoxFit.cover,
+                  placeholder: (_, __) => Container(
+                    width: 56,
+                    height: 56,
+                    color: const Color(0x22FFFFFF),
+                  ),
+                  errorWidget: (_, __, ___) => Container(
+                    width: 56,
+                    height: 56,
+                    color: const Color(0x22FFFFFF),
+                    child: const Icon(
+                      Icons.image_not_supported_outlined,
+                      size: 16,
+                      color: Colors.white30,
+                    ),
                   ),
                 ),
               ),
