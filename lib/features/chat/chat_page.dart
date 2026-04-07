@@ -541,19 +541,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 ),
                 onTapLink: (text, href, title) {},
               ),
-            if (!isUser &&
-                item.state == _UiMessageState.streaming &&
-                item.statuses.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(
-                item.statuses.last.summary,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                  fontStyle: FontStyle.italic,
-                ),
+            if (!isUser && item.statuses.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _StatusTimeline(
+                statuses: item.statuses,
+                isStreaming: item.state == _UiMessageState.streaming,
+                hasText: item.text.trim().isNotEmpty,
               ),
             ],
-            if (item.state == _UiMessageState.streaming) ...[
+            if (item.state == _UiMessageState.streaming && item.text.isEmpty && item.statuses.isEmpty) ...[
               const SizedBox(height: 8),
               Row(
                 mainAxisSize: MainAxisSize.min,
@@ -908,6 +904,123 @@ class _UiMessage {
       statuses: statuses ?? this.statuses,
       toolCalls: toolCalls ?? this.toolCalls,
       errorText: clearError ? null : (errorText ?? this.errorText),
+    );
+  }
+}
+
+class _StatusTimeline extends StatelessWidget {
+  const _StatusTimeline({
+    required this.statuses,
+    required this.isStreaming,
+    required this.hasText,
+  });
+
+  final List<_UiStatusEntry> statuses;
+  final bool isStreaming;
+  final bool hasText;
+
+  static const _stageIcons = {
+    'plan': Icons.psychology_outlined,
+    'query': Icons.travel_explore_outlined,
+    'db': Icons.storage_outlined,
+    'compose': Icons.edit_note_outlined,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    if (statuses.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    // Deduplicate by stage — keep last status per stage, preserve order of first appearance
+    final stageOrder = <String>[];
+    final lastByStage = <String, _UiStatusEntry>{};
+    for (final s in statuses) {
+      if (!lastByStage.containsKey(s.stage)) stageOrder.add(s.stage);
+      lastByStage[s.stage] = s;
+    }
+    final steps = stageOrder.map((s) => lastByStage[s]!).toList();
+    final isLastStepActive = isStreaming && !hasText;
+
+    // When done or text is streaming, collapse to a single summary line
+    if (!isStreaming || hasText) {
+      final queryCount = statuses.where((s) => s.stage == 'query').length;
+      if (queryCount == 0) return const SizedBox.shrink();
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.check_circle_outline, size: 14, color: colorScheme.primary.withValues(alpha: 0.6)),
+            const SizedBox(width: 6),
+            Text(
+              queryCount == 1 ? '1 query executed' : '$queryCount queries executed',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // While streaming: show step-by-step progress
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var i = 0; i < steps.length; i++) ...[
+          _buildStep(
+            context,
+            step: steps[i],
+            isDone: i < steps.length - 1 || !isLastStepActive,
+            isActive: i == steps.length - 1 && isLastStepActive,
+          ),
+          if (i < steps.length - 1) const SizedBox(height: 2),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildStep(
+    BuildContext context, {
+    required _UiStatusEntry step,
+    required bool isDone,
+    required bool isActive,
+  }) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final icon = _stageIcons[step.stage] ?? Icons.circle_outlined;
+    final color = isActive
+        ? colorScheme.primary
+        : colorScheme.onSurfaceVariant.withValues(alpha: 0.5);
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (isActive)
+          SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(strokeWidth: 1.5, color: color),
+          )
+        else
+          Icon(
+            isDone ? Icons.check_circle_outline : icon,
+            size: 14,
+            color: color,
+          ),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            step.summary,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: color,
+              fontWeight: isActive ? FontWeight.w500 : FontWeight.w400,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
     );
   }
 }

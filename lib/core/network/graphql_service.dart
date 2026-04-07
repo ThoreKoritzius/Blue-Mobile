@@ -32,7 +32,7 @@ class GraphqlService {
     final token = _tokenStore.peekToken();
     return {
       if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
-      if (!kIsWeb) 'X-Blue-Client': 'mobile',
+      'X-Blue-Client': 'mobile',
     };
   }
 

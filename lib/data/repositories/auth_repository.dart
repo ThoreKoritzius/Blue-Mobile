@@ -43,35 +43,7 @@ class GraphqlAuthRepository implements AuthRepository {
 
   @override
   Future<AuthSession> login(String username, String password) async {
-    if (kIsWeb) {
-      return _loginBrowser(username, password);
-    }
     return _loginMobile(username, password);
-  }
-
-  Future<AuthSession> _loginBrowser(String username, String password) async {
-    final client = createGraphqlHttpClient();
-    try {
-      final basic = base64Encode(utf8.encode('$username:$password'));
-      final response = await client
-          .post(
-            Uri.parse('${AppConfig.backendUrl}/api/auth/login'),
-            headers: {
-              'Authorization': 'Basic $basic',
-              'Accept': 'application/json',
-            },
-          )
-          .timeout(const Duration(seconds: 12));
-      final body = jsonDecode(response.body);
-      if (response.statusCode != 200) {
-        throw Exception(_extractError(body));
-      }
-      final user = ((body as Map<String, dynamic>)['user'] as Map<String, dynamic>)['username']
-          .toString();
-      return AuthSession(username: user, accessToken: '');
-    } finally {
-      client.close();
-    }
   }
 
   Future<AuthSession> _loginMobile(String username, String password) async {
@@ -126,9 +98,7 @@ class GraphqlAuthRepository implements AuthRepository {
     try {
       final headers = <String, String>{'Accept': 'application/json'};
       final token = await _tokenStore.readToken();
-      if (!kIsWeb) {
-        headers['X-Blue-Client'] = 'mobile';
-      }
+      headers['X-Blue-Client'] = 'mobile';
       if (token != null && token.isNotEmpty) {
         headers['Authorization'] = 'Bearer $token';
       }
@@ -246,9 +216,7 @@ class GraphqlAuthRepository implements AuthRepository {
     try {
       final headers = <String, String>{'Accept': 'application/json'};
       final token = await _tokenStore.readToken();
-      if (!kIsWeb) {
-        headers['X-Blue-Client'] = 'mobile';
-      }
+      headers['X-Blue-Client'] = 'mobile';
       if (token != null && token.isNotEmpty) {
         headers['Authorization'] = 'Bearer $token';
       }
