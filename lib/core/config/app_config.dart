@@ -113,10 +113,11 @@ class AppConfig {
 
   static String oauthSignInUrl({String? redirectTarget}) => '';
 
-  static String mobileOauthCallbackUrl() => '$oauthCallbackScheme://$oauthCallbackHost';
+  static String mobileOauthCallbackUrl() =>
+      '$oauthCallbackScheme://$oauthCallbackHost';
 
-  static String mobileOauthBridgeUrl() => '$backendUrl/api/auth/mobile/complete';
+  static String mobileOauthBridgeUrl() =>
+      '$backendUrl/api/auth/mobile/complete';
 
-  static String get authModeDescription =>
-      'Direct sign-in mode. Use your Blue username and password.';
+  static String get authModeDescription => 'Personal AI Diary';
 }

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -292,149 +293,141 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
-
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: isDark
-              ? [const Color(0xFF08111D), const Color(0xFF0F1B2C)]
-              : [const Color(0xFFF7FAFF), const Color(0xFFEDF4FD)],
+    return Column(
+      children: [
+        Expanded(
+          child: _messages.isEmpty
+              ? _buildEmptyState(theme)
+              : Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 768),
+                    child: ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.fromLTRB(16, 18, 16, 18),
+                      itemCount: _messages.length + 1,
+                      itemBuilder: (context, index) {
+                        if (index < _messages.length) {
+                          return _buildMessageBubble(
+                              context, theme, _messages[index]);
+                        }
+                        if (_sending) return const SizedBox.shrink();
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 24, bottom: 8),
+                          child: Center(
+                            child: TextButton.icon(
+                              onPressed: () =>
+                                  setState(() => _messages.clear()),
+                              icon: Icon(Icons.delete_outline,
+                                  size: 18,
+                                  color: colorScheme.onSurfaceVariant),
+                              label: Text(
+                                'Clear chat',
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                    color: colorScheme.onSurfaceVariant),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
         ),
-      ),
-      child: Column(
-        children: [
-          Expanded(
-            child: _messages.isEmpty
-                ? _buildEmptyState(theme)
-                : ListView.builder(
-                    controller: _scrollController,
-                    padding: const EdgeInsets.fromLTRB(14, 18, 14, 18),
-                    itemCount: _messages.length + 1,
-                    itemBuilder: (context, index) {
-                      if (index < _messages.length) {
-                        return _buildMessageBubble(context, theme, _messages[index]);
-                      }
-                      if (_sending) return const SizedBox.shrink();
-                      return Padding(
-                        padding: const EdgeInsets.only(top: 24, bottom: 8),
-                        child: Center(
-                          child: TextButton.icon(
-                            onPressed: () => setState(() => _messages.clear()),
-                            icon: Icon(Icons.delete_outline, size: 18, color: colorScheme.onSurfaceVariant),
-                            label: Text(
-                              'Clear chat',
-                              style: theme.textTheme.bodySmall?.copyWith(color: colorScheme.onSurfaceVariant),
+        SafeArea(
+          top: false,
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 768),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                decoration: BoxDecoration(
+                  color: colorScheme.surface,
+                  border: Border(
+                    top: BorderSide(color: colorScheme.outlineVariant),
+                  ),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: Focus(
+                        onKeyEvent: (node, event) {
+                          if (event is KeyDownEvent &&
+                              event.logicalKey ==
+                                  LogicalKeyboardKey.enter &&
+                              !HardwareKeyboard.instance.isShiftPressed) {
+                            if (!_sending) _send();
+                            return KeyEventResult.handled;
+                          }
+                          return KeyEventResult.ignored;
+                        },
+                        child: TextField(
+                          controller: _input,
+                          minLines: 1,
+                          maxLines: 6,
+                          textInputAction: TextInputAction.newline,
+                          decoration: const InputDecoration(
+                            hintText: 'Message Blue...',
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 14,
                             ),
                           ),
                         ),
-                      );
-                    },
-                  ),
-          ),
-          SafeArea(
-            top: false,
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-              decoration: BoxDecoration(
-                color: colorScheme.surface.withValues(
-                  alpha: isDark ? 0.96 : 0.92,
-                ),
-                border: Border(
-                  top: BorderSide(color: colorScheme.outlineVariant),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: isDark
-                        ? const Color(0x28000000)
-                        : const Color(0x12000000),
-                    blurRadius: 18,
-                    offset: Offset(0, -4),
-                  ),
-                ],
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _input,
-                      minLines: 1,
-                      maxLines: 6,
-                      textInputAction: TextInputAction.newline,
-                      decoration: const InputDecoration(
-                        hintText: 'Message Blue...',
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 14,
-                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  FilledButton(
-                    onPressed: _sending ? null : _send,
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(50, 50),
-                      padding: EdgeInsets.zero,
+                    const SizedBox(width: 10),
+                    FilledButton(
+                      onPressed: _sending ? null : _send,
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(50, 50),
+                        padding: EdgeInsets.zero,
+                      ),
+                      child: _sending
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.arrow_upward_rounded),
                     ),
-                    child: _sending
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Icon(Icons.arrow_upward_rounded),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
   Widget _buildEmptyState(ThemeData theme) {
     final colorScheme = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 28),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 74,
-              height: 74,
-              decoration: BoxDecoration(
-                color: isDark
-                    ? colorScheme.primary.withValues(alpha: 0.18)
-                    : const Color(0xFFDCEBFF),
-                borderRadius: BorderRadius.circular(24),
-              ),
-              child: Icon(
-                Icons.auto_awesome_outlined,
-                color: colorScheme.primary,
-                size: 36,
-              ),
+            Icon(
+              Icons.auto_awesome_outlined,
+              color: colorScheme.primary,
+              size: 48,
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 16),
             Text(
               'Ask about your days',
-              style: theme.textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w800,
+              style: theme.textTheme.headlineMedium?.copyWith(
+                fontWeight: FontWeight.w700,
               ),
             ),
             const SizedBox(height: 8),
             Text(
               'Memories, runs, places, photos.',
-              style: theme.textTheme.bodyLarge?.copyWith(
+              style: theme.textTheme.bodyMedium?.copyWith(
                 color: colorScheme.onSurfaceVariant,
               ),
               textAlign: TextAlign.center,
@@ -456,36 +449,26 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         ? colorScheme.primary
         : colorScheme.surfaceContainer;
     final textColor = isUser ? colorScheme.onPrimary : colorScheme.onSurface;
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final maxBubbleWidth = screenWidth > 768
+        ? 640.0
+        : screenWidth * 0.85;
     final borderRadius = BorderRadius.only(
-      topLeft: const Radius.circular(24),
-      topRight: const Radius.circular(24),
-      bottomLeft: Radius.circular(isUser ? 24 : 8),
-      bottomRight: Radius.circular(isUser ? 8 : 24),
+      topLeft: const Radius.circular(20),
+      topRight: const Radius.circular(20),
+      bottomLeft: Radius.circular(isUser ? 20 : 6),
+      bottomRight: Radius.circular(isUser ? 6 : 20),
     );
 
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
-        margin: const EdgeInsets.only(bottom: 14),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width * 0.82,
-        ),
-        padding: const EdgeInsets.all(16),
+        margin: const EdgeInsets.only(bottom: 12),
+        constraints: BoxConstraints(maxWidth: maxBubbleWidth),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: bubbleColor,
           borderRadius: borderRadius,
-          border: isUser ? null : Border.all(color: colorScheme.outlineVariant),
-          boxShadow: isUser
-              ? const []
-              : [
-                  BoxShadow(
-                    color: theme.brightness == Brightness.dark
-                        ? const Color(0x22000000)
-                        : const Color(0x12000000),
-                    blurRadius: 16,
-                    offset: Offset(0, 6),
-                  ),
-                ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -612,21 +595,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: theme.brightness == Brightness.dark
-                      ? const Color(0xFF3A1619)
-                      : const Color(0xFFFFECEC),
-                  borderRadius: BorderRadius.circular(14),
+                  color: colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       item.errorText!,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.brightness == Brightness.dark
-                            ? const Color(0xFFFFCDD2)
-                            : const Color(0xFF912F2F),
-                        fontWeight: FontWeight.w700,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onErrorContainer,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -825,33 +804,35 @@ class _AgentActivityBar extends StatelessWidget {
 
     final showLive = isStreaming && !hasText;
 
-    return AnimatedSize(
-      duration: const Duration(milliseconds: 250),
-      curve: Curves.easeOutCubic,
-      alignment: Alignment.topCenter,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (showLive)
-            _ActivityStreamingView(statuses: statuses)
-          else ...[
-            _ActivitySummaryBar(
-              statuses: statuses,
-              toolCalls: toolCalls,
-              isExpanded: expandedDetailIds.contains(_panelId),
-              onTap: () => onToggleDetail(_panelId),
-            ),
-            if (expandedDetailIds.contains(_panelId))
-              _ActivityDetailPanel(
-                statuses: statuses,
-                toolCalls: toolCalls,
-                expandedDetailIds: expandedDetailIds,
-                onToggleDetail: onToggleDetail,
-              ),
-          ],
-          const SizedBox(height: 10),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (showLive)
+          _ActivityStreamingView(statuses: statuses)
+        else ...[
+          _ActivitySummaryBar(
+            statuses: statuses,
+            toolCalls: toolCalls,
+            isExpanded: expandedDetailIds.contains(_panelId),
+            onTap: () => onToggleDetail(_panelId),
+          ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            clipBehavior: Clip.none,
+            child: expandedDetailIds.contains(_panelId)
+                ? _ActivityDetailPanel(
+                    statuses: statuses,
+                    toolCalls: toolCalls,
+                    expandedDetailIds: expandedDetailIds,
+                    onToggleDetail: onToggleDetail,
+                  )
+                : const SizedBox.shrink(),
+          ),
         ],
-      ),
+        const SizedBox(height: 10),
+      ],
     );
   }
 }
@@ -1231,8 +1212,16 @@ class _ActivityStepTile extends StatelessWidget {
             ),
           ),
         ),
-        if (isExpanded && toolCall != null)
-          _buildToolDetail(context, toolCall!),
+        if (toolCall != null)
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            clipBehavior: Clip.none,
+            child: isExpanded
+                ? _buildToolDetail(context, toolCall!)
+                : const SizedBox.shrink(),
+          ),
       ],
     );
   }
@@ -1391,13 +1380,6 @@ class _DayMemoryCard extends StatelessWidget {
           child: Ink(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(20),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x16000000),
-                  blurRadius: 18,
-                  offset: Offset(0, 10),
-                ),
-              ],
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(20),
@@ -1512,13 +1494,6 @@ class _InlineChatImage extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),
             color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x12000000),
-                blurRadius: 14,
-                offset: Offset(0, 8),
-              ),
-            ],
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(18),

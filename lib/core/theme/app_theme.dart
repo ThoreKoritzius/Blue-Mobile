@@ -72,7 +72,7 @@ ThemeData buildAppTheme({required Brightness brightness}) {
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        backgroundColor: base,
+        backgroundColor: isDark ? lightBase : base,
         foregroundColor: Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       ),

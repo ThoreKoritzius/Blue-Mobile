@@ -578,21 +578,7 @@ class _MapPageState extends ConsumerState<MapPage>
               ),
           ],
         ),
-        Positioned(
-          top: 16,
-          left: 16,
-          right: 84,
-          child: _StatusBanner(
-            loading: loading,
-            error: _error,
-            imagesLoaded: _imagesLoaded,
-            visibleImages: visibleImages.length,
-            runsLoaded: _runsLoaded,
-            hasData: visibleImages.isNotEmpty || _runs.isNotEmpty,
-            waitingForImageZoom:
-                showImages && _currentZoom < _imageLoadZoomThreshold,
-          ),
-        ),
+
         if (!loading &&
             _error.isEmpty &&
             visibleImages.isEmpty &&
@@ -625,7 +611,7 @@ class _MapPageState extends ConsumerState<MapPage>
         // Day-view toggle at bottom-left
         if (!_runsLoading)
           Positioned(
-            left: 16,
+            right: 16,
             bottom: 16,
             child: FloatingActionButton.small(
               heroTag: 'map_day_toggle',
@@ -796,7 +782,6 @@ class _MapPageState extends ConsumerState<MapPage>
         }
       }
     }
-
 
     final sheetParams = (
       dates: _dayViewDates,
