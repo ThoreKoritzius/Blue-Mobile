@@ -90,6 +90,7 @@ class TimelineVisit {
 /// A unified segment from the timeline (VISIT or ACTIVITY), ordered by startTime.
 class TimelineSegment {
   const TimelineSegment({
+    this.id,
     required this.segmentType,
     required this.startTime,
     this.endTime,
@@ -106,8 +107,10 @@ class TimelineSegment {
     this.endLat,
     this.endLon,
     this.matchedRunId,
+    this.source,
   });
 
+  final int? id;
   final String segmentType; // 'VISIT' or 'ACTIVITY'
   final DateTime startTime;
   final DateTime? endTime;
@@ -125,11 +128,14 @@ class TimelineSegment {
   final double? startLon;
   final double? endLat;
   final double? endLon;
+
   /// Run ID matched from the runs list (by start time proximity).
   final String? matchedRunId;
+  final String? source;
 
   bool get isVisit => segmentType == 'VISIT';
   bool get isActivity => segmentType == 'ACTIVITY';
+  bool get isManual => source == 'manual' || source == 'story_backfill';
 }
 
 class TimelineDayData {
@@ -150,9 +156,7 @@ class TimelineDayData {
   final List<TimelineSegment> segments;
 
   bool get hasData =>
-      walkPoints.isNotEmpty ||
-      runs.isNotEmpty ||
-      imageLocations.isNotEmpty;
+      visits.isNotEmpty || runs.isNotEmpty || imageLocations.isNotEmpty;
 }
 
 class WhenWasINearResult {
@@ -249,8 +253,9 @@ class MapRepository {
       GqlDocuments.timelineWhenWasINear,
       variables: {'location': location},
     );
-    final raw = (response['timeline']
-        as Map<String, dynamic>?)?['whenWasINear'] as Map<String, dynamic>?;
+    final raw =
+        (response['timeline'] as Map<String, dynamic>?)?['whenWasINear']
+            as Map<String, dynamic>?;
     if (raw == null) return WhenWasINearResult.empty(location);
 
     final resolvedLocation = (raw['location'] ?? location).toString();
@@ -317,7 +322,8 @@ class MapRepository {
         final rawStart = r['startTime'];
         if (rawStart is String && rawStart.isNotEmpty) {
           // startTime may be time-of-day ("06:30:00") or ISO datetime
-          startTime = DateTime.tryParse(rawStart) ??
+          startTime =
+              DateTime.tryParse(rawStart) ??
               DateTime.tryParse('${date}T$rawStart');
         }
         runs.add(
@@ -335,9 +341,7 @@ class MapRepository {
 
       final imageLocations = <TimelineImageLocation>[];
       final rawImgs = timeline['imageLocations'];
-      debugPrint(
-        '[TIMELINE] image_locations raw type=${rawImgs.runtimeType}',
-      );
+      debugPrint('[TIMELINE] image_locations raw type=${rawImgs.runtimeType}');
       final imgList = rawImgs is List
           ? rawImgs
           : (rawImgs is String ? [] : (rawImgs as List<dynamic>? ?? []));
@@ -367,6 +371,8 @@ class MapRepository {
       for (final raw in segList) {
         final s = raw as Map<String, dynamic>;
         final segType = (s['segmentType'] as String?) ?? '';
+        final segId = (s['id'] as num?)?.toInt();
+        final segSource = s['source'] as String?;
         final rawStart = s['startTime'] as String?;
         final rawEnd = s['endTime'] as String?;
         final startTime = rawStart != null ? DateTime.tryParse(rawStart) : null;
@@ -377,32 +383,43 @@ class MapRepository {
           final placeId = (s['placeId'] ?? '').toString();
           if (placeId.isEmpty) continue;
           if (duration < 5) continue;
-          final placeName = (s['placeName'] as String?)?.isNotEmpty == true ? s['placeName'] as String : null;
-          final placeAddress = (s['placeAddress'] as String?)?.isNotEmpty == true ? s['placeAddress'] as String : null;
+          final placeName = (s['placeName'] as String?)?.isNotEmpty == true
+              ? s['placeName'] as String
+              : null;
+          final placeAddress =
+              (s['placeAddress'] as String?)?.isNotEmpty == true
+              ? s['placeAddress'] as String
+              : null;
           final lat = (s['placeLat'] as num?)?.toDouble();
           final lon = (s['placeLon'] as num?)?.toDouble();
-          visits.add(TimelineVisit(
-            placeId: placeId,
-            durationMinutes: duration,
-            placeName: placeName,
-            placeAddress: placeAddress,
-            lat: lat,
-            lon: lon,
-            startTime: startTime,
-            endTime: endTime,
-          ));
-          if (startTime != null) {
-            segments.add(TimelineSegment(
-              segmentType: segType,
-              startTime: startTime,
-              endTime: endTime,
-              durationMinutes: duration,
+          visits.add(
+            TimelineVisit(
               placeId: placeId,
+              durationMinutes: duration,
               placeName: placeName,
               placeAddress: placeAddress,
-              placeLat: lat,
-              placeLon: lon,
-            ));
+              lat: lat,
+              lon: lon,
+              startTime: startTime,
+              endTime: endTime,
+            ),
+          );
+          if (startTime != null) {
+            segments.add(
+              TimelineSegment(
+                id: segId,
+                segmentType: segType,
+                startTime: startTime,
+                endTime: endTime,
+                durationMinutes: duration,
+                placeId: placeId,
+                placeName: placeName,
+                placeAddress: placeAddress,
+                placeLat: lat,
+                placeLon: lon,
+                source: segSource,
+              ),
+            );
           }
         } else if (segType == 'ACTIVITY' && startTime != null) {
           // Try to match to a run by closest start time
@@ -420,23 +437,29 @@ class MapRepository {
             }
             matchedRunId = best?.id;
           }
-          segments.add(TimelineSegment(
-            segmentType: segType,
-            startTime: startTime,
-            endTime: endTime,
-            durationMinutes: duration,
-            activityType: (s['activityType'] as String?),
-            distanceMeters: (s['distanceMeters'] as num?)?.toInt(),
-            startLat: (s['startLat'] as num?)?.toDouble(),
-            startLon: (s['startLon'] as num?)?.toDouble(),
-            endLat: (s['endLat'] as num?)?.toDouble(),
-            endLon: (s['endLon'] as num?)?.toDouble(),
-            matchedRunId: matchedRunId,
-          ));
+          segments.add(
+            TimelineSegment(
+              id: segId,
+              segmentType: segType,
+              startTime: startTime,
+              endTime: endTime,
+              durationMinutes: duration,
+              activityType: (s['activityType'] as String?),
+              distanceMeters: (s['distanceMeters'] as num?)?.toInt(),
+              startLat: (s['startLat'] as num?)?.toDouble(),
+              startLon: (s['startLon'] as num?)?.toDouble(),
+              endLat: (s['endLat'] as num?)?.toDouble(),
+              endLon: (s['endLon'] as num?)?.toDouble(),
+              matchedRunId: matchedRunId,
+              source: segSource,
+            ),
+          );
         }
       }
       segments.sort((a, b) => a.startTime.compareTo(b.startTime));
-      debugPrint('[TIMELINE] parsed ${visits.length} visits, ${segments.length} segments');
+      debugPrint(
+        '[TIMELINE] parsed ${visits.length} visits, ${segments.length} segments',
+      );
 
       return TimelineDayData(
         date: date,
@@ -451,6 +474,51 @@ class MapRepository {
       debugPrintStack(stackTrace: stackTrace);
       rethrow;
     }
+  }
+
+  Future<void> addManualVisit({
+    required String date,
+    required String startTime,
+    required String endTime,
+    required String placeName,
+  }) async {
+    await _gql.query(
+      GqlDocuments.addManualVisit,
+      variables: {
+        'date': date,
+        'startTime': startTime,
+        'endTime': endTime,
+        'placeName': placeName,
+      },
+    );
+  }
+
+  Future<void> addManualActivity({
+    required String date,
+    required String startTime,
+    required String endTime,
+    required String activityType,
+    required String placeNameStart,
+    required String placeNameEnd,
+  }) async {
+    await _gql.query(
+      GqlDocuments.addManualActivity,
+      variables: {
+        'date': date,
+        'startTime': startTime,
+        'endTime': endTime,
+        'activityType': activityType,
+        'placeNameStart': placeNameStart,
+        'placeNameEnd': placeNameEnd,
+      },
+    );
+  }
+
+  Future<void> deleteManualVisit(int segmentId) async {
+    await _gql.query(
+      GqlDocuments.deleteManualVisit,
+      variables: {'segmentId': segmentId},
+    );
   }
 
   (double, double)? _parseGps(String input) {

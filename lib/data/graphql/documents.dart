@@ -392,7 +392,61 @@ query TimelineDay($date: String!) {
       lat lon path
     }
     segments(date: $date) {
-      id segmentType startTime endTime durationMinutes placeId placeName placeAddress placeLat placeLon activityType startLat startLon endLat endLon distanceMeters
+      id segmentType startTime endTime durationMinutes placeId placeName placeAddress placeLat placeLon activityType startLat startLon endLat endLon distanceMeters source
+    }
+  }
+}
+''';
+
+  static const addManualVisit = r'''
+mutation AddManualVisit(
+  $date: String!,
+  $startTime: String!,
+  $endTime: String!,
+  $placeName: String!
+) {
+  timeline {
+    addManualVisit(
+      date: $date,
+      startTime: $startTime,
+      endTime: $endTime,
+      placeName: $placeName,
+    ) {
+      data
+    }
+  }
+}
+''';
+
+  static const addManualActivity = r'''
+mutation AddManualActivity(
+  $date: String!,
+  $startTime: String!,
+  $endTime: String!,
+  $activityType: String!,
+  $placeNameStart: String!,
+  $placeNameEnd: String!
+) {
+  timeline {
+    addManualActivity(
+      date: $date,
+      startTime: $startTime,
+      endTime: $endTime,
+      activityType: $activityType,
+      placeNameStart: $placeNameStart,
+      placeNameEnd: $placeNameEnd,
+    ) {
+      data
+    }
+  }
+}
+''';
+
+  static const deleteManualVisit = r'''
+mutation DeleteManualVisit($segmentId: Int!) {
+  timeline {
+    deleteManualVisit(segmentId: $segmentId) {
+      message
     }
   }
 }

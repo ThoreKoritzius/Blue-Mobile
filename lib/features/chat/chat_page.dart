@@ -498,7 +498,25 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   height: 1.45,
                 ),
               )
-            else
+            else ...[
+              if (item.statuses.isNotEmpty || item.toolCalls.isNotEmpty)
+                _AgentActivityBar(
+                  messageId: item.id,
+                  statuses: item.statuses,
+                  toolCalls: item.toolCalls,
+                  isStreaming: item.state == _UiMessageState.streaming,
+                  hasText: item.text.trim().isNotEmpty,
+                  expandedDetailIds: _expandedDetailIds,
+                  onToggleDetail: (id) {
+                    setState(() {
+                      if (_expandedDetailIds.contains(id)) {
+                        _expandedDetailIds.remove(id);
+                      } else {
+                        _expandedDetailIds.add(id);
+                      }
+                    });
+                  },
+                ),
               MarkdownBody(
                 data:
                     item.text.isEmpty && item.state == _UiMessageState.streaming
@@ -540,13 +558,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                   a: TextStyle(color: colorScheme.primary),
                 ),
                 onTapLink: (text, href, title) {},
-              ),
-            if (!isUser && item.statuses.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              _StatusTimeline(
-                statuses: item.statuses,
-                isStreaming: item.state == _UiMessageState.streaming,
-                hasText: item.text.trim().isNotEmpty,
               ),
             ],
             if (item.state == _UiMessageState.streaming && item.text.isEmpty && item.statuses.isEmpty) ...[
@@ -594,12 +605,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               const SizedBox(height: 12),
               _buildInlineImageGallery(context, theme, item.images),
             ],
-            if (item.toolCalls.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              ...item.toolCalls.map(
-                (call) => _buildToolCallInline(theme, call),
-              ),
-            ],
             if (item.state == _UiMessageState.error &&
                 item.errorText != null &&
                 item.errorText!.isNotEmpty) ...[
@@ -635,125 +640,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             ],
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildToolCallInline(ThemeData theme, ChatToolCallModel call) {
-    final id = 'tool_${call.name}_${call.displayQuery.hashCode}';
-    final expanded = _expandedDetailIds.contains(id);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        InkWell(
-          borderRadius: BorderRadius.circular(10),
-          onTap: () {
-            setState(() {
-              if (expanded) {
-                _expandedDetailIds.remove(id);
-              } else {
-                _expandedDetailIds.add(id);
-              }
-            });
-          },
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.data_object,
-                  size: 14,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-                const SizedBox(width: 4),
-                Flexible(
-                  child: Text(
-                    call.displaySummary,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Icon(
-                  expanded ? Icons.expand_less : Icons.expand_more,
-                  size: 16,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ],
-            ),
-          ),
-        ),
-        if (expanded)
-          Container(
-            margin: const EdgeInsets.only(top: 4, bottom: 4),
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHigh,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: theme.colorScheme.outlineVariant),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (call.displayQuery.trim().isNotEmpty)
-                  _buildDetailBlock(
-                    call.query != null ? 'GraphQL' : 'SQL',
-                    call.displayQuery.trim(),
-                  ),
-                if (call.variables.isNotEmpty)
-                  _buildDetailBlock('Variables', call.variables.toString()),
-                if (call.sqlParams.isNotEmpty)
-                  _buildDetailBlock('Params', call.sqlParams.toString()),
-                if ((call.embeddingQuery ?? '').trim().isNotEmpty)
-                  _buildDetailBlock(
-                    'Embedding Query',
-                    call.embeddingQuery!.trim(),
-                  ),
-                if (call.errors != null && call.errors!.isNotEmpty)
-                  _buildDetailBlock('Errors', call.errors!.join('\n')),
-              ],
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildDetailBlock(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surface,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: SelectableText(
-              value,
-              style: TextStyle(
-                fontSize: 12,
-                height: 1.4,
-                color: Theme.of(context).colorScheme.onSurface,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -908,16 +794,328 @@ class _UiMessage {
   }
 }
 
-class _StatusTimeline extends StatelessWidget {
-  const _StatusTimeline({
+// ---------------------------------------------------------------------------
+// Agent activity bar — unified streaming + completed view
+// ---------------------------------------------------------------------------
+
+class _AgentActivityBar extends StatelessWidget {
+  const _AgentActivityBar({
+    required this.messageId,
     required this.statuses,
+    required this.toolCalls,
     required this.isStreaming,
     required this.hasText,
+    required this.expandedDetailIds,
+    required this.onToggleDetail,
+  });
+
+  final String messageId;
+  final List<_UiStatusEntry> statuses;
+  final List<ChatToolCallModel> toolCalls;
+  final bool isStreaming;
+  final bool hasText;
+  final Set<String> expandedDetailIds;
+  final void Function(String id) onToggleDetail;
+
+  String get _panelId => 'activity_panel_$messageId';
+
+  @override
+  Widget build(BuildContext context) {
+    if (statuses.isEmpty && toolCalls.isEmpty) return const SizedBox.shrink();
+
+    final showLive = isStreaming && !hasText;
+
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 250),
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.topCenter,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (showLive)
+            _ActivityStreamingView(statuses: statuses)
+          else ...[
+            _ActivitySummaryBar(
+              statuses: statuses,
+              toolCalls: toolCalls,
+              isExpanded: expandedDetailIds.contains(_panelId),
+              onTap: () => onToggleDetail(_panelId),
+            ),
+            if (expandedDetailIds.contains(_panelId))
+              _ActivityDetailPanel(
+                statuses: statuses,
+                toolCalls: toolCalls,
+                expandedDetailIds: expandedDetailIds,
+                onToggleDetail: onToggleDetail,
+              ),
+          ],
+          const SizedBox(height: 10),
+        ],
+      ),
+    );
+  }
+}
+
+class _ActivityStreamingView extends StatelessWidget {
+  const _ActivityStreamingView({required this.statuses});
+
+  final List<_UiStatusEntry> statuses;
+
+  static const _stageIcons = {
+    'plan': Icons.psychology_outlined,
+    'query': Icons.travel_explore_outlined,
+    'db': Icons.check_circle_outline,
+    'compose': Icons.edit_note_outlined,
+  };
+
+  static String _humanLabel(String stage, String summary) {
+    switch (stage) {
+      case 'plan':
+        return 'Analyzing request';
+      case 'query':
+        return 'Searching diary';
+      case 'db':
+        return 'Data received';
+      case 'compose':
+        return 'Writing answer';
+      default:
+        return summary;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Build progressive step list — each status becomes a row
+    // Deduplicate consecutive same-stage entries, keep count for queries
+    final steps = <_StreamingStep>[];
+    var queryCount = 0;
+    for (final s in statuses) {
+      if (s.stage == 'query') queryCount++;
+      if (s.stage == 'db') {
+        // db confirms the previous query — mark it done, skip db row
+        if (steps.isNotEmpty && steps.last.stage == 'query') {
+          steps.last.done = true;
+        }
+        continue;
+      }
+      // If same stage as previous, update it (e.g. query round 2 replaces round 1)
+      if (steps.isNotEmpty && steps.last.stage == s.stage) {
+        steps.last.label = _humanLabel(s.stage, s.summary);
+        steps.last.count = s.stage == 'query' ? queryCount : null;
+        steps.last.done = false;
+      } else {
+        steps.add(_StreamingStep(
+          stage: s.stage,
+          label: _humanLabel(s.stage, s.summary),
+          count: s.stage == 'query' ? queryCount : null,
+        ));
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var i = 0; i < steps.length; i++)
+          Padding(
+            padding: EdgeInsets.only(top: i == 0 ? 0 : 4),
+            child: _buildStepRow(
+              context,
+              step: steps[i],
+              isLast: i == steps.length - 1,
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildStepRow(
+    BuildContext context, {
+    required _StreamingStep step,
+    required bool isLast,
+  }) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final isActive = isLast && !step.done;
+    final color = isActive
+        ? colorScheme.primary
+        : colorScheme.onSurfaceVariant.withValues(alpha: 0.55);
+    final icon = _stageIcons[step.stage] ?? Icons.circle_outlined;
+    final queryLabel = step.count != null && step.count! > 1
+        ? '${step.label} (${step.count})'
+        : step.label;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (isActive)
+          const _PulsingDot()
+        else
+          Icon(
+            step.done ? Icons.check_circle_outline : icon,
+            size: 14,
+            color: color,
+          ),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(
+            queryLabel,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: color,
+              fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _StreamingStep {
+  _StreamingStep({
+    required this.stage,
+    required this.label,
+    this.count,
+  });
+
+  final String stage;
+  String label;
+  int? count;
+  bool done = false;
+}
+
+class _PulsingDot extends StatefulWidget {
+  const _PulsingDot();
+
+  @override
+  State<_PulsingDot> createState() => _PulsingDotState();
+}
+
+class _PulsingDotState extends State<_PulsingDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1000),
+  )..repeat(reverse: true);
+
+  late final Animation<double> _opacity = Tween<double>(
+    begin: 0.4,
+    end: 1.0,
+  ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _opacity,
+      builder: (context, child) => Opacity(
+        opacity: _opacity.value,
+        child: child,
+      ),
+      child: Container(
+        width: 8,
+        height: 8,
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.primary,
+          shape: BoxShape.circle,
+        ),
+      ),
+    );
+  }
+}
+
+class _ActivitySummaryBar extends StatelessWidget {
+  const _ActivitySummaryBar({
+    required this.statuses,
+    required this.toolCalls,
+    required this.isExpanded,
+    required this.onTap,
   });
 
   final List<_UiStatusEntry> statuses;
-  final bool isStreaming;
-  final bool hasText;
+  final List<ChatToolCallModel> toolCalls;
+  final bool isExpanded;
+  final VoidCallback onTap;
+
+  String _summaryText() {
+    final queryCount = toolCalls.isNotEmpty
+        ? toolCalls.length
+        : statuses.where((s) => s.stage == 'query').length;
+    if (queryCount == 0) return 'Analyzed your request';
+    final errorCount = toolCalls
+        .where((t) => t.errors != null && t.errors!.isNotEmpty)
+        .length;
+    final base = queryCount == 1 ? 'Ran 1 query' : 'Ran $queryCount queries';
+    if (errorCount > 0) return '$base ($errorCount failed)';
+    return base;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.auto_awesome_outlined,
+              size: 16,
+              color: colorScheme.primary,
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                _summaryText(),
+                style: theme.textTheme.labelMedium?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Icon(
+              isExpanded ? Icons.expand_less : Icons.expand_more,
+              size: 16,
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ActivityDetailPanel extends StatelessWidget {
+  const _ActivityDetailPanel({
+    required this.statuses,
+    required this.toolCalls,
+    required this.expandedDetailIds,
+    required this.onToggleDetail,
+  });
+
+  final List<_UiStatusEntry> statuses;
+  final List<ChatToolCallModel> toolCalls;
+  final Set<String> expandedDetailIds;
+  final void Function(String id) onToggleDetail;
 
   static const _stageIcons = {
     'plan': Icons.psychology_outlined,
@@ -928,99 +1126,187 @@ class _StatusTimeline extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (statuses.isEmpty) return const SizedBox.shrink();
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-
-    // Deduplicate by stage — keep last status per stage, preserve order of first appearance
+    // Build merged step list: unique stages, query stages paired with toolCalls
     final stageOrder = <String>[];
     final lastByStage = <String, _UiStatusEntry>{};
     for (final s in statuses) {
       if (!lastByStage.containsKey(s.stage)) stageOrder.add(s.stage);
       lastByStage[s.stage] = s;
     }
-    final steps = stageOrder.map((s) => lastByStage[s]!).toList();
-    final isLastStepActive = isStreaming && !hasText;
 
-    // When done or text is streaming, collapse to a single summary line
-    if (!isStreaming || hasText) {
-      final queryCount = statuses.where((s) => s.stage == 'query').length;
-      if (queryCount == 0) return const SizedBox.shrink();
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 4),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.check_circle_outline, size: 14, color: colorScheme.primary.withValues(alpha: 0.6)),
-            const SizedBox(width: 6),
-            Text(
-              queryCount == 1 ? '1 query executed' : '$queryCount queries executed',
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
+    var queryIndex = 0;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final stage in stageOrder)
+            if (stage == 'query' || stage == 'db')
+              // Render all tool calls at the first query stage position
+              if (stage == 'query')
+                ...toolCalls.map((call) {
+                  final idx = queryIndex++;
+                  return _ActivityStepTile(
+                    icon: _stageIcons['query']!,
+                    label: call.displaySummary,
+                    hasError:
+                        call.errors != null && call.errors!.isNotEmpty,
+                    toolCall: call,
+                    isExpanded: expandedDetailIds
+                        .contains('tool_${call.name}_${idx}_${call.displayQuery.hashCode}'),
+                    onToggle: () => onToggleDetail(
+                        'tool_${call.name}_${idx}_${call.displayQuery.hashCode}'),
+                  );
+                })
+              else
+                const SizedBox.shrink()
+            else
+              _ActivityStepTile(
+                icon: _stageIcons[stage] ?? Icons.circle_outlined,
+                label: lastByStage[stage]!.summary,
               ),
-            ),
-          ],
-        ),
-      );
-    }
+        ],
+      ),
+    );
+  }
+}
 
-    // While streaming: show step-by-step progress
+class _ActivityStepTile extends StatelessWidget {
+  const _ActivityStepTile({
+    required this.icon,
+    required this.label,
+    this.hasError = false,
+    this.toolCall,
+    this.isExpanded = false,
+    this.onToggle,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool hasError;
+  final ChatToolCallModel? toolCall;
+  final bool isExpanded;
+  final VoidCallback? onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final color =
+        hasError ? colorScheme.error : colorScheme.onSurfaceVariant;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (var i = 0; i < steps.length; i++) ...[
-          _buildStep(
-            context,
-            step: steps[i],
-            isDone: i < steps.length - 1 || !isLastStepActive,
-            isActive: i == steps.length - 1 && isLastStepActive,
+        InkWell(
+          onTap: onToggle,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 15, color: color),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    label,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: color,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (toolCall != null) ...[
+                  const SizedBox(width: 6),
+                  Icon(
+                    isExpanded ? Icons.expand_less : Icons.expand_more,
+                    size: 14,
+                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                  ),
+                ],
+              ],
+            ),
           ),
-          if (i < steps.length - 1) const SizedBox(height: 2),
-        ],
+        ),
+        if (isExpanded && toolCall != null)
+          _buildToolDetail(context, toolCall!),
       ],
     );
   }
 
-  Widget _buildStep(
-    BuildContext context, {
-    required _UiStatusEntry step,
-    required bool isDone,
-    required bool isActive,
-  }) {
+  Widget _buildToolDetail(BuildContext context, ChatToolCallModel call) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final icon = _stageIcons[step.stage] ?? Icons.circle_outlined;
-    final color = isActive
-        ? colorScheme.primary
-        : colorScheme.onSurfaceVariant.withValues(alpha: 0.5);
 
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (isActive)
-          SizedBox(
-            width: 14,
-            height: 14,
-            child: CircularProgressIndicator(strokeWidth: 1.5, color: color),
-          )
-        else
-          Icon(
-            isDone ? Icons.check_circle_outline : icon,
-            size: 14,
-            color: color,
-          ),
-        const SizedBox(width: 6),
-        Flexible(
-          child: Text(
-            step.summary,
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: color,
-              fontWeight: isActive ? FontWeight.w500 : FontWeight.w400,
+    return Container(
+      margin: const EdgeInsets.only(top: 4, bottom: 4, left: 23),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colorScheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (call.displayQuery.trim().isNotEmpty)
+            _detailBlock(
+              context,
+              call.query != null ? 'GraphQL' : 'SQL',
+              call.displayQuery.trim(),
             ),
-            overflow: TextOverflow.ellipsis,
+          if (call.variables.isNotEmpty)
+            _detailBlock(context, 'Variables', call.variables.toString()),
+          if (call.sqlParams.isNotEmpty)
+            _detailBlock(context, 'Params', call.sqlParams.toString()),
+          if ((call.embeddingQuery ?? '').trim().isNotEmpty)
+            _detailBlock(
+                context, 'Embedding Query', call.embeddingQuery!.trim()),
+          if (call.errors != null && call.errors!.isNotEmpty)
+            _detailBlock(context, 'Errors', call.errors!.join('\n')),
+        ],
+      ),
+    );
+  }
+
+  Widget _detailBlock(BuildContext context, String label, String value) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: colorScheme.onSurfaceVariant,
+            ),
           ),
-        ),
-      ],
+          const SizedBox(height: 4),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: colorScheme.surface,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: SelectableText(
+              value,
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.4,
+                color: colorScheme.onSurface,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

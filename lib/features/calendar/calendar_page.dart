@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -19,11 +21,16 @@ class CalendarPage extends ConsumerStatefulWidget {
 enum _MonthLoadState { unloaded, loading, loaded, error }
 
 class _CalendarPageState extends ConsumerState<CalendarPage> {
-  static const int _pageSize = 200;
+  static const int _pageSize = 60;
   static const int _initialVirtualMonthCount = 120;
   static const int _visibleMonthPrefetch = 0;
-  static const double _monthItemExtent = 552;
-  static const double _heroExtentEstimate = 190;
+  static const double _monthHeaderHeight = 72;
+  static const double _weekdayHeaderHeight = 28;
+  static const double _monthCardPadding = 26;
+  static const double _monthBottomMargin = 18;
+
+  int _columns = 1;
+  double _monthItemExtent = 552;
 
   final ScrollController _scrollController = ScrollController();
   final Map<String, StoryDayModel> _storiesByDate = <String, StoryDayModel>{};
@@ -34,11 +41,9 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
   );
 
   Timer? _scrubberHintTimer;
-  Timer? _scrollIdleTimer;
   bool _initializing = true;
   bool _fetchingPages = false;
   bool _hasMore = true;
-  bool _isScrollingFast = false;
   String? _nextCursor;
   String? _globalError;
   int _visibleStartIndex = 0;
@@ -66,7 +71,6 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
       ..removeListener(_onScroll)
       ..dispose();
     _scrubberHintTimer?.cancel();
-    _scrollIdleTimer?.cancel();
     _activeMonthIndexNotifier.dispose();
     _showScrubberHintNotifier.dispose();
     super.dispose();
@@ -213,14 +217,11 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
     if (!_scrollController.hasClients || _months.isEmpty) return;
 
     final pixels = _scrollController.offset;
-    final adjusted = (pixels - _heroExtentEstimate).clamp(0.0, double.infinity);
-    final start = (adjusted / _monthItemExtent).floor().clamp(
-      0,
-      _months.length - 1,
-    );
-    final end = ((adjusted + (_monthItemExtent * 1.8)) / _monthItemExtent)
-        .ceil()
-        .clamp(0, _months.length - 1);
+    final rowHeight = _monthItemExtent;
+    final startRow = (pixels / rowHeight).floor();
+    final endRow = ((pixels + rowHeight * 1.8) / rowHeight).ceil();
+    final start = (startRow * _columns).clamp(0, _months.length - 1);
+    final end = ((endRow + 1) * _columns - 1).clamp(0, _months.length - 1);
 
     final changed =
         force || start != _visibleStartIndex || end != _visibleEndIndex;
@@ -233,15 +234,6 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
   }
 
   void _onScroll() {
-    if (!_isScrollingFast && mounted) {
-      setState(() => _isScrollingFast = true);
-    }
-    _scrollIdleTimer?.cancel();
-    _scrollIdleTimer = Timer(const Duration(milliseconds: 140), () {
-      if (mounted && _isScrollingFast) {
-        setState(() => _isScrollingFast = false);
-      }
-    });
     _syncVisibleWindow();
   }
 
@@ -257,7 +249,8 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
     final safeIndex = index.clamp(0, _months.length - 1);
     final targetMonth = _months[safeIndex];
     final targetKey = _monthKey(targetMonth);
-    final targetOffset = (_heroExtentEstimate + (safeIndex * _monthItemExtent))
+    final row = safeIndex ~/ _columns;
+    final targetOffset = (row * _monthItemExtent)
         .clamp(0.0, _scrollController.position.maxScrollExtent);
     if (!_monthIsCovered(targetMonth) &&
         _monthStates[targetKey] != _MonthLoadState.loading &&
@@ -290,15 +283,34 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
     ref.read(selectedTabProvider.notifier).state = 0;
   }
 
-  Map<String, String> _authHeaders() {
+  String? _authToken() {
     final tokenStore = ref.read(authTokenStoreProvider);
-    final token =
-        ref.read(authControllerProvider).value?.accessToken ??
+    return ref.read(authControllerProvider).value?.accessToken ??
         tokenStore.peekToken();
+  }
+
+  Map<String, String> _authHeaders() {
+    final token = _authToken();
     return {
       if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
       'X-Blue-Client': 'mobile',
     };
+  }
+
+  String _authenticatedUrl(String url) {
+    if (!kIsWeb) return url;
+    final token = _authToken();
+    if (token == null || token.isEmpty) return url;
+    final separator = url.contains('?') ? '&' : '?';
+    return '$url${separator}token=$token';
+  }
+
+  double _computeMonthItemExtent(double columnWidth) {
+    final cellWidth = (columnWidth - _monthCardPadding) / 7;
+    final cellHeight = cellWidth / 0.72;
+    const maxWeekRows = 6;
+    return _monthCardPadding + _monthHeaderHeight + _weekdayHeaderHeight +
+        (cellHeight * maxWeekRows) + _monthBottomMargin;
   }
 
   @override
@@ -309,106 +321,96 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
       return _CalendarSkeleton(colorScheme: colorScheme);
     }
 
-    return Stack(
-      children: [
-        RefreshIndicator(
-          onRefresh: () async {
-            _storiesByDate.clear();
-            _monthStates.clear();
-            _nextCursor = null;
-            _hasMore = true;
-            _globalError = null;
-            _oldestFetchedMonth = null;
-            _months = _buildVirtualMonths();
-            setState(() => _initializing = true);
-            await _ensureVisibleWindowLoaded();
-            if (mounted) {
-              setState(() => _initializing = false);
-            }
-          },
-          child: CustomScrollView(
-            controller: _scrollController,
-            cacheExtent: _monthItemExtent,
-            physics: const AlwaysScrollableScrollPhysics(),
-            slivers: [
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 24, 12),
-                  child: _CalendarHero(
-                    loadedStories: _storiesByDate.length,
-                    loadedMonths: _months.length,
-                    loadingMore: _fetchingPages,
-                  ),
-                ),
-              ),
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 24, 24),
-                sliver: SliverFixedExtentList(
-                  itemExtent: _monthItemExtent,
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) {
-                      final month = _months[index];
-                      final key = _monthKey(month);
-                      final state =
-                          _monthStates[key] ?? _MonthLoadState.unloaded;
-                      final isActiveMonth = index == _visibleStartIndex;
-                      final isVisibleMonth =
-                          index >= _visibleStartIndex &&
-                          index <= _visibleEndIndex;
-                      final shouldRenderImages =
-                          !_isScrollingFast && isVisibleMonth;
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 18),
-                        child: RepaintBoundary(
-                          child: _MonthCard(
-                            month: month,
-                            storiesByDate: _storiesByDate,
-                            headers: _authHeaders(),
-                            onDayTap: _openDay,
-                            mode: shouldRenderImages
-                                ? (state == _MonthLoadState.loading
-                                      ? _MonthRenderMode.loading
-                                      : state == _MonthLoadState.error
-                                      ? _MonthRenderMode.error
-                                      : _MonthRenderMode.full)
-                                : ((isActiveMonth || isVisibleMonth) &&
-                                          (state == _MonthLoadState.loading ||
-                                              state == _MonthLoadState.unloaded)
-                                      ? _MonthRenderMode.loading
-                                      : ((isActiveMonth || isVisibleMonth) &&
-                                                state == _MonthLoadState.error
-                                            ? _MonthRenderMode.error
-                                            : _MonthRenderMode.placeholder)),
-                          ),
-                        ),
-                      );
-                    },
-                    childCount: _months.length,
-                    addAutomaticKeepAlives: false,
-                    addRepaintBoundaries: false,
-                  ),
-                ),
-              ),
-              if (_globalError != null)
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 24, 20),
-                    child: _CalendarInlineError(
-                      message: _globalError!,
-                      onRetry: _ensureVisibleWindowLoaded,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        _columns = width >= 700 ? 2 : 1;
+        final columnWidth = (width - 40 - (_columns > 1 ? 16 : 0)) / _columns;
+        _monthItemExtent = _computeMonthItemExtent(columnWidth);
+
+        return Stack(
+          children: [
+            RefreshIndicator(
+              onRefresh: () async {
+                _storiesByDate.clear();
+                _monthStates.clear();
+                _nextCursor = null;
+                _hasMore = true;
+                _globalError = null;
+                _oldestFetchedMonth = null;
+                _months = _buildVirtualMonths();
+                setState(() => _initializing = true);
+                await _ensureVisibleWindowLoaded();
+                if (mounted) {
+                  setState(() => _initializing = false);
+                }
+              },
+              child: CustomScrollView(
+                controller: _scrollController,
+                cacheExtent: _monthItemExtent,
+                physics: const AlwaysScrollableScrollPhysics(),
+                slivers: [
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 24, 24),
+                    sliver: SliverGrid(
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: _columns,
+                        mainAxisExtent: _monthItemExtent,
+                        crossAxisSpacing: 16,
+                      ),
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                          final month = _months[index];
+                          final key = _monthKey(month);
+                          final state =
+                              _monthStates[key] ?? _MonthLoadState.unloaded;
+                          final mode = switch (state) {
+                            _MonthLoadState.loaded => _MonthRenderMode.full,
+                            _MonthLoadState.loading => _MonthRenderMode.loading,
+                            _MonthLoadState.error => _MonthRenderMode.error,
+                            _MonthLoadState.unloaded =>
+                              _MonthRenderMode.placeholder,
+                          };
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 18),
+                            child: RepaintBoundary(
+                              child: _MonthCard(
+                                month: month,
+                                storiesByDate: _storiesByDate,
+                                headers: _authHeaders(),
+                                authenticateUrl: _authenticatedUrl,
+                                onDayTap: _openDay,
+                                mode: mode,
+                              ),
+                            ),
+                          );
+                        },
+                        childCount: _months.length,
+                        addAutomaticKeepAlives: true,
+                        addRepaintBoundaries: false,
+                      ),
                     ),
                   ),
-                )
-              else if (_fetchingPages)
-                const SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.only(bottom: 24),
-                    child: Center(child: CircularProgressIndicator()),
-                  ),
-                ),
-            ],
-          ),
-        ),
+                  if (_globalError != null)
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 24, 20),
+                        child: _CalendarInlineError(
+                          message: _globalError!,
+                          onRetry: _ensureVisibleWindowLoaded,
+                        ),
+                      ),
+                    )
+                  else if (_fetchingPages)
+                    const SliverToBoxAdapter(
+                      child: Padding(
+                        padding: EdgeInsets.only(bottom: 24),
+                        child: Center(child: CircularProgressIndicator()),
+                      ),
+                    ),
+                ],
+              ),
+            ),
         if (_months.isNotEmpty)
           Positioned(
             top: 138,
@@ -512,108 +514,9 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
               },
             ),
           ),
-      ],
-    );
-  }
-}
-
-class _CalendarHero extends StatelessWidget {
-  const _CalendarHero({
-    required this.loadedStories,
-    required this.loadedMonths,
-    required this.loadingMore,
-  });
-
-  final int loadedStories;
-  final int loadedMonths;
-  final bool loadingMore;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(28),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            colorScheme.primaryContainer,
-            colorScheme.surfaceContainerHighest,
-          ],
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Memory Calendar',
-            style: Theme.of(
-              context,
-            ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w900),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Scroll or drag the right scrubber to move through time. Nearby months load their real content on demand.',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: colorScheme.onSurfaceVariant,
-              height: 1.35,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _HeroStatPill(
-                icon: Icons.calendar_month_outlined,
-                label: '$loadedMonths months in range',
-              ),
-              _HeroStatPill(
-                icon: Icons.photo_library_outlined,
-                label: '$loadedStories loaded story days',
-              ),
-              _HeroStatPill(
-                icon: loadingMore ? Icons.sync_rounded : Icons.bolt_outlined,
-                label: loadingMore ? 'Loading month window' : 'Viewport-first',
-              ),
-            ],
-          ),
         ],
-      ),
-    );
-  }
-}
-
-class _HeroStatPill extends StatelessWidget {
-  const _HeroStatPill({required this.icon, required this.label});
-
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: colorScheme.surface.withValues(alpha: 0.4),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 16, color: colorScheme.onSurface),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: Theme.of(
-              context,
-            ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
-          ),
-        ],
-      ),
+      );
+      },
     );
   }
 }
@@ -625,6 +528,7 @@ class _MonthCard extends StatelessWidget {
     required this.month,
     required this.storiesByDate,
     required this.headers,
+    required this.authenticateUrl,
     required this.onDayTap,
     required this.mode,
   });
@@ -632,6 +536,7 @@ class _MonthCard extends StatelessWidget {
   final DateTime month;
   final Map<String, StoryDayModel> storiesByDate;
   final Map<String, String> headers;
+  final String Function(String) authenticateUrl;
   final ValueChanged<DateTime> onDayTap;
   final _MonthRenderMode mode;
 
@@ -706,6 +611,7 @@ class _MonthCard extends StatelessWidget {
                   month: month,
                   storiesByDate: storiesByDate,
                   headers: headers,
+                  authenticateUrl: authenticateUrl,
                   onDayTap: onDayTap,
                 ),
               },
@@ -751,12 +657,14 @@ class _MonthDayGrid extends StatelessWidget {
     required this.month,
     required this.storiesByDate,
     required this.headers,
+    required this.authenticateUrl,
     required this.onDayTap,
   });
 
   final DateTime month;
   final Map<String, StoryDayModel> storiesByDate;
   final Map<String, String> headers;
+  final String Function(String) authenticateUrl;
   final ValueChanged<DateTime> onDayTap;
 
   @override
@@ -788,6 +696,7 @@ class _MonthDayGrid extends StatelessWidget {
           date: date,
           story: story,
           headers: headers,
+          authenticateUrl: authenticateUrl,
           onTap: () => onDayTap(date),
           showImage: true,
         );
@@ -974,6 +883,7 @@ class _DayCell extends StatelessWidget {
     required this.date,
     required this.story,
     required this.headers,
+    required this.authenticateUrl,
     required this.onTap,
     required this.showImage,
   });
@@ -981,6 +891,7 @@ class _DayCell extends StatelessWidget {
   final DateTime date;
   final StoryDayModel? story;
   final Map<String, String> headers;
+  final String Function(String) authenticateUrl;
   final VoidCallback onTap;
   final bool showImage;
 
@@ -990,7 +901,8 @@ class _DayCell extends StatelessWidget {
     final hasImage =
         showImage && story != null && story!.highlightImage.trim().isNotEmpty;
     final imageUrl = hasImage
-        ? AppConfig.imageUrlFromPath(story!.highlightImage, date: story!.date)
+        ? authenticateUrl(
+            AppConfig.imageUrlFromPath(story!.highlightImage, date: story!.date))
         : '';
 
     return Material(
@@ -1010,12 +922,15 @@ class _DayCell extends StatelessWidget {
             fit: StackFit.expand,
             children: [
               if (hasImage)
-                Image.network(
-                  imageUrl,
-                  headers: headers,
+                CachedNetworkImage(
+                  imageUrl: imageUrl,
+                  httpHeaders: headers,
                   fit: BoxFit.cover,
                   filterQuality: FilterQuality.low,
-                  errorBuilder: (_, __, ___) =>
+                  fadeInDuration: const Duration(milliseconds: 120),
+                  placeholder: (_, __) =>
+                      _DayFallback(date: date, story: story),
+                  errorWidget: (_, __, ___) =>
                       _DayFallback(date: date, story: story),
                 )
               else
@@ -1125,7 +1040,7 @@ class _CalendarSkeleton extends StatelessWidget {
           (_) => Padding(
             padding: const EdgeInsets.only(bottom: 18),
             child: Container(
-              height: _CalendarPageState._monthItemExtent - 18,
+              height: 534,
               decoration: BoxDecoration(
                 color: colorScheme.surfaceContainer,
                 borderRadius: BorderRadius.circular(28),

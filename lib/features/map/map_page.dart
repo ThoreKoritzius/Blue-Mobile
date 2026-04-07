@@ -49,11 +49,13 @@ class MapPage extends ConsumerStatefulWidget {
 class _MapPageState extends ConsumerState<MapPage>
     with TickerProviderStateMixin {
   static const double _imageLoadZoomThreshold = 3.5;
-  static const int _mapTabIndex = 4;
+  static const int _mapTabIndex = 3;
   static const int _imagePageSize = 60;
   static const Duration _viewportDebounce = Duration(milliseconds: 350);
   static const Duration _pageDelay = Duration(milliseconds: 650);
   static const double _viewportPadFactor = 0.2;
+  static const double _sidePanelWidth = 400;
+  static const double _wideBreakpoint = 840;
   static const _loadingTextKey = Key('map-loading-text');
   static const _loadedTextKey = Key('map-loaded-text');
   static const _errorTextKey = Key('map-error-text');
@@ -97,6 +99,7 @@ class _MapPageState extends ConsumerState<MapPage>
   int _dayViewDateIndex = 0;
   String? _selectedVisitPlaceId;
   String? _selectedRunId;
+  bool? _wasWideLayout;
   final DraggableScrollableController _sheetController =
       DraggableScrollableController();
 
@@ -203,7 +206,7 @@ class _MapPageState extends ConsumerState<MapPage>
               run: run,
               points: decoded,
               anchor: decoded.first,
-              color: _colorForSeed(run.id),
+              color: Colors.orangeAccent,
             ),
           );
         } catch (_) {
@@ -665,7 +668,7 @@ class _MapPageState extends ConsumerState<MapPage>
             run.summaryPolyline,
           ).map((p) => LatLng(p[0].toDouble(), p[1].toDouble())).toList();
           if (pts.length < 2) continue;
-          final color = _colorForSeed(run.id);
+          final color = Colors.orangeAccent;
           runPolylines.add(Polyline(points: pts, strokeWidth: 3, color: color));
           // Try to find the matching full RunOverlay for the sheet.
           final matchingOverlay = _runs
@@ -794,106 +797,186 @@ class _MapPageState extends ConsumerState<MapPage>
       }
     }
 
-    final hasSlider = _dayViewDates.length > 1;
 
-    return Stack(
-      children: [
-        FlutterMap(
-          mapController: _mapController,
-          options: MapOptions(
-            initialCenter: _initialCenter(),
-            initialZoom: _currentZoom,
-            onMapReady: _onMapReady,
-            onPositionChanged: (camera, _) => _handleCameraChanged(camera),
-            interactionOptions: const InteractionOptions(
-              flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
-            ),
-          ),
+    final sheetParams = (
+      dates: _dayViewDates,
+      currentIndex: _dayViewDateIndex,
+      onDateChanged: _onDaySliderChanged,
+      data: data,
+      onVisitTapped: _onBottomSheetVisitTapped,
+      onSegmentTapped: _onSegmentTapped,
+      onRunTapped: _onRunTapped,
+      onImageTapped: (TimelineImageLocation img) =>
+          _showDayImageSheet(img, _dayViewDate),
+      selectedVisitPlaceId: _selectedVisitPlaceId,
+      selectedRunId: _selectedRunId,
+      authHeaders: _authHeaders(),
+      runColors: {
+        for (final r in data?.runs ?? <TimelineRun>[])
+          r.id: Colors.orangeAccent,
+      },
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth >= _wideBreakpoint;
+
+        // Refit map bounds when crossing the layout breakpoint.
+        if (_wasWideLayout != null && _wasWideLayout != isWide) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted || !_dayViewMode) return;
+            final d = _dayViewData;
+            if (d != null) _fitDayViewBounds(d);
+          });
+        }
+        _wasWideLayout = isWide;
+
+        return Stack(
           children: [
-            TileLayer(
-              urlTemplate: tileConfig.urlTemplate,
-              subdomains: tileConfig.subdomains,
-              maxZoom: tileConfig.maxZoom.toDouble(),
-              userAgentPackageName: 'blue_mobile',
+            // Map: leaves room for side panel on wide layout
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              right: isWide ? _sidePanelWidth : 0,
+              child: FlutterMap(
+                mapController: _mapController,
+                options: MapOptions(
+                  initialCenter: _initialCenter(),
+                  initialZoom: _currentZoom,
+                  onMapReady: _onMapReady,
+                  onPositionChanged: (camera, _) =>
+                      _handleCameraChanged(camera),
+                  interactionOptions: const InteractionOptions(
+                    flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+                  ),
+                ),
+                children: [
+                  TileLayer(
+                    urlTemplate: tileConfig.urlTemplate,
+                    subdomains: tileConfig.subdomains,
+                    maxZoom: tileConfig.maxZoom.toDouble(),
+                    userAgentPackageName: 'blue_mobile',
+                  ),
+                  if (walkPoints.length >= 2)
+                    PolylineLayer(
+                      polylines: [
+                        Polyline(
+                          points: walkPoints,
+                          strokeWidth: 4,
+                          color: walkColor,
+                        ),
+                      ],
+                    ),
+                  if (runPolylines.isNotEmpty)
+                    PolylineLayer(polylines: runPolylines),
+                  if (runMarkers.isNotEmpty) MarkerLayer(markers: runMarkers),
+                  if (imageMarkers.isNotEmpty)
+                    MarkerLayer(markers: imageMarkers),
+                  if (visitMarkers.isNotEmpty)
+                    MarkerLayer(markers: visitMarkers),
+                ],
+              ),
             ),
-            if (walkPoints.length >= 2)
-              PolylineLayer(
-                polylines: [
-                  Polyline(
-                    points: walkPoints,
-                    strokeWidth: 4,
-                    color: walkColor,
+            // Top bar: back button
+            Positioned(
+              top: 16,
+              left: 16,
+              right: isWide ? _sidePanelWidth + 16 : 84,
+              child: Row(
+                children: [
+                  Material(
+                    color: const Color(0xD9222222),
+                    borderRadius: BorderRadius.circular(20),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(20),
+                      onTap: _exitDayView,
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.arrow_back,
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                            SizedBox(width: 6),
+                            Text(
+                              'Overview',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
                 ],
               ),
-            if (runPolylines.isNotEmpty) PolylineLayer(polylines: runPolylines),
-            if (runMarkers.isNotEmpty) MarkerLayer(markers: runMarkers),
-            if (imageMarkers.isNotEmpty) MarkerLayer(markers: imageMarkers),
-            if (visitMarkers.isNotEmpty) MarkerLayer(markers: visitMarkers),
-          ],
-        ),
-        // Top bar: back button + date label + loading/error
-        Positioned(
-          top: 16,
-          left: 16,
-          right: 84,
-          child: Row(
-            children: [
-              Material(
-                color: const Color(0xD9222222),
-                borderRadius: BorderRadius.circular(20),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(20),
-                  onTap: _exitDayView,
-                  child: const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.arrow_back, color: Colors.white, size: 18),
-                        SizedBox(width: 6),
-                        Text('Overview', style: TextStyle(color: Colors.white)),
-                      ],
-                    ),
-                  ),
+            ),
+            // Timeline: bottom sheet on narrow, side panel on wide
+            if (!isWide && _dayViewDates.isNotEmpty)
+              Positioned.fill(
+                child: _DayBottomSheet(
+                  dates: sheetParams.dates,
+                  currentIndex: sheetParams.currentIndex,
+                  onDateChanged: sheetParams.onDateChanged,
+                  data: sheetParams.data,
+                  onVisitTapped: sheetParams.onVisitTapped,
+                  onSegmentTapped: sheetParams.onSegmentTapped,
+                  onRunTapped: sheetParams.onRunTapped,
+                  onImageTapped: sheetParams.onImageTapped,
+                  selectedVisitPlaceId: sheetParams.selectedVisitPlaceId,
+                  selectedRunId: sheetParams.selectedRunId,
+                  sheetController: _sheetController,
+                  authHeaders: sheetParams.authHeaders,
+                  runColors: sheetParams.runColors,
+                  onAddVisit: _showAddVisitDialog,
+                  onDeleteSegment: _deleteManualVisit,
+                  onDateTapped: _onDateTapped,
                 ),
               ),
-            ],
-          ),
-        ),
-        // Bottom: date slider + visits sheet
-        if (hasSlider)
-          Positioned.fill(
-            child: _DayBottomSheet(
-              dates: _dayViewDates,
-              currentIndex: _dayViewDateIndex,
-              onDateChanged: _onDaySliderChanged,
-              data: data,
-              onVisitTapped: _onBottomSheetVisitTapped,
-              onSegmentTapped: _onSegmentTapped,
-              onRunTapped: _onRunTapped,
-              onImageTapped: (img) => _showDayImageSheet(img, _dayViewDate),
-              selectedVisitPlaceId: _selectedVisitPlaceId,
-              selectedRunId: _selectedRunId,
-              sheetController: _sheetController,
-              authHeaders: _authHeaders(),
-              runColors: {
-                for (final r in data?.runs ?? <TimelineRun>[])
-                  r.id: _colorForSeed(r.id),
-              },
+            if (isWide && _dayViewDates.isNotEmpty)
+              Positioned(
+                right: 0,
+                top: 0,
+                bottom: 0,
+                width: _sidePanelWidth,
+                child: _DayBottomSheet(
+                  isWideLayout: true,
+                  dates: sheetParams.dates,
+                  currentIndex: sheetParams.currentIndex,
+                  onDateChanged: sheetParams.onDateChanged,
+                  data: sheetParams.data,
+                  onVisitTapped: sheetParams.onVisitTapped,
+                  onSegmentTapped: sheetParams.onSegmentTapped,
+                  onRunTapped: sheetParams.onRunTapped,
+                  onImageTapped: sheetParams.onImageTapped,
+                  selectedVisitPlaceId: sheetParams.selectedVisitPlaceId,
+                  selectedRunId: sheetParams.selectedRunId,
+                  authHeaders: sheetParams.authHeaders,
+                  runColors: sheetParams.runColors,
+                  onAddVisit: _showAddVisitDialog,
+                  onDeleteSegment: _deleteManualVisit,
+                  onDateTapped: _onDateTapped,
+                ),
+              ),
+            // Controls FAB
+            Positioned(
+              right: isWide ? _sidePanelWidth + 16 : 16,
+              top: 16,
+              child: FloatingActionButton.small(
+                heroTag: 'map_controls',
+                onPressed: _showControlsSheet,
+                child: const Icon(Icons.tune),
+              ),
             ),
-          ),
-        // Controls FAB
-        Positioned(
-          right: 16,
-          top: 16,
-          child: FloatingActionButton.small(
-            heroTag: 'map_controls',
-            onPressed: _showControlsSheet,
-            child: const Icon(Icons.tune),
-          ),
-        ),
-      ],
+          ],
+        );
+      },
     );
   }
 
@@ -1380,12 +1463,23 @@ class _MapPageState extends ConsumerState<MapPage>
     _mapController.fitCamera(
       CameraFit.bounds(
         bounds: bounds,
-        padding: EdgeInsets.fromLTRB(30, 30, 30, 30 + _sheetBottomPadding()),
+        padding: EdgeInsets.fromLTRB(
+          30,
+          30,
+          30 + _panelRightPadding(),
+          30 + _sheetBottomPadding(),
+        ),
       ),
     );
   }
 
+  bool get _useWideLayout =>
+      MediaQuery.of(context).size.width >= _wideBreakpoint;
+
+  double _panelRightPadding() => _useWideLayout ? _sidePanelWidth : 0;
+
   double _sheetBottomPadding() {
+    if (_useWideLayout) return 0;
     if (!_sheetController.isAttached) return 120;
     final extent = _sheetController.size;
     final screenHeight = MediaQuery.of(context).size.height;
@@ -1404,6 +1498,22 @@ class _MapPageState extends ConsumerState<MapPage>
     _loadDayView(_dayViewDates[idx]);
   }
 
+  Future<void> _onDateTapped() async {
+    final current = DateTime.tryParse(_dayViewDate) ?? DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: current,
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now(),
+    );
+    if (picked == null || !mounted) return;
+    final dateStr =
+        '${picked.year.toString().padLeft(4, '0')}-'
+        '${picked.month.toString().padLeft(2, '0')}-'
+        '${picked.day.toString().padLeft(2, '0')}';
+    _enterDayView(dateStr);
+  }
+
   /// Fly to a single point, keeping it visible above the sheet.
   void _flyToPoint(LatLng target) {
     // Create a tiny bounds around the point so fitCamera can handle padding.
@@ -1416,7 +1526,12 @@ class _MapPageState extends ConsumerState<MapPage>
       CameraFit.bounds(
         bounds: bounds,
         maxZoom: 16,
-        padding: EdgeInsets.fromLTRB(40, 40, 40, 20 + _sheetBottomPadding()),
+        padding: EdgeInsets.fromLTRB(
+          40,
+          40,
+          40 + _panelRightPadding(),
+          20 + _sheetBottomPadding(),
+        ),
       ),
     );
   }
@@ -1426,7 +1541,7 @@ class _MapPageState extends ConsumerState<MapPage>
       _selectedVisitPlaceId = visit.placeId;
       _selectedRunId = null;
     });
-    if (_sheetController.isAttached) {
+    if (!_useWideLayout && _sheetController.isAttached) {
       _sheetController.animateTo(
         0.6,
         duration: const Duration(milliseconds: 300),
@@ -1477,7 +1592,12 @@ class _MapPageState extends ConsumerState<MapPage>
       _mapController.fitCamera(
         CameraFit.bounds(
           bounds: bounds,
-          padding: EdgeInsets.fromLTRB(30, 30, 30, 30 + _sheetBottomPadding()),
+          padding: EdgeInsets.fromLTRB(
+            30,
+            30,
+            30 + _panelRightPadding(),
+            30 + _sheetBottomPadding(),
+          ),
         ),
       );
     } catch (_) {}
@@ -1509,6 +1629,294 @@ class _MapPageState extends ConsumerState<MapPage>
       if (segment.startLat != null && segment.startLon != null) {
         _flyToPoint(LatLng(segment.startLat!, segment.startLon!));
       }
+    }
+  }
+
+  static const _activityOptions = <(String, String, IconData)>[
+    ('FLYING', 'Flight', Icons.flight_outlined),
+    ('IN_VEHICLE', 'Driving', Icons.directions_car_outlined),
+    ('IN_TRAIN', 'Train', Icons.train_outlined),
+    ('IN_BUS', 'Bus', Icons.directions_bus_outlined),
+    ('IN_FERRY', 'Ferry', Icons.directions_boat_outlined),
+    ('ON_BICYCLE', 'Cycling', Icons.directions_bike_outlined),
+    ('WALKING', 'Walking', Icons.directions_walk_outlined),
+    ('RUNNING', 'Running', Icons.directions_run_outlined),
+    ('MOTORCYCLING', 'Motorcycle', Icons.two_wheeler_outlined),
+    ('IN_TRAM', 'Tram', Icons.tram_outlined),
+    ('IN_SUBWAY', 'Subway', Icons.subway_outlined),
+    ('HIKING', 'Hiking', Icons.hiking_outlined),
+  ];
+
+  Future<void> _showAddVisitDialog() async {
+    final placeController = TextEditingController();
+    final startPlaceController = TextEditingController();
+    final endPlaceController = TextEditingController();
+    final date = _dayViewDate;
+    var startTime = TimeOfDay.now();
+    var endTime = TimeOfDay(
+      hour: (startTime.hour + 1) % 24,
+      minute: startTime.minute,
+    );
+    var isTravel = false;
+    var activityType = _activityOptions.first;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final theme = Theme.of(context);
+            final colorScheme = theme.colorScheme;
+
+            String formatTod(TimeOfDay t) =>
+                '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
+              ),
+              titlePadding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+              title: Row(
+                children: [
+                  Icon(
+                    isTravel ? Icons.route : Icons.add_location_alt,
+                    size: 22,
+                    color: colorScheme.primary,
+                  ),
+                  const SizedBox(width: 10),
+                  Text(isTravel ? 'Add Travel' : 'Add Visit'),
+                ],
+              ),
+              contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 8),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      date,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    // Visit / Travel toggle
+                    SegmentedButton<bool>(
+                      segments: const [
+                        ButtonSegment(value: false, label: Text('Visit')),
+                        ButtonSegment(value: true, label: Text('Travel')),
+                      ],
+                      selected: {isTravel},
+                      onSelectionChanged: (s) =>
+                          setDialogState(() => isTravel = s.first),
+                      showSelectedIcon: false,
+                    ),
+                    const SizedBox(height: 16),
+                    if (!isTravel)
+                      TextField(
+                        controller: placeController,
+                        decoration: const InputDecoration(
+                          labelText: 'Place name',
+                          hintText: 'e.g. Eiffel Tower, Paris',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.place),
+                        ),
+                        textCapitalization: TextCapitalization.words,
+                        autofocus: true,
+                      ),
+                    if (isTravel) ...[
+                      // Activity type picker
+                      DropdownButtonFormField<(String, String, IconData)>(
+                        value: activityType,
+                        decoration: const InputDecoration(
+                          labelText: 'Travel type',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: _activityOptions
+                            .map(
+                              (opt) => DropdownMenuItem(
+                                value: opt,
+                                child: Row(
+                                  children: [
+                                    Icon(opt.$3, size: 20),
+                                    const SizedBox(width: 10),
+                                    Text(opt.$2),
+                                  ],
+                                ),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (v) {
+                          if (v != null) setDialogState(() => activityType = v);
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: startPlaceController,
+                        decoration: const InputDecoration(
+                          labelText: 'From',
+                          hintText: 'e.g. Berlin Airport',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.trip_origin),
+                        ),
+                        textCapitalization: TextCapitalization.words,
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: endPlaceController,
+                        decoration: const InputDecoration(
+                          labelText: 'To',
+                          hintText: 'e.g. Paris CDG',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.flag_outlined),
+                        ),
+                        textCapitalization: TextCapitalization.words,
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    // Time pickers
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            icon: const Icon(Icons.schedule, size: 18),
+                            label: Text(formatTod(startTime)),
+                            onPressed: () async {
+                              final picked = await showTimePicker(
+                                context: context,
+                                initialTime: startTime,
+                              );
+                              if (picked != null) {
+                                setDialogState(() => startTime = picked);
+                              }
+                            },
+                          ),
+                        ),
+                        const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 8),
+                          child: Icon(
+                            Icons.arrow_forward,
+                            size: 16,
+                            color: Colors.grey,
+                          ),
+                        ),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            icon: const Icon(Icons.schedule, size: 18),
+                            label: Text(formatTod(endTime)),
+                            onPressed: () async {
+                              final picked = await showTimePicker(
+                                context: context,
+                                initialTime: endTime,
+                              );
+                              if (picked != null) {
+                                setDialogState(() => endTime = picked);
+                              }
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    final startIso =
+        '${date}T${startTime.hour.toString().padLeft(2, '0')}'
+        ':${startTime.minute.toString().padLeft(2, '0')}:00';
+    final endIso =
+        '${date}T${endTime.hour.toString().padLeft(2, '0')}'
+        ':${endTime.minute.toString().padLeft(2, '0')}:00';
+
+    try {
+      if (isTravel) {
+        final from = startPlaceController.text.trim();
+        final to = endPlaceController.text.trim();
+        if (from.isEmpty || to.isEmpty) return;
+        await ref
+            .read(mapRepositoryProvider)
+            .addManualActivity(
+              date: date,
+              startTime: startIso,
+              endTime: endIso,
+              activityType: activityType.$1,
+              placeNameStart: from,
+              placeNameEnd: to,
+            );
+      } else {
+        final placeName = placeController.text.trim();
+        if (placeName.isEmpty) return;
+        await ref
+            .read(mapRepositoryProvider)
+            .addManualVisit(
+              date: date,
+              startTime: startIso,
+              endTime: endIso,
+              placeName: placeName,
+            );
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(isTravel ? 'Travel added' : 'Visit added')),
+      );
+      _loadDayView(date);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed: $error')));
+    }
+  }
+
+  Future<void> _deleteManualVisit(int segmentId) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete entry?'),
+        content: const Text('This will remove the manually-added location.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      await ref.read(mapRepositoryProvider).deleteManualVisit(segmentId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Entry deleted')));
+      _loadDayView(_dayViewDate);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed: $error')));
     }
   }
 
@@ -1552,15 +1960,6 @@ class _MapPageState extends ConsumerState<MapPage>
         (a.southEast.latitude - b.southEast.latitude).abs() < 0.2 &&
         (a.southEast.longitude - b.southEast.longitude).abs() < 0.2;
   }
-
-  Color _colorForSeed(String seed) {
-    final hash = seed.hashCode;
-    final hue = (hash % 360).abs().toDouble();
-    final random = math.Random(hash);
-    final saturation = 0.55 + (random.nextDouble() * 0.25);
-    final value = 0.72 + (random.nextDouble() * 0.18);
-    return HSVColor.fromAHSV(1, hue, saturation, value).toColor();
-  }
 }
 
 class _DayBottomSheet extends StatelessWidget {
@@ -1571,13 +1970,17 @@ class _DayBottomSheet extends StatelessWidget {
     required this.data,
     required this.onVisitTapped,
     required this.onSegmentTapped,
-    required this.sheetController,
     required this.authHeaders,
     required this.runColors,
     required this.onRunTapped,
     required this.onImageTapped,
+    this.sheetController,
     this.selectedVisitPlaceId,
     this.selectedRunId,
+    this.isWideLayout = false,
+    this.onAddVisit,
+    this.onDeleteSegment,
+    this.onDateTapped,
   });
 
   final List<String> dates;
@@ -1590,9 +1993,13 @@ class _DayBottomSheet extends StatelessWidget {
   final void Function(TimelineImageLocation img) onImageTapped;
   final String? selectedVisitPlaceId;
   final String? selectedRunId;
-  final DraggableScrollableController sheetController;
+  final DraggableScrollableController? sheetController;
   final Map<String, String> authHeaders;
   final Map<String, Color> runColors;
+  final bool isWideLayout;
+  final VoidCallback? onAddVisit;
+  final void Function(int segmentId)? onDeleteSegment;
+  final VoidCallback? onDateTapped;
 
   static const double _collapsedHeight = 120;
 
@@ -1670,6 +2077,7 @@ class _DayBottomSheet extends StatelessWidget {
           segments.removeLast();
           segments.add(
             TimelineSegment(
+              id: prev.id,
               segmentType: prev.segmentType,
               startTime: prev.startTime,
               endTime: seg.endTime ?? prev.endTime,
@@ -1679,6 +2087,7 @@ class _DayBottomSheet extends StatelessWidget {
               placeAddress: prev.placeAddress ?? seg.placeAddress,
               placeLat: prev.placeLat ?? seg.placeLat,
               placeLon: prev.placeLon ?? seg.placeLon,
+              source: prev.source ?? seg.source,
             ),
           );
           continue;
@@ -1729,6 +2138,33 @@ class _DayBottomSheet extends StatelessWidget {
 
     final hasTimeline = entries.isNotEmpty || unassignedImages.isNotEmpty;
 
+    final timelineChildren = _buildTimelineContent(
+      context,
+      entries: entries,
+      imagesByEntryIndex: imagesByEntryIndex,
+      unassignedImages: unassignedImages,
+      runById: runById,
+      hasTimeline: hasTimeline,
+    );
+
+    if (isWideLayout) {
+      return Container(
+        decoration: const BoxDecoration(
+          color: Color(0xFF222222),
+          borderRadius: BorderRadius.horizontal(left: Radius.circular(16)),
+        ),
+        child: ListView(
+          padding: EdgeInsets.zero,
+          children: [
+            const SizedBox(height: 12),
+            _buildSlider(context),
+            ...timelineChildren,
+            SizedBox(height: MediaQuery.of(context).padding.bottom + 16),
+          ],
+        ),
+      );
+    }
+
     return DraggableScrollableSheet(
       controller: sheetController,
       initialChildSize: minFraction,
@@ -1758,69 +2194,97 @@ class _DayBottomSheet extends StatelessWidget {
                   ),
                 ),
               ),
-              // Date slider
               _buildSlider(context),
-              // Timeline
-              if (hasTimeline)
-                const Divider(
-                  color: Colors.white12,
-                  height: 1,
-                  indent: 16,
-                  endIndent: 16,
-                ),
-              if (entries.isNotEmpty)
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
-                  child: Text(
-                    'TIMELINE',
-                    style: TextStyle(
-                      color: Colors.white54,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 1.2,
-                    ),
-                  ),
-                ),
-              for (var i = 0; i < entries.length; i++) ...[
-                if (entries[i].seg != null)
-                  _buildSegmentTile(context, entries[i].seg!, runById)
-                else
-                  _buildRunEntryTile(context, entries[i].run!),
-                if (imagesByEntryIndex.containsKey(i))
-                  _buildImageStrip(context, imagesByEntryIndex[i]!),
-              ],
-              // Unassigned photos at the end
-              if (unassignedImages.isNotEmpty) ...[
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 14, 16, 6),
-                  child: Text(
-                    'PHOTOS',
-                    style: TextStyle(
-                      color: Colors.white54,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 1.2,
-                    ),
-                  ),
-                ),
-                _buildImageStrip(context, unassignedImages),
-              ],
-              if (!hasTimeline)
-                const Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Center(
-                    child: Text(
-                      'No location details for this day',
-                      style: TextStyle(color: Colors.white38, fontSize: 13),
-                    ),
-                  ),
-                ),
+              ...timelineChildren,
               SizedBox(height: MediaQuery.of(context).padding.bottom + 16),
             ],
           ),
         );
       },
     );
+  }
+
+  List<Widget> _buildTimelineContent(
+    BuildContext context, {
+    required List<({TimelineSegment? seg, TimelineRun? run, DateTime time})>
+    entries,
+    required Map<int, List<TimelineImageLocation>> imagesByEntryIndex,
+    required List<TimelineImageLocation> unassignedImages,
+    required Map<String, TimelineRun> runById,
+    required bool hasTimeline,
+  }) {
+    return [
+      if (hasTimeline)
+        const Divider(
+          color: Colors.white12,
+          height: 1,
+          indent: 16,
+          endIndent: 16,
+        ),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+        child: Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'TIMELINE',
+                style: TextStyle(
+                  color: Colors.white54,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 1.2,
+                ),
+              ),
+            ),
+            if (onAddVisit != null)
+              SizedBox(
+                width: 28,
+                height: 28,
+                child: IconButton(
+                  padding: EdgeInsets.zero,
+                  iconSize: 18,
+                  icon: const Icon(Icons.add, color: Colors.white54),
+                  tooltip: 'Add location',
+                  onPressed: onAddVisit,
+                ),
+              ),
+          ],
+        ),
+      ),
+      for (var i = 0; i < entries.length; i++) ...[
+        if (entries[i].seg != null)
+          _buildSegmentTile(context, entries[i].seg!, runById)
+        else
+          _buildRunEntryTile(context, entries[i].run!),
+        if (imagesByEntryIndex.containsKey(i))
+          _buildImageStrip(context, imagesByEntryIndex[i]!),
+      ],
+      if (unassignedImages.isNotEmpty) ...[
+        const Padding(
+          padding: EdgeInsets.fromLTRB(16, 14, 16, 6),
+          child: Text(
+            'PHOTOS',
+            style: TextStyle(
+              color: Colors.white54,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1.2,
+            ),
+          ),
+        ),
+        _buildImageStrip(context, unassignedImages),
+      ],
+      if (!hasTimeline)
+        const Padding(
+          padding: EdgeInsets.all(24),
+          child: Center(
+            child: Text(
+              'No location details for this day',
+              style: TextStyle(color: Colors.white38, fontSize: 13),
+            ),
+          ),
+        ),
+    ];
   }
 
   double _coordDist(double lat1, double lon1, double lat2, double lon2) {
@@ -1855,11 +2319,16 @@ class _DayBottomSheet extends StatelessWidget {
                 dates.first,
                 style: const TextStyle(color: Colors.white70, fontSize: 11),
               ),
-              Text(
-                date,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
+              GestureDetector(
+                onTap: onDateTapped,
+                child: Text(
+                  date,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                    decoration: TextDecoration.underline,
+                    decorationColor: Colors.white38,
+                  ),
                 ),
               ),
               const Text(
@@ -1868,15 +2337,16 @@ class _DayBottomSheet extends StatelessWidget {
               ),
             ],
           ),
-          Slider(
-            value: currentIndex.toDouble(),
-            min: 0,
-            max: (dates.length - 1).toDouble(),
-            divisions: dates.length - 1,
-            onChanged: onDateChanged,
-            activeColor: Colors.white,
-            inactiveColor: Colors.white30,
-          ),
+          if (dates.length > 1)
+            Slider(
+              value: currentIndex.toDouble(),
+              min: 0,
+              max: (dates.length - 1).toDouble(),
+              divisions: dates.length - 1,
+              onChanged: onDateChanged,
+              activeColor: Colors.white,
+              inactiveColor: Colors.white30,
+            ),
         ],
       ),
     );
@@ -2003,7 +2473,19 @@ class _DayBottomSheet extends StatelessWidget {
                 ],
               ),
             ),
-            if (hasLocation)
+            if (seg.isManual && seg.id != null && onDeleteSegment != null)
+              SizedBox(
+                width: 28,
+                height: 28,
+                child: IconButton(
+                  padding: EdgeInsets.zero,
+                  iconSize: 16,
+                  icon: const Icon(Icons.close, color: Colors.white30),
+                  tooltip: 'Delete',
+                  onPressed: () => onDeleteSegment!(seg.id!),
+                ),
+              )
+            else if (hasLocation)
               Icon(
                 Icons.chevron_right,
                 size: 16,
@@ -2234,7 +2716,19 @@ class _DayBottomSheet extends StatelessWidget {
                 ],
               ),
             ),
-            if (hasLocation)
+            if (seg.isManual && seg.id != null && onDeleteSegment != null)
+              SizedBox(
+                width: 28,
+                height: 28,
+                child: IconButton(
+                  padding: EdgeInsets.zero,
+                  iconSize: 16,
+                  icon: const Icon(Icons.close, color: Colors.white30),
+                  tooltip: 'Delete',
+                  onPressed: () => onDeleteSegment!(seg.id!),
+                ),
+              )
+            else if (hasLocation)
               const Icon(
                 Icons.chevron_right,
                 size: 16,

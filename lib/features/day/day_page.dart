@@ -1,13 +1,15 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/services.dart';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:palette_generator/palette_generator.dart';
-import 'package:table_calendar/table_calendar.dart';
 
 import 'package:flutter_map/flutter_map.dart';
 import 'package:google_polyline_algorithm/google_polyline_algorithm.dart';
@@ -591,338 +593,11 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
   }
 
   Future<DateTime?> _showCalendarDialog(DateTime initialDate) {
-    var focusedDay = DateUtils.dateOnly(initialDate);
-    var selectedDay = DateUtils.dateOnly(initialDate);
-    final now = DateUtils.dateOnly(DateTime.now());
-    final years = List<int>.generate(
-      now.year - 2005 + 2,
-      (index) => 2005 + index,
-    );
-    const monthNames = <String>[
-      'January',
-      'February',
-      'March',
-      'April',
-      'May',
-      'June',
-      'July',
-      'August',
-      'September',
-      'October',
-      'November',
-      'December',
-    ];
-
-    return showModalBottomSheet<DateTime>(
+    return showDatePicker(
       context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) {
-        final theme = Theme.of(context);
-        final colorScheme = theme.colorScheme;
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return SafeArea(
-              top: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-                child: Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(30),
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        colorScheme.surfaceContainerHighest,
-                        colorScheme.surfaceContainer,
-                      ],
-                    ),
-                    border: Border.all(
-                      color: colorScheme.outlineVariant.withValues(alpha: 0.38),
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.22),
-                        blurRadius: 36,
-                        offset: const Offset(0, 18),
-                      ),
-                    ],
-                  ),
-                  padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Jump to date',
-                                  style: theme.textTheme.titleLarge?.copyWith(
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  DateFormat(
-                                    'EEEE, d MMMM y',
-                                  ).format(selectedDay),
-                                  style: theme.textTheme.bodyMedium?.copyWith(
-                                    color: colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          IconButton(
-                            onPressed: () => Navigator.of(context).pop(),
-                            icon: const Icon(Icons.close_rounded),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 14),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: FilledButton.tonalIcon(
-                              onPressed: () {
-                                setDialogState(() {
-                                  selectedDay = now;
-                                  focusedDay = now;
-                                });
-                              },
-                              icon: const Icon(Icons.today_rounded),
-                              label: const Text('Today'),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: FilledButton.tonalIcon(
-                              onPressed: () {
-                                final target = DateUtils.dateOnly(
-                                  selectedDay.subtract(const Duration(days: 1)),
-                                );
-                                setDialogState(() {
-                                  selectedDay = target;
-                                  focusedDay = target;
-                                });
-                              },
-                              icon: const Icon(Icons.chevron_left_rounded),
-                              label: const Text('Prev'),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: FilledButton.tonalIcon(
-                              onPressed: selectedDay.isBefore(now)
-                                  ? () {
-                                      final target = DateUtils.dateOnly(
-                                        selectedDay.add(
-                                          const Duration(days: 1),
-                                        ),
-                                      );
-                                      setDialogState(() {
-                                        final clamped = target.isAfter(now)
-                                            ? now
-                                            : target;
-                                        selectedDay = clamped;
-                                        focusedDay = clamped;
-                                      });
-                                    }
-                                  : null,
-                              icon: const Icon(Icons.chevron_right_rounded),
-                              label: const Text('Next'),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 14),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: DropdownButtonFormField<int>(
-                              value: focusedDay.month,
-                              decoration: const InputDecoration(
-                                labelText: 'Month',
-                              ),
-                              items: List.generate(
-                                12,
-                                (index) => DropdownMenuItem<int>(
-                                  value: index + 1,
-                                  child: Text(monthNames[index]),
-                                ),
-                              ),
-                              onChanged: (value) {
-                                if (value == null) return;
-                                final daysInMonth = DateUtils.getDaysInMonth(
-                                  focusedDay.year,
-                                  value,
-                                );
-                                final adjusted = DateTime(
-                                  focusedDay.year,
-                                  value,
-                                  selectedDay.day.clamp(1, daysInMonth),
-                                );
-                                setDialogState(() {
-                                  final normalized = DateUtils.dateOnly(
-                                    adjusted,
-                                  );
-                                  final clamped = normalized.isAfter(now)
-                                      ? now
-                                      : normalized;
-                                  focusedDay = clamped;
-                                  selectedDay = clamped;
-                                });
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: DropdownButtonFormField<int>(
-                              value: focusedDay.year,
-                              decoration: const InputDecoration(
-                                labelText: 'Year',
-                              ),
-                              items: years
-                                  .map(
-                                    (year) => DropdownMenuItem<int>(
-                                      value: year,
-                                      child: Text('$year'),
-                                    ),
-                                  )
-                                  .toList(),
-                              onChanged: (value) {
-                                if (value == null) return;
-                                final daysInMonth = DateUtils.getDaysInMonth(
-                                  value,
-                                  focusedDay.month,
-                                );
-                                final adjusted = DateTime(
-                                  value,
-                                  focusedDay.month,
-                                  selectedDay.day.clamp(1, daysInMonth),
-                                );
-                                setDialogState(() {
-                                  final normalized = DateUtils.dateOnly(
-                                    adjusted,
-                                  );
-                                  final clamped = normalized.isAfter(now)
-                                      ? now
-                                      : normalized;
-                                  focusedDay = clamped;
-                                  selectedDay = clamped;
-                                });
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 14),
-                      Container(
-                        decoration: BoxDecoration(
-                          color: colorScheme.surface,
-                          borderRadius: BorderRadius.circular(24),
-                        ),
-                        padding: const EdgeInsets.fromLTRB(6, 8, 6, 6),
-                        child: TableCalendar<void>(
-                          firstDay: DateTime(2005),
-                          lastDay: now,
-                          focusedDay: focusedDay,
-                          currentDay: now,
-                          selectedDayPredicate: (day) =>
-                              isSameDay(day, selectedDay),
-                          availableCalendarFormats: const {
-                            CalendarFormat.month: 'Month',
-                          },
-                          calendarFormat: CalendarFormat.month,
-                          headerVisible: false,
-                          daysOfWeekHeight: 28,
-                          rowHeight: 44,
-                          calendarStyle: CalendarStyle(
-                            todayDecoration: BoxDecoration(
-                              color: colorScheme.secondaryContainer,
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            todayTextStyle: TextStyle(
-                              color: colorScheme.onSecondaryContainer,
-                              fontWeight: FontWeight.w800,
-                            ),
-                            selectedDecoration: BoxDecoration(
-                              color: colorScheme.primary,
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            selectedTextStyle: TextStyle(
-                              color: colorScheme.onPrimary,
-                              fontWeight: FontWeight.w900,
-                            ),
-                            weekendTextStyle: TextStyle(
-                              color: colorScheme.onSurface,
-                              fontWeight: FontWeight.w700,
-                            ),
-                            outsideTextStyle: TextStyle(
-                              color: colorScheme.onSurfaceVariant.withValues(
-                                alpha: 0.52,
-                              ),
-                            ),
-                            defaultTextStyle: TextStyle(
-                              color: colorScheme.onSurface,
-                              fontWeight: FontWeight.w700,
-                            ),
-                            cellMargin: const EdgeInsets.all(3),
-                          ),
-                          daysOfWeekStyle: DaysOfWeekStyle(
-                            weekdayStyle: TextStyle(
-                              color: colorScheme.onSurfaceVariant,
-                              fontWeight: FontWeight.w700,
-                            ),
-                            weekendStyle: TextStyle(
-                              color: colorScheme.onSurfaceVariant,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          onDaySelected: (selected, focused) {
-                            setDialogState(() {
-                              selectedDay = DateUtils.dateOnly(selected);
-                              focusedDay = DateUtils.dateOnly(focused);
-                            });
-                          },
-                          onPageChanged: (focused) {
-                            setDialogState(() {
-                              focusedDay = DateUtils.dateOnly(focused);
-                            });
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton(
-                          onPressed: () =>
-                              Navigator.of(context).pop(selectedDay),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: colorScheme.primary,
-                            foregroundColor: colorScheme.onPrimary,
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(18),
-                            ),
-                          ),
-                          child: Text(
-                            'Open ${DateFormat('d MMMM y').format(selectedDay)}',
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      },
+      initialDate: DateUtils.dateOnly(initialDate),
+      firstDate: DateTime(2005),
+      lastDate: DateTime.now(),
     );
   }
 
@@ -1615,182 +1290,354 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     ].where((part) => part.isNotEmpty).join(', ');
     final now = DateUtils.dateOnly(DateTime.now());
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final isWide = screenWidth >= 700;
 
-    return GestureDetector(
-      onTap: _dismissKeyboard,
-      onHorizontalDragEnd: (details) {
-        if (_dirty) return; // don't swipe away while editing
-        final velocity = details.primaryVelocity ?? 0;
-        if (velocity < -220) {
-          _shiftDay(1);
-        } else if (velocity > 220) {
-          _shiftDay(-1);
+    return Focus(
+      autofocus: true,
+      onKeyEvent: (node, event) {
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        final primary = FocusManager.instance.primaryFocus;
+        if (primary != null && primary != node) {
+          return KeyEventResult.ignored;
         }
+        if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+          _shiftDay(-1);
+          return KeyEventResult.handled;
+        } else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+          _shiftDay(1);
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
       },
-      child: Stack(
-        children: [
-          RefreshIndicator(
-            onRefresh: () => _loadDate(date),
-            child: ListView(
-              controller: _scrollController,
-              physics: const AlwaysScrollableScrollPhysics(),
-              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-              children: [
-                _buildHeroCard(
-                  context,
-                  date: date,
-                  placeLine: placeLine,
-                  draft: draft,
-                  canGoForward: !date.isAfter(
-                    now.subtract(const Duration(days: 1)),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _description,
-                  maxLines: 11,
-                  onTapOutside: (_) => _dismissKeyboard(),
-                  decoration: const InputDecoration(
-                    alignLabelWithHint: true,
-                    hintText: 'Diary text...',
-                  ),
-                ),
-                if (_timelineDay != null && _timelineDay!.hasData) ...[
-                  const SizedBox(height: 12),
-                  _buildTimelineMapCard(context),
-                ],
-                if (_dailyActivity != null) ...[
-                  const SizedBox(height: 12),
-                  SectionCard(
-                    title: 'Activity',
-                    padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
-                    child: _buildActivityBar(context),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                SectionCard(
-                  title: 'People',
-                  action: IconButton.filledTonal(
-                    onPressed: _showAddPersonSheet,
-                    icon: const Icon(Icons.add_rounded),
-                    tooltip: 'Add person',
-                    style: IconButton.styleFrom(
-                      backgroundColor: const Color(0xFFE8F0FF),
-                      foregroundColor: const Color(0xFF1D4F91),
-                    ),
-                  ),
-                  padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
-                  child: _buildPeopleEditor(context, model.people),
-                ),
-                const SizedBox(height: 12),
-                SectionCard(
-                  title: 'Tags',
-                  action: IconButton.filledTonal(
-                    onPressed: _showAddTagDialog,
-                    icon: const Icon(Icons.add_rounded),
-                    tooltip: 'Add tag',
-                    style: IconButton.styleFrom(
-                      backgroundColor: const Color(0xFFDCEBFF),
-                      foregroundColor: const Color(0xFF184A93),
-                    ),
-                  ),
-                  padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
-                  child: _buildTagsContent(model.tags),
-                ),
-                const SizedBox(height: 12),
-                SectionCard(
-                  title: 'Gallery',
-                  padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (_heroPickerEnabled) ...[
-                        Text(
-                          'Tap a photo to set it as cover.',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
-                              ),
+      child: GestureDetector(
+        onTap: _dismissKeyboard,
+        onHorizontalDragEnd: (details) {
+          if (_dirty) return; // don't swipe away while editing
+          final velocity = details.primaryVelocity ?? 0;
+          if (velocity < -220) {
+            _shiftDay(1);
+          } else if (velocity > 220) {
+            _shiftDay(-1);
+          }
+        },
+        child: Stack(
+          children: [
+            RefreshIndicator(
+              onRefresh: () => _loadDate(date),
+              child: ListView(
+                controller: _scrollController,
+                physics: const AlwaysScrollableScrollPhysics(),
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
+                padding: isWide
+                    ? const EdgeInsets.only(top: 24, bottom: 40)
+                    : EdgeInsets.zero,
+                children: [
+                  Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 1100),
+                      child: Column(
+                        children: [
+                      if (isWide) ...[
+                        // ── Top row: Hero + Diary side by side ──
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: IntrinsicHeight(
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Expanded(
+                                  flex: 2,
+                                  child: _buildHeroCard(
+                                    context,
+                                    date: date,
+                                    placeLine: placeLine,
+                                    draft: draft,
+                                    canGoForward: !date.isAfter(
+                                      now.subtract(const Duration(days: 1)),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  flex: 3,
+                                  child: TextField(
+                                    controller: _description,
+                                    maxLines: null,
+                                    expands: true,
+                                    textAlignVertical: TextAlignVertical.top,
+                                    onTapOutside: (_) => _dismissKeyboard(),
+                                    decoration: const InputDecoration(
+                                      alignLabelWithHint: true,
+                                      hintText: 'Diary text...',
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
-                        const SizedBox(height: 10),
-                      ],
-                      if (_uploadQueue.isNotEmpty) ...[
-                        _buildUploadQueue(context),
-                        const SizedBox(height: 12),
-                      ],
-                      if (_media.isEmpty)
-                        _buildEmptyState(
+                        // ── Middle row: Map+Activity left, People+Tags right ──
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                flex: 3,
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    if (_timelineDay != null &&
+                                        _timelineDay!.hasData) ...[
+                                      _buildTimelineMapCard(context),
+                                      const SizedBox(height: 12),
+                                    ],
+                                    if (_dailyActivity != null)
+                                      SectionCard(
+                                        title: 'Activity',
+                                        padding: const EdgeInsets.fromLTRB(
+                                          18,
+                                          14,
+                                          18,
+                                          16,
+                                        ),
+                                        child: _buildActivityBar(context),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                flex: 2,
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    SectionCard(
+                                      title: 'People',
+                                      action: IconButton.filledTonal(
+                                        onPressed: _showAddPersonSheet,
+                                        icon: const Icon(Icons.add_rounded),
+                                        tooltip: 'Add person',
+                                        style: IconButton.styleFrom(
+                                          backgroundColor: const Color(
+                                            0xFFE8F0FF,
+                                          ),
+                                          foregroundColor: const Color(
+                                            0xFF1D4F91,
+                                          ),
+                                        ),
+                                      ),
+                                      padding: const EdgeInsets.fromLTRB(
+                                        18,
+                                        18,
+                                        18,
+                                        20,
+                                      ),
+                                      child: _buildPeopleEditor(
+                                        context,
+                                        model.people,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 12),
+                                    SectionCard(
+                                      title: 'Tags',
+                                      action: IconButton.filledTonal(
+                                        onPressed: _showAddTagDialog,
+                                        icon: const Icon(Icons.add_rounded),
+                                        tooltip: 'Add tag',
+                                        style: IconButton.styleFrom(
+                                          backgroundColor: const Color(
+                                            0xFFDCEBFF,
+                                          ),
+                                          foregroundColor: const Color(
+                                            0xFF184A93,
+                                          ),
+                                        ),
+                                      ),
+                                      padding: const EdgeInsets.fromLTRB(
+                                        18,
+                                        18,
+                                        18,
+                                        20,
+                                      ),
+                                      child: _buildTagsContent(model.tags),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ] else ...[
+                        _buildHeroCard(
                           context,
-                          icon: Icons.photo_library_outlined,
-                          title: draft.uploading
-                              ? 'Uploading photos'
-                              : 'No photos',
-                          subtitle: draft.uploading
-                              ? 'Your uploads will appear here.'
-                              : 'Upload media for this date.',
-                        )
-                      else
-                        _buildGallery(context, model),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Positioned(
-            right: 18,
-            bottom: 18 + bottomInset,
-            child: FloatingActionButton(
-              heroTag: 'upload_fab',
-              onPressed: draft.uploading ? null : _uploadFiles,
-              elevation: 4,
-              child: draft.uploading
-                  ? SizedBox(
-                      width: 24,
-                      height: 24,
-                      child: CircularProgressIndicator(
-                        value: _uploadProgress >= 1.0 ? null : _uploadProgress,
-                        strokeWidth: 3,
+                          date: date,
+                          placeLine: placeLine,
+                          draft: draft,
+                          canGoForward: !date.isAfter(
+                            now.subtract(const Duration(days: 1)),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: _description,
+                          maxLines: 11,
+                          onTapOutside: (_) => _dismissKeyboard(),
+                          decoration: const InputDecoration(
+                            alignLabelWithHint: true,
+                            hintText: 'Diary text...',
+                          ),
+                        ),
+                        if (_timelineDay != null && _timelineDay!.hasData) ...[
+                          const SizedBox(height: 12),
+                          _buildTimelineMapCard(context),
+                        ],
+                        if (_dailyActivity != null) ...[
+                          const SizedBox(height: 12),
+                          SectionCard(
+                            title: 'Activity',
+                            padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
+                            child: _buildActivityBar(context),
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        SectionCard(
+                          title: 'People',
+                          action: IconButton.filledTonal(
+                            onPressed: _showAddPersonSheet,
+                            icon: const Icon(Icons.add_rounded),
+                            tooltip: 'Add person',
+                            style: IconButton.styleFrom(
+                              backgroundColor: const Color(0xFFE8F0FF),
+                              foregroundColor: const Color(0xFF1D4F91),
+                            ),
+                          ),
+                          padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
+                          child: _buildPeopleEditor(context, model.people),
+                        ),
+                        const SizedBox(height: 12),
+                        SectionCard(
+                          title: 'Tags',
+                          action: IconButton.filledTonal(
+                            onPressed: _showAddTagDialog,
+                            icon: const Icon(Icons.add_rounded),
+                            tooltip: 'Add tag',
+                            style: IconButton.styleFrom(
+                              backgroundColor: const Color(0xFFDCEBFF),
+                              foregroundColor: const Color(0xFF184A93),
+                            ),
+                          ),
+                          padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
+                          child: _buildTagsContent(model.tags),
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      SectionCard(
+                        title: 'Gallery',
+                        padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (_heroPickerEnabled) ...[
+                              Text(
+                                'Tap a photo to set it as cover.',
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurfaceVariant,
+                                    ),
+                              ),
+                              const SizedBox(height: 10),
+                            ],
+                            if (_uploadQueue.isNotEmpty) ...[
+                              _buildUploadQueue(context),
+                              const SizedBox(height: 12),
+                            ],
+                            if (_media.isEmpty)
+                              _buildEmptyState(
+                                context,
+                                icon: Icons.photo_library_outlined,
+                                title: draft.uploading
+                                    ? 'Uploading photos'
+                                    : 'No photos',
+                                subtitle: draft.uploading
+                                    ? 'Your uploads will appear here.'
+                                    : 'Upload media for this date.',
+                              )
+                            else
+                              _buildGallery(context, model),
+                          ],
+                        ),
                       ),
-                    )
-                  : const Icon(Icons.add_photo_alternate_rounded),
-            ),
-          ),
-          if (_transitioningDay)
-            Positioned.fill(
-              child: IgnorePointer(
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 180),
-                  opacity: _transitioningDay ? 1 : 0,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Colors.white.withValues(alpha: 0.08),
-                          Colors.white.withValues(alpha: 0.32),
                         ],
                       ),
                     ),
-                    child: const Align(
-                      alignment: Alignment.topCenter,
-                      child: Padding(
-                        padding: EdgeInsets.only(top: 16),
-                        child: SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(strokeWidth: 2.2),
+                  ),
+                ],
+              ),
+            ),
+            Positioned(
+              right: 18,
+              bottom: 18 + bottomInset,
+              child: FloatingActionButton(
+                heroTag: 'upload_fab',
+                onPressed: draft.uploading ? null : _uploadFiles,
+                elevation: 4,
+                child: draft.uploading
+                    ? SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          value: _uploadProgress >= 1.0
+                              ? null
+                              : _uploadProgress,
+                          strokeWidth: 3,
+                        ),
+                      )
+                    : const Icon(Icons.add_photo_alternate_rounded),
+              ),
+            ),
+            if (_transitioningDay)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: AnimatedOpacity(
+                    duration: const Duration(milliseconds: 180),
+                    opacity: _transitioningDay ? 1 : 0,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.white.withValues(alpha: 0.08),
+                            Colors.white.withValues(alpha: 0.32),
+                          ],
+                        ),
+                      ),
+                      child: const Align(
+                        alignment: Alignment.topCenter,
+                        child: Padding(
+                          padding: EdgeInsets.only(top: 16),
+                          child: SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.2,
+                            ),
+                          ),
                         ),
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -2095,14 +1942,29 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
       ...walkLatLngs,
       ...runPolylines.expand((pts) => pts),
       ...data.imageLocations.map((i) => LatLng(i.lat, i.lon)),
+      ...data.visits
+          .where((v) => v.lat != null && v.lon != null)
+          .map((v) => LatLng(v.lat!, v.lon!)),
     ];
     if (allPoints.isEmpty) return const SizedBox.shrink();
 
-    final bounds = LatLngBounds.fromPoints(allPoints);
+    final CameraFit cameraFit;
+    if (allPoints.length == 1) {
+      cameraFit = CameraFit.coordinates(
+        coordinates: allPoints,
+        maxZoom: 15,
+        padding: const EdgeInsets.all(28),
+      );
+    } else {
+      cameraFit = CameraFit.bounds(
+        bounds: LatLngBounds.fromPoints(allPoints),
+        padding: const EdgeInsets.all(28),
+      );
+    }
 
     void openMapPage() {
       // Switch to map tab first so the map's date listener sees the tab as active
-      ref.read(selectedTabProvider.notifier).state = 4;
+      ref.read(selectedTabProvider.notifier).state = 3;
       if (_activeDayKey != null) {
         ref.read(selectedDateProvider.notifier).state = parseYmd(
           _activeDayKey!,
@@ -2148,10 +2010,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
               child: AbsorbPointer(
                 child: FlutterMap(
                   options: MapOptions(
-                    initialCameraFit: CameraFit.bounds(
-                      bounds: bounds,
-                      padding: const EdgeInsets.all(28),
-                    ),
+                    initialCameraFit: cameraFit,
                     interactionOptions: const InteractionOptions(
                       flags: InteractiveFlag.none,
                     ),
@@ -2196,6 +2055,29 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                                 child: Container(
                                   decoration: BoxDecoration(
                                     color: Colors.white,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: colorScheme.primary,
+                                      width: 2,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                    if (data.visits.isNotEmpty)
+                      MarkerLayer(
+                        markers: data.visits
+                            .where((img) => img.lat != null && img.lon != null)
+                            .map(
+                              (img) => Marker(
+                                point: LatLng(img.lat!, img.lon!),
+                                width: 10,
+                                height: 10,
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.greenAccent,
                                     shape: BoxShape.circle,
                                     border: Border.all(
                                       color: colorScheme.primary,
@@ -3030,20 +2912,30 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
         final stem = name.contains('.')
             ? name.substring(0, name.lastIndexOf('.'))
             : name;
-        return '${AppConfig.backendUrl}/api/images/$date/compressed/$stem.jpg';
+        return _authenticatedUrl(
+          '${AppConfig.backendUrl}/api/images/$date/compressed/$stem.jpg',
+        );
       }
-      return '${AppConfig.backendUrl}/api/images/$date/compressed/$name';
+      return _authenticatedUrl(
+        '${AppConfig.backendUrl}/api/images/$date/compressed/$name',
+      );
     }
-    return AppConfig.imageUrlFromPath(media.path, date: media.date);
+    return _authenticatedUrl(
+      AppConfig.imageUrlFromPath(media.path, date: media.date),
+    );
   }
 
   String _galleryFullUrl(DayMediaModel media) {
     final date = media.date;
     final name = media.fileName;
     if (date.isNotEmpty && name.isNotEmpty) {
-      return '${AppConfig.backendUrl}/api/images/$date/$name';
+      return _authenticatedUrl(
+        '${AppConfig.backendUrl}/api/images/$date/$name',
+      );
     }
-    return AppConfig.imageUrlFromPath(media.path, date: media.date);
+    return _authenticatedUrl(
+      AppConfig.imageUrlFromPath(media.path, date: media.date),
+    );
   }
 
   bool _isSelectedMedia(StoryDayModel model, DayMediaModel media) {
@@ -3075,21 +2967,37 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
           ? '${highlight.substring(0, highlight.lastIndexOf('.'))}.jpg'
           : highlight;
       return _HeroImageAsset(
-        previewUrl:
-            '${AppConfig.backendUrl}/api/images/${model.date}/compressed/$previewName',
-        fullUrl: '${AppConfig.backendUrl}/api/images/${model.date}/$highlight',
+        previewUrl: _authenticatedUrl(
+          '${AppConfig.backendUrl}/api/images/${model.date}/compressed/$previewName',
+        ),
+        fullUrl: _authenticatedUrl(
+          '${AppConfig.backendUrl}/api/images/${model.date}/$highlight',
+        ),
       );
     }
 
-    final fullUrl = AppConfig.imageUrlFromPath(highlight, date: model.date);
+    final fullUrl = _authenticatedUrl(
+      AppConfig.imageUrlFromPath(highlight, date: model.date),
+    );
     return _HeroImageAsset(previewUrl: fullUrl, fullUrl: fullUrl);
   }
 
-  Map<String, String> _authHeaders() {
+  String? _authToken() {
     final tokenStore = ref.read(authTokenStoreProvider);
-    final token =
-        ref.read(authControllerProvider).value?.accessToken ??
+    return ref.read(authControllerProvider).value?.accessToken ??
         tokenStore.peekToken();
+  }
+
+  String _authenticatedUrl(String url) {
+    if (!kIsWeb) return url;
+    final token = _authToken();
+    if (token == null || token.isEmpty) return url;
+    final separator = url.contains('?') ? '&' : '?';
+    return '$url${separator}token=$token';
+  }
+
+  Map<String, String> _authHeaders() {
+    final token = _authToken();
     return {
       if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
       'X-Blue-Client': 'mobile',

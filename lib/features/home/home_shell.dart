@@ -57,15 +57,9 @@ class _HomeShellState extends ConsumerState<HomeShell> {
           ]
         : [appBarBase, appBarBase];
 
-    final pages = const [
-      DayPage(),
-      CalendarPage(),
-      RunsPage(),
-      ChatPage(),
-      MapPage(),
-    ];
+    final pages = const [DayPage(), CalendarPage(), ChatPage(), MapPage()];
 
-    final labels = const ['Day', 'Calendar', 'Runs', 'Chat', 'Map'];
+    final labels = const ['Day', 'Calendar', 'Chat', 'Map'];
 
     return Scaffold(
       appBar: AppBar(
@@ -132,11 +126,6 @@ class _HomeShellState extends ConsumerState<HomeShell> {
             icon: Icon(Icons.calendar_month_outlined),
             selectedIcon: Icon(Icons.calendar_month),
             label: 'Calendar',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.directions_run_outlined),
-            selectedIcon: Icon(Icons.directions_run),
-            label: 'Runs',
           ),
           NavigationDestination(
             icon: Icon(Icons.chat_bubble_outline),
