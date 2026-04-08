@@ -17,8 +17,10 @@ class DataSourcesPage extends ConsumerStatefulWidget {
 
 class _DataSourcesPageState extends ConsumerState<DataSourcesPage> {
   late Future<List<DataSourceStatusModel>> _sourcesFuture;
-  bool _importing = false;
-  String? _importResult;
+  bool _timelineImporting = false;
+  bool _takeoutImporting = false;
+  String? _timelineImportResult;
+  String? _takeoutImportResult;
 
   @override
   void initState() {
@@ -38,6 +40,72 @@ class _DataSourcesPageState extends ConsumerState<DataSourcesPage> {
     await future;
   }
 
+  Future<void> _importTimeline() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['json'],
+      withData: true,
+    );
+    if (picked == null || picked.files.isEmpty) return;
+    final bytes = picked.files.first.bytes;
+    if (bytes == null) return;
+
+    setState(() {
+      _timelineImporting = true;
+      _timelineImportResult = null;
+    });
+    try {
+      final graphql = ref.read(graphqlServiceProvider);
+      final data = await graphql.mutateMultipartWithProgress(
+        r'''
+          mutation ImportTakeout($files: [Upload!]!) {
+            timeline { importTakeout(files: $files) { message } }
+          }
+        ''',
+        files: [
+          MultipartUploadFile(
+            filename: picked.files.first.name.isNotEmpty
+                ? picked.files.first.name
+                : 'Zeitachse.json',
+            bytes: bytes,
+          ),
+        ],
+        onProgress: (_, __) {},
+        timeout: const Duration(minutes: 5),
+      );
+      final message =
+          (data['timeline'] as Map?)?['importTakeout']?['message'] as String?;
+      final resultMessage = message ?? 'Import complete';
+      setState(() {
+        _timelineImportResult = resultMessage;
+      });
+      await _refreshSources();
+      if (!mounted) return;
+      await _showImportDialog(
+        title: 'Google Timeline Imported',
+        intro: 'Your Google Timeline export was processed.',
+        message: resultMessage,
+        isError: false,
+      );
+    } catch (e) {
+      final errorMessage = e.toString().replaceFirst('Exception: ', '');
+      setState(() {
+        _timelineImportResult = 'Error: $errorMessage';
+      });
+      if (!mounted) return;
+      await _showImportDialog(
+        title: 'Timeline Import Failed',
+        intro: 'The Google Timeline JSON could not be processed.',
+        message: errorMessage,
+        isError: true,
+      );
+    } finally {
+      setState(() {
+        _timelineImporting = false;
+      });
+    }
+  }
+
   Future<void> _importTakeout() async {
     final picked = await FilePicker.platform.pickFiles(
       type: FileType.custom,
@@ -49,8 +117,8 @@ class _DataSourcesPageState extends ConsumerState<DataSourcesPage> {
     if (bytes == null) return;
 
     setState(() {
-      _importing = true;
-      _importResult = null;
+      _takeoutImporting = true;
+      _takeoutImportResult = null;
     });
     try {
       final graphql = ref.read(graphqlServiceProvider);
@@ -73,19 +141,109 @@ class _DataSourcesPageState extends ConsumerState<DataSourcesPage> {
       );
       final message =
           (data['health'] as Map?)?['importTakeout']?['message'] as String?;
+      final resultMessage = message ?? 'Import complete';
       setState(() {
-        _importResult = message ?? 'Import complete';
+        _takeoutImportResult = resultMessage;
       });
       await _refreshSources();
+      if (!mounted) return;
+      await _showImportDialog(
+        title: 'Google Takeout Imported',
+        intro:
+            'The Google Fit summary from your Takeout archive was processed.',
+        message: resultMessage,
+        isError: false,
+      );
     } catch (e) {
+      final errorMessage = e.toString().replaceFirst('Exception: ', '');
       setState(() {
-        _importResult = 'Error: $e';
+        _takeoutImportResult = 'Error: $errorMessage';
       });
+      if (!mounted) return;
+      await _showImportDialog(
+        title: 'Import Failed',
+        intro: 'The Takeout ZIP could not be processed.',
+        message: errorMessage,
+        isError: true,
+      );
     } finally {
       setState(() {
-        _importing = false;
+        _takeoutImporting = false;
       });
     }
+  }
+
+  Future<void> _showImportDialog({
+    required String title,
+    required String intro,
+    required String message,
+    required bool isError,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final lines = message
+        .split(',')
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList();
+
+    return showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          icon: Icon(
+            isError ? Icons.error_outline_rounded : Icons.check_circle_outline,
+            color: isError ? colorScheme.error : colorScheme.primary,
+          ),
+          title: Text(title),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(intro, style: Theme.of(context).textTheme.bodyMedium),
+              const SizedBox(height: 12),
+              ...lines.map(
+                (line) => Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        isError ? '• ' : '• ',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      Expanded(
+                        child: Text(
+                          _prettifyImportLine(line),
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  String _prettifyImportLine(String line) {
+    return line.replaceFirstMapped(
+      RegExp(r'^(\d+) (\w+)'),
+      (match) => '${match.group(1)} ${_capitalize(match.group(2) ?? '')}',
+    );
+  }
+
+  String _capitalize(String value) {
+    if (value.isEmpty) return value;
+    return '${value[0].toUpperCase()}${value.substring(1)}';
   }
 
   String _formatTimestamp(DateTime? value) {
@@ -195,16 +353,23 @@ class _DataSourcesPageState extends ConsumerState<DataSourcesPage> {
                                     padding: const EdgeInsets.only(bottom: 12),
                                     child: _DataSourceCard(
                                       source: source,
-                                      importResult:
-                                          source.key == 'google_takeout'
-                                          ? _importResult
-                                          : null,
-                                      importing:
-                                          source.key == 'google_takeout' &&
-                                          _importing,
-                                      onImport: source.key == 'google_takeout'
-                                          ? _importTakeout
-                                          : null,
+                                      importResult: switch (source.key) {
+                                        'google_timeline' =>
+                                          _timelineImportResult,
+                                        'google_takeout' =>
+                                          _takeoutImportResult,
+                                        _ => null,
+                                      },
+                                      importing: switch (source.key) {
+                                        'google_timeline' => _timelineImporting,
+                                        'google_takeout' => _takeoutImporting,
+                                        _ => false,
+                                      },
+                                      onImport: switch (source.key) {
+                                        'google_timeline' => _importTimeline,
+                                        'google_takeout' => _importTakeout,
+                                        _ => null,
+                                      },
                                       formatTimestamp: _formatTimestamp,
                                     ),
                                   ),
@@ -486,12 +651,12 @@ class _DataSourceCard extends StatelessWidget {
                           height: 16,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         ),
-                        label: const Text('Uploading Takeout ZIP'),
+                        label: Text(_uploadingLabel()),
                       )
                     : FilledButton.icon(
                         onPressed: onImport,
                         icon: const Icon(Icons.upload_file_rounded),
-                        label: const Text('Upload Takeout ZIP'),
+                        label: Text(_buttonLabel()),
                       ),
               ),
             ],
@@ -532,6 +697,28 @@ class _DataSourceCard extends StatelessWidget {
       return (colorScheme.secondaryContainer, colorScheme.onSecondaryContainer);
     }
     return (colorScheme.primaryContainer, colorScheme.onPrimaryContainer);
+  }
+
+  String _buttonLabel() {
+    switch (source.key) {
+      case 'google_timeline':
+        return 'Upload Timeline JSON';
+      case 'google_takeout':
+        return 'Upload Takeout ZIP';
+      default:
+        return 'Upload';
+    }
+  }
+
+  String _uploadingLabel() {
+    switch (source.key) {
+      case 'google_timeline':
+        return 'Uploading Timeline JSON';
+      case 'google_takeout':
+        return 'Uploading Takeout ZIP';
+      default:
+        return 'Uploading';
+    }
   }
 }
 
