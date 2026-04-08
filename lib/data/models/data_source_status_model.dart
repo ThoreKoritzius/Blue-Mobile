@@ -5,6 +5,7 @@ class DataSourceStatusModel {
     required this.description,
     required this.status,
     required this.automated,
+    this.detail,
     this.lastSyncAt,
   });
 
@@ -13,6 +14,7 @@ class DataSourceStatusModel {
   final String description;
   final String status;
   final bool automated;
+  final String? detail;
   final DateTime? lastSyncAt;
 
   factory DataSourceStatusModel.fromJson(Map<String, dynamic> json) {
@@ -22,6 +24,7 @@ class DataSourceStatusModel {
       description: (json['description'] ?? '').toString(),
       status: (json['status'] ?? '').toString(),
       automated: json['automated'] == true,
+      detail: (json['detail'] as String?)?.trim(),
       lastSyncAt: DateTime.tryParse((json['lastSyncAt'] ?? '').toString()),
     );
   }

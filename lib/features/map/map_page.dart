@@ -1373,6 +1373,8 @@ class _MapPageState extends ConsumerState<MapPage>
       movingTime: timelineRun.movingTimeSeconds ?? 0,
       averageSpeed: 0,
       startTime: timelineRun.startTime?.toIso8601String() ?? '',
+      source: 'strava',
+      sourceLabel: 'Strava',
     );
     await _openRunDetail(run);
   }
@@ -2405,7 +2407,9 @@ class _DayBottomSheet extends StatelessWidget {
         margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
         decoration: BoxDecoration(
-          color: isSelected ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.2) : Colors.transparent,
+          color: isSelected
+              ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.2)
+              : Colors.transparent,
           borderRadius: BorderRadius.circular(10),
         ),
         child: Row(
@@ -2417,7 +2421,9 @@ class _DayBottomSheet extends StatelessWidget {
               child: Text(
                 timeLabel,
                 style: TextStyle(
-                  color: isSelected ? Theme.of(context).colorScheme.primary : Colors.white54,
+                  color: isSelected
+                      ? Theme.of(context).colorScheme.primary
+                      : Colors.white54,
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
                   fontFeatures: const [FontFeature.tabularFigures()],
@@ -2430,17 +2436,27 @@ class _DayBottomSheet extends StatelessWidget {
               height: 22,
               decoration: BoxDecoration(
                 color: isSelected
-                    ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.25)
+                    ? Theme.of(
+                        context,
+                      ).colorScheme.primary.withValues(alpha: 0.25)
                     : hasLocation
-                    ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.8).withValues(alpha: 0.25)
-                    : Theme.of(context).colorScheme.primary.withValues(alpha: 0.2),
+                    ? Theme.of(context).colorScheme.primary
+                          .withValues(alpha: 0.8)
+                          .withValues(alpha: 0.25)
+                    : Theme.of(
+                        context,
+                      ).colorScheme.primary.withValues(alpha: 0.2),
                 shape: BoxShape.circle,
                 border: Border.all(
                   color: isSelected
                       ? Theme.of(context).colorScheme.primary
                       : hasLocation
-                      ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.8)
-                      : Theme.of(context).colorScheme.primary.withValues(alpha: 0.33),
+                      ? Theme.of(
+                          context,
+                        ).colorScheme.primary.withValues(alpha: 0.8)
+                      : Theme.of(
+                          context,
+                        ).colorScheme.primary.withValues(alpha: 0.33),
                   width: 1.5,
                 ),
               ),
@@ -2450,8 +2466,12 @@ class _DayBottomSheet extends StatelessWidget {
                 color: isSelected
                     ? Theme.of(context).colorScheme.primary
                     : hasLocation
-                    ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.8)
-                    : Theme.of(context).colorScheme.primary.withValues(alpha: 0.33),
+                    ? Theme.of(
+                        context,
+                      ).colorScheme.primary.withValues(alpha: 0.8)
+                    : Theme.of(
+                        context,
+                      ).colorScheme.primary.withValues(alpha: 0.33),
               ),
             ),
             const SizedBox(width: 8),
@@ -2661,9 +2681,7 @@ class _DayBottomSheet extends StatelessWidget {
     final timeLabel = _formatTime(seg.startTime);
     final hasLocation = seg.startLat != null && seg.startLon != null;
     final isRunning = seg.activityType == 'RUNNING';
-    final activityColor = isRunning
-        ? const Color(0xCCFF9800)
-        : Colors.grey;
+    final activityColor = isRunning ? const Color(0xCCFF9800) : Colors.grey;
     final activityIcon = _activityTypeIcon(seg.activityType);
     // For running: prefer the Strava run name if matched.
     final typeLabel = isRunning && run != null && run.name.isNotEmpty
@@ -2792,7 +2810,9 @@ class _DayBottomSheet extends StatelessWidget {
         margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
         decoration: BoxDecoration(
-          color: isSelected ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.2) : Colors.transparent,
+          color: isSelected
+              ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.2)
+              : Colors.transparent,
           borderRadius: BorderRadius.circular(10),
         ),
         child: Row(
@@ -2966,7 +2986,9 @@ class _StatusBanner extends StatelessWidget {
             child: Text(
               error,
               key: _MapPageState._errorTextKey,
-              style: TextStyle(color: Theme.of(context).colorScheme.onErrorContainer),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onErrorContainer,
+              ),
             ),
           ),
         ),

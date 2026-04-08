@@ -21,10 +21,13 @@ class CalendarEventModel {
     return CalendarEventModel(
       id: (json['id'] ?? '').toString(),
       summary: (json['summary'] ?? '').toString(),
-      start: (startData?['dateTime'] ?? startData?['date'] ?? '').toString(),
-      end: (endData?['dateTime'] ?? endData?['date'] ?? '').toString(),
+      start:
+          (startData?['dateTime'] ?? startData?['date'] ?? json['start'] ?? '')
+              .toString(),
+      end: (endData?['dateTime'] ?? endData?['date'] ?? json['end'] ?? '')
+          .toString(),
       location: (json['location'] ?? '').toString(),
-      allDay: startData?['date'] != null,
+      allDay: json['isAllDay'] == true || startData?['date'] != null,
     );
   }
 }

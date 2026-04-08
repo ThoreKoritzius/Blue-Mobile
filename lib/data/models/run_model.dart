@@ -8,6 +8,8 @@ class RunModel {
     required this.movingTime,
     required this.averageSpeed,
     required this.startTime,
+    required this.source,
+    required this.sourceLabel,
   });
 
   final String id;
@@ -18,6 +20,8 @@ class RunModel {
   final int movingTime;
   final double averageSpeed;
   final String startTime;
+  final String source;
+  final String sourceLabel;
 
   double get distanceKm => distance / 1000;
   int get movingMinutes => movingTime ~/ 60;
@@ -32,19 +36,44 @@ class RunModel {
       'movingTime': movingTime,
       'averageSpeed': averageSpeed,
       'startTime': startTime,
+      'source': source,
+      'sourceLabel': sourceLabel,
     };
   }
 
   factory RunModel.fromJson(Map<String, dynamic> json) {
+    final rawName = (json['name'] ?? '').toString();
+    final rawId = (json['id'] ?? '').toString();
+    final source = (json['source'] ?? '').toString();
     return RunModel(
-      id: (json['id'] ?? '').toString(),
-      name: (json['name'] ?? '').toString(),
-      startDateLocal: (json['startDateLocal'] ?? json['start_date_local'] ?? '').toString(),
+      id: rawId,
+      name: rawName,
+      startDateLocal: (json['startDateLocal'] ?? json['start_date_local'] ?? '')
+          .toString(),
       distance: (json['distance'] as num?)?.toDouble() ?? 0,
-      summaryPolyline: (json['summaryPolyline'] ?? json['summary_polyline'] ?? '').toString(),
-      movingTime: (json['movingTime'] ?? json['moving_time'] as num?)?.toInt() ?? 0,
-      averageSpeed: (json['averageSpeed'] ?? json['average_speed'] as num?)?.toDouble() ?? 0,
+      summaryPolyline:
+          (json['summaryPolyline'] ?? json['summary_polyline'] ?? '')
+              .toString(),
+      movingTime:
+          (json['movingTime'] ?? json['moving_time'] as num?)?.toInt() ?? 0,
+      averageSpeed:
+          (json['averageSpeed'] ?? json['average_speed'] as num?)?.toDouble() ??
+          0,
       startTime: (json['startTime'] ?? json['start_time'] ?? '').toString(),
+      source: source,
+      sourceLabel:
+          (json['sourceLabel'] ??
+                  json['source_label'] ??
+                  _sourceLabelFor(source))
+              .toString(),
     );
+  }
+
+  static String _sourceLabelFor(String source) {
+    if (source == 'strava') return 'Strava';
+    if (source == 'runtastic') return 'Runtastic';
+    if (source == 'samsung_health') return 'Samsung Health';
+    if (source.isEmpty) return '';
+    return source.replaceAll('_', ' ');
   }
 }

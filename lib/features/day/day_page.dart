@@ -602,6 +602,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
   Future<DateTime?> _showCalendarDialog(DateTime initialDate) {
     return showDatePicker(
       context: context,
+      locale: const Locale('en', 'GB'),
       initialDate: DateUtils.dateOnly(initialDate),
       firstDate: DateTime(2005),
       lastDate: DateTime.now(),
@@ -869,24 +870,20 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     return Wrap(
       spacing: 8,
       runSpacing: 8,
-      children: tags
-          .map(
-            (tag) {
-              final colorScheme = Theme.of(context).colorScheme;
-              return InputChip(
-                backgroundColor: colorScheme.secondaryContainer,
-                labelStyle: TextStyle(
-                  color: colorScheme.onSecondaryContainer,
-                  fontWeight: FontWeight.w500,
-                ),
-                side: BorderSide.none,
-                label: Text(tag),
-                deleteIconColor: colorScheme.onSecondaryContainer,
-                onDeleted: () => _removeTag(tag),
-              );
-            },
-          )
-          .toList(),
+      children: tags.map((tag) {
+        final colorScheme = Theme.of(context).colorScheme;
+        return InputChip(
+          backgroundColor: colorScheme.secondaryContainer,
+          labelStyle: TextStyle(
+            color: colorScheme.onSecondaryContainer,
+            fontWeight: FontWeight.w500,
+          ),
+          side: BorderSide.none,
+          label: Text(tag),
+          deleteIconColor: colorScheme.onSecondaryContainer,
+          onDeleted: () => _removeTag(tag),
+        );
+      }).toList(),
     );
   }
 
@@ -1354,233 +1351,254 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                       constraints: const BoxConstraints(maxWidth: 1100),
                       child: Column(
                         children: [
-                      if (isWide) ...[
-                        // ── Top row: Hero + Diary side by side ──
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: IntrinsicHeight(
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                          if (isWide) ...[
+                            // ── Top row: Hero + Diary side by side ──
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 12),
+                              child: IntrinsicHeight(
+                                child: Row(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    Expanded(
+                                      flex: 2,
+                                      child: _buildHeroCard(
+                                        context,
+                                        date: date,
+                                        placeLine: placeLine,
+                                        draft: draft,
+                                        canGoForward: !date.isAfter(
+                                          now.subtract(const Duration(days: 1)),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      flex: 3,
+                                      child: TextField(
+                                        controller: _description,
+                                        maxLines: null,
+                                        expands: true,
+                                        textAlignVertical:
+                                            TextAlignVertical.top,
+                                        onTapOutside: (_) => _dismissKeyboard(),
+                                        decoration: const InputDecoration(
+                                          alignLabelWithHint: true,
+                                          hintText: 'Diary text...',
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            // ── Middle row: Map+Activity left, People+Tags right ──
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                              ),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    flex: 3,
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        if (_timelineDay != null &&
+                                            _timelineDay!.hasData) ...[
+                                          _buildTimelineMapCard(context),
+                                          const SizedBox(height: 12),
+                                        ],
+                                        if (_dailyActivity != null ||
+                                            _runs.isNotEmpty)
+                                          SectionCard(
+                                            title: 'Activity',
+                                            padding: const EdgeInsets.fromLTRB(
+                                              18,
+                                              14,
+                                              18,
+                                              16,
+                                            ),
+                                            child: _buildActivityBar(context),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 16),
+                                  Expanded(
+                                    flex: 2,
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        SectionCard(
+                                          title: 'People',
+                                          action: IconButton.filledTonal(
+                                            onPressed: _showAddPersonSheet,
+                                            icon: const Icon(Icons.add_rounded),
+                                            tooltip: 'Add person',
+                                            style: IconButton.styleFrom(
+                                              backgroundColor: const Color(
+                                                0xFFE8F0FF,
+                                              ),
+                                              foregroundColor: const Color(
+                                                0xFF1D4F91,
+                                              ),
+                                            ),
+                                          ),
+                                          padding: const EdgeInsets.fromLTRB(
+                                            18,
+                                            18,
+                                            18,
+                                            20,
+                                          ),
+                                          child: _buildPeopleEditor(
+                                            context,
+                                            model.people,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 12),
+                                        SectionCard(
+                                          title: 'Tags',
+                                          action: IconButton.filledTonal(
+                                            onPressed: _showAddTagDialog,
+                                            icon: const Icon(Icons.add_rounded),
+                                            tooltip: 'Add tag',
+                                            style: IconButton.styleFrom(
+                                              backgroundColor: const Color(
+                                                0xFFDCEBFF,
+                                              ),
+                                              foregroundColor: const Color(
+                                                0xFF184A93,
+                                              ),
+                                            ),
+                                          ),
+                                          padding: const EdgeInsets.fromLTRB(
+                                            18,
+                                            18,
+                                            18,
+                                            20,
+                                          ),
+                                          child: _buildTagsContent(model.tags),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ] else ...[
+                            _buildHeroCard(
+                              context,
+                              date: date,
+                              placeLine: placeLine,
+                              draft: draft,
+                              canGoForward: !date.isAfter(
+                                now.subtract(const Duration(days: 1)),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _description,
+                              maxLines: 11,
+                              onTapOutside: (_) => _dismissKeyboard(),
+                              decoration: const InputDecoration(
+                                alignLabelWithHint: true,
+                                hintText: 'Diary text...',
+                              ),
+                            ),
+                            if (_timelineDay != null &&
+                                _timelineDay!.hasData) ...[
+                              const SizedBox(height: 12),
+                              _buildTimelineMapCard(context),
+                            ],
+                            if (_dailyActivity != null || _runs.isNotEmpty) ...[
+                              const SizedBox(height: 12),
+                              SectionCard(
+                                title: 'Activity',
+                                padding: const EdgeInsets.fromLTRB(
+                                  18,
+                                  14,
+                                  18,
+                                  16,
+                                ),
+                                child: _buildActivityBar(context),
+                              ),
+                            ],
+                            const SizedBox(height: 12),
+                            SectionCard(
+                              title: 'People',
+                              action: IconButton.filledTonal(
+                                onPressed: _showAddPersonSheet,
+                                icon: const Icon(Icons.add_rounded),
+                                tooltip: 'Add person',
+                              ),
+                              padding: const EdgeInsets.fromLTRB(
+                                18,
+                                18,
+                                18,
+                                20,
+                              ),
+                              child: _buildPeopleEditor(context, model.people),
+                            ),
+                            const SizedBox(height: 12),
+                            SectionCard(
+                              title: 'Tags',
+                              action: IconButton.filledTonal(
+                                onPressed: _showAddTagDialog,
+                                icon: const Icon(Icons.add_rounded),
+                                tooltip: 'Add tag',
+                              ),
+                              padding: const EdgeInsets.fromLTRB(
+                                18,
+                                18,
+                                18,
+                                20,
+                              ),
+                              child: _buildTagsContent(model.tags),
+                            ),
+                          ],
+                          const SizedBox(height: 12),
+                          SectionCard(
+                            title: 'Gallery',
+                            padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Expanded(
-                                  flex: 2,
-                                  child: _buildHeroCard(
+                                if (_heroPickerEnabled) ...[
+                                  Text(
+                                    'Tap a photo to set it as cover.',
+                                    style: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.onSurfaceVariant,
+                                        ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                ],
+                                if (_uploadQueue.isNotEmpty) ...[
+                                  _buildUploadQueue(context),
+                                  const SizedBox(height: 12),
+                                ],
+                                if (_media.isEmpty)
+                                  _buildEmptyState(
                                     context,
-                                    date: date,
-                                    placeLine: placeLine,
-                                    draft: draft,
-                                    canGoForward: !date.isAfter(
-                                      now.subtract(const Duration(days: 1)),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  flex: 3,
-                                  child: TextField(
-                                    controller: _description,
-                                    maxLines: null,
-                                    expands: true,
-                                    textAlignVertical: TextAlignVertical.top,
-                                    onTapOutside: (_) => _dismissKeyboard(),
-                                    decoration: const InputDecoration(
-                                      alignLabelWithHint: true,
-                                      hintText: 'Diary text...',
-                                    ),
-                                  ),
-                                ),
+                                    icon: Icons.photo_library_outlined,
+                                    title: draft.uploading
+                                        ? 'Uploading photos'
+                                        : 'No photos',
+                                    subtitle: draft.uploading
+                                        ? 'Your uploads will appear here.'
+                                        : 'Upload media for this date.',
+                                  )
+                                else
+                                  _buildGallery(context, model),
                               ],
                             ),
                           ),
-                        ),
-                        // ── Middle row: Map+Activity left, People+Tags right ──
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 4),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                flex: 3,
-                                child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
-                                  children: [
-                                    if (_timelineDay != null &&
-                                        _timelineDay!.hasData) ...[
-                                      _buildTimelineMapCard(context),
-                                      const SizedBox(height: 12),
-                                    ],
-                                    if (_dailyActivity != null)
-                                      SectionCard(
-                                        title: 'Activity',
-                                        padding: const EdgeInsets.fromLTRB(
-                                          18,
-                                          14,
-                                          18,
-                                          16,
-                                        ),
-                                        child: _buildActivityBar(context),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 16),
-                              Expanded(
-                                flex: 2,
-                                child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.stretch,
-                                  children: [
-                                    SectionCard(
-                                      title: 'People',
-                                      action: IconButton.filledTonal(
-                                        onPressed: _showAddPersonSheet,
-                                        icon: const Icon(Icons.add_rounded),
-                                        tooltip: 'Add person',
-                                        style: IconButton.styleFrom(
-                                          backgroundColor: const Color(
-                                            0xFFE8F0FF,
-                                          ),
-                                          foregroundColor: const Color(
-                                            0xFF1D4F91,
-                                          ),
-                                        ),
-                                      ),
-                                      padding: const EdgeInsets.fromLTRB(
-                                        18,
-                                        18,
-                                        18,
-                                        20,
-                                      ),
-                                      child: _buildPeopleEditor(
-                                        context,
-                                        model.people,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 12),
-                                    SectionCard(
-                                      title: 'Tags',
-                                      action: IconButton.filledTonal(
-                                        onPressed: _showAddTagDialog,
-                                        icon: const Icon(Icons.add_rounded),
-                                        tooltip: 'Add tag',
-                                        style: IconButton.styleFrom(
-                                          backgroundColor: const Color(
-                                            0xFFDCEBFF,
-                                          ),
-                                          foregroundColor: const Color(
-                                            0xFF184A93,
-                                          ),
-                                        ),
-                                      ),
-                                      padding: const EdgeInsets.fromLTRB(
-                                        18,
-                                        18,
-                                        18,
-                                        20,
-                                      ),
-                                      child: _buildTagsContent(model.tags),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ] else ...[
-                        _buildHeroCard(
-                          context,
-                          date: date,
-                          placeLine: placeLine,
-                          draft: draft,
-                          canGoForward: !date.isAfter(
-                            now.subtract(const Duration(days: 1)),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: _description,
-                          maxLines: 11,
-                          onTapOutside: (_) => _dismissKeyboard(),
-                          decoration: const InputDecoration(
-                            alignLabelWithHint: true,
-                            hintText: 'Diary text...',
-                          ),
-                        ),
-                        if (_timelineDay != null && _timelineDay!.hasData) ...[
-                          const SizedBox(height: 12),
-                          _buildTimelineMapCard(context),
-                        ],
-                        if (_dailyActivity != null) ...[
-                          const SizedBox(height: 12),
-                          SectionCard(
-                            title: 'Activity',
-                            padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
-                            child: _buildActivityBar(context),
-                          ),
-                        ],
-                        const SizedBox(height: 12),
-                        SectionCard(
-                          title: 'People',
-                          action: IconButton.filledTonal(
-                            onPressed: _showAddPersonSheet,
-                            icon: const Icon(Icons.add_rounded),
-                            tooltip: 'Add person',
-                          ),
-                          padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
-                          child: _buildPeopleEditor(context, model.people),
-                        ),
-                        const SizedBox(height: 12),
-                        SectionCard(
-                          title: 'Tags',
-                          action: IconButton.filledTonal(
-                            onPressed: _showAddTagDialog,
-                            icon: const Icon(Icons.add_rounded),
-                            tooltip: 'Add tag',
-                          ),
-                          padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
-                          child: _buildTagsContent(model.tags),
-                        ),
-                      ],
-                      const SizedBox(height: 12),
-                      SectionCard(
-                        title: 'Gallery',
-                        padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (_heroPickerEnabled) ...[
-                              Text(
-                                'Tap a photo to set it as cover.',
-                                style: Theme.of(context).textTheme.bodySmall
-                                    ?.copyWith(
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onSurfaceVariant,
-                                    ),
-                              ),
-                              const SizedBox(height: 10),
-                            ],
-                            if (_uploadQueue.isNotEmpty) ...[
-                              _buildUploadQueue(context),
-                              const SizedBox(height: 12),
-                            ],
-                            if (_media.isEmpty)
-                              _buildEmptyState(
-                                context,
-                                icon: Icons.photo_library_outlined,
-                                title: draft.uploading
-                                    ? 'Uploading photos'
-                                    : 'No photos',
-                                subtitle: draft.uploading
-                                    ? 'Your uploads will appear here.'
-                                    : 'Upload media for this date.',
-                              )
-                            else
-                              _buildGallery(context, model),
-                          ],
-                        ),
-                      ),
                         ],
                       ),
                     ),
@@ -1633,9 +1651,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                           child: SizedBox(
                             width: 24,
                             height: 24,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2.2,
-                            ),
+                            child: CircularProgressIndicator(strokeWidth: 2.2),
                           ),
                         ),
                       ),
@@ -1825,7 +1841,9 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
           ],
         ),
         border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: isDark ? 0.55 : 1.0),
+          color: colorScheme.outlineVariant.withValues(
+            alpha: isDark ? 0.55 : 1.0,
+          ),
         ),
       ),
       child: SingleChildScrollView(
@@ -2295,56 +2313,95 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
 
   Widget _buildActivityBar(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final act = _dailyActivity!;
+    final act = _dailyActivity;
+    final activitySource = act != null ? _activitySourceDescription(act) : null;
 
-    final steps = act.stepCount;
-    final distKm = act.distanceM != null ? act.distanceM! / 1000.0 : null;
-    final cyclingMin = act.cyclingDurationMs != null
-        ? (act.cyclingDurationMs! / 60000).round()
+    final steps = act?.stepCount;
+    final distKm = act?.distanceM != null ? act!.distanceM! / 1000.0 : null;
+    final cyclingMin = act?.cyclingDurationMs != null
+        ? (act!.cyclingDurationMs! / 60000).round()
         : null;
+    final hasMetricCards =
+        steps != null ||
+        distKm != null ||
+        (cyclingMin != null && cyclingMin > 0);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            if (steps != null)
-              Expanded(
-                child: _activityChip(
-                  context,
-                  icon: Icons.directions_walk_rounded,
-                  value: _formatSteps(steps),
-                  label: 'steps',
-                  color: colorScheme.primary,
+        if (hasMetricCards)
+          Row(
+            children: [
+              if (steps != null)
+                Expanded(
+                  child: _activityChip(
+                    context,
+                    icon: Icons.directions_walk_rounded,
+                    value: _formatSteps(steps),
+                    label: 'steps',
+                    color: colorScheme.primary,
+                    onTap: () => _showActivityDetailDialog(
+                      _ActivityMetricDetail(
+                        title: 'Steps',
+                        icon: Icons.directions_walk_rounded,
+                        accentColor: colorScheme.primary,
+                        value: _formatSteps(steps),
+                        explanation:
+                            'Estimated number of walking and running steps recorded for this day.',
+                        source: activitySource!,
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-            if (steps != null && distKm != null) const SizedBox(width: 10),
-            if (distKm != null)
-              Expanded(
-                child: _activityChip(
-                  context,
-                  icon: Icons.straighten_rounded,
-                  value: '${distKm.toStringAsFixed(1)} km',
-                  label: 'distance',
-                  color: const Color(0xFF2E7D32),
+              if (steps != null && distKm != null) const SizedBox(width: 10),
+              if (distKm != null)
+                Expanded(
+                  child: _activityChip(
+                    context,
+                    icon: Icons.straighten_rounded,
+                    value: '${distKm.toStringAsFixed(1)} km',
+                    label: 'distance',
+                    color: const Color(0xFF2E7D32),
+                    onTap: () => _showActivityDetailDialog(
+                      _ActivityMetricDetail(
+                        title: 'Distance',
+                        icon: Icons.straighten_rounded,
+                        accentColor: const Color(0xFF2E7D32),
+                        value: '${distKm.toStringAsFixed(1)} km',
+                        explanation:
+                            'Total distance moved across the day, aggregated from the connected health source.',
+                        source: activitySource!,
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-            if (cyclingMin != null && cyclingMin > 0) ...[
-              const SizedBox(width: 10),
-              Expanded(
-                child: _activityChip(
-                  context,
-                  icon: Icons.directions_bike_rounded,
-                  value: '$cyclingMin min',
-                  label: 'cycling',
-                  color: const Color(0xFF7C4DDB),
+              if (cyclingMin != null && cyclingMin > 0) ...[
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _activityChip(
+                    context,
+                    icon: Icons.directions_bike_rounded,
+                    value: '$cyclingMin min',
+                    label: 'cycling',
+                    color: const Color(0xFF7C4DDB),
+                    onTap: () => _showActivityDetailDialog(
+                      _ActivityMetricDetail(
+                        title: 'Cycling',
+                        icon: Icons.directions_bike_rounded,
+                        accentColor: const Color(0xFF7C4DDB),
+                        value: '$cyclingMin min',
+                        explanation:
+                            'Minutes of cycling activity detected and summed for this day.',
+                        source: activitySource!,
+                      ),
+                    ),
+                  ),
                 ),
-              ),
+              ],
             ],
-          ],
-        ),
+          ),
         if (_runs.isNotEmpty) ...[
-          const SizedBox(height: 12),
+          if (hasMetricCards) const SizedBox(height: 12),
           for (var i = 0; i < _runs.length; i++) ...[
             if (i > 0) const SizedBox(height: 8),
             _buildRunRow(context, _runs[i]),
@@ -2436,40 +2493,241 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     required String value,
     required String label,
     required Color color,
+    required VoidCallback onTap,
   }) {
     final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.10),
+    return Material(
+      color: color.withValues(alpha: 0.10),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
         borderRadius: BorderRadius.circular(14),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: color),
-          const SizedBox(width: 8),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
             children: [
-              Text(
-                value,
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  color: colorScheme.onSurface,
-                ),
-              ),
-              Text(
-                label,
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                ),
+              Icon(icon, size: 18, color: color),
+              const SizedBox(width: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    value,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: colorScheme.onSurface,
+                    ),
+                  ),
+                  Text(
+                    label,
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
-        ],
+        ),
       ),
     );
+  }
+
+  Future<void> _showActivityDetailDialog(_ActivityMetricDetail detail) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        final theme = Theme.of(dialogContext);
+        final colorScheme = theme.colorScheme;
+        final accent = detail.accentColor;
+        return Dialog(
+          elevation: 0,
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: 24,
+          ),
+          backgroundColor: Colors.transparent,
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 440),
+            decoration: BoxDecoration(
+              color: colorScheme.surface,
+              borderRadius: BorderRadius.circular(28),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.16),
+                  blurRadius: 36,
+                  offset: const Offset(0, 18),
+                ),
+              ],
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          color: accent.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Icon(detail.icon, color: accent, size: 24),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Daily activity',
+                              style: theme.textTheme.labelLarge?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.2,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              detail.title,
+                              style: theme.textTheme.titleLarge?.copyWith(
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        tooltip: 'Close',
+                        onPressed: () => Navigator.of(dialogContext).pop(),
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(22),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          accent.withValues(alpha: 0.16),
+                          accent.withValues(alpha: 0.06),
+                        ],
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Recorded value',
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          detail.value,
+                          style: theme.textTheme.headlineMedium?.copyWith(
+                            fontWeight: FontWeight.w900,
+                            color: accent,
+                            letterSpacing: -0.4,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    detail.explanation,
+                    style: theme.textTheme.bodyLarge?.copyWith(
+                      color: colorScheme.onSurface,
+                      height: 1.45,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                    decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainerLow,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: colorScheme.outlineVariant.withValues(
+                          alpha: 0.65,
+                        ),
+                      ),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: 34,
+                          height: 34,
+                          decoration: BoxDecoration(
+                            color: colorScheme.surfaceContainerHighest,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Icon(
+                            Icons.source_rounded,
+                            size: 18,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Source',
+                                style: theme.textTheme.labelLarge?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                detail.source,
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: colorScheme.onSurfaceVariant,
+                                  height: 1.4,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  String _activitySourceDescription(DailyActivityModel activity) {
+    final label = activity.sourceLabel?.trim();
+    final source = activity.source?.trim();
+    if (label != null && label.isNotEmpty) {
+      return '$label daily activity export imported into Blue.';
+    }
+    if (source == 'google_takeout_google_fit') {
+      return 'Google Takeout / Google Fit daily activity export imported into Blue.';
+    }
+    return 'Imported daily activity data.';
   }
 
   String _formatSteps(int steps) {
@@ -2692,12 +2950,20 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: isDark ? colorScheme.primary : colorScheme.onPrimaryContainer),
+          Icon(
+            icon,
+            size: 14,
+            color: isDark
+                ? colorScheme.primary
+                : colorScheme.onPrimaryContainer,
+          ),
           const SizedBox(width: 5),
           Text(
             label,
             style: TextStyle(
-              color: isDark ? colorScheme.onSurface : colorScheme.onPrimaryContainer,
+              color: isDark
+                  ? colorScheme.onSurface
+                  : colorScheme.onPrimaryContainer,
               fontWeight: FontWeight.w600,
               fontSize: 11.5,
             ),
@@ -2778,139 +3044,141 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
           mainAxisSize: MainAxisSize.min,
           children: [
             GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: visibleCount,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: crossAxisCount,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            childAspectRatio: childAspectRatio,
-          ),
-          itemBuilder: (context, index) {
-            final item = _media[index];
-            final url = _galleryThumbUrl(item);
-            final isCover = _isSelectedMedia(model, item);
-            return InkWell(
-              onLongPress: _heroPickerEnabled || _uploadQueue.isNotEmpty
-                  ? null
-                  : () => _setHighlight(item),
-              onTap: () => _heroPickerEnabled
-                  ? _setHighlight(item)
-                  : _showImagePreview(item),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                decoration: BoxDecoration(
-                  color: colorScheme.surfaceContainer,
-                  border: Border.all(
-                    color: colorScheme.outlineVariant.withValues(alpha: 0.6),
-                    width: 1,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.12),
-                      blurRadius: 12,
-                      offset: Offset(0, 8),
-                    ),
-                  ],
-                ),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    CachedNetworkImage(
-                      imageUrl: url,
-                      fit: BoxFit.cover,
-                      httpHeaders: _authHeaders(),
-                      memCacheWidth: 300,
-                      fadeInDuration: const Duration(milliseconds: 200),
-                      placeholder: (_, __) => ColoredBox(
-                        color: colorScheme.surfaceContainerHighest,
-                        child: const Center(
-                          child: SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: visibleCount,
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: crossAxisCount,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+                childAspectRatio: childAspectRatio,
+              ),
+              itemBuilder: (context, index) {
+                final item = _media[index];
+                final url = _galleryThumbUrl(item);
+                final isCover = _isSelectedMedia(model, item);
+                return InkWell(
+                  onLongPress: _heroPickerEnabled || _uploadQueue.isNotEmpty
+                      ? null
+                      : () => _setHighlight(item),
+                  onTap: () => _heroPickerEnabled
+                      ? _setHighlight(item)
+                      : _showImagePreview(item),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainer,
+                      border: Border.all(
+                        color: colorScheme.outlineVariant.withValues(
+                          alpha: 0.6,
                         ),
+                        width: 1,
                       ),
-                      errorWidget: (_, url, __) => GestureDetector(
-                        onTap: () {
-                          CachedNetworkImage.evictFromCache(url);
-                          setState(() {});
-                        },
-                        child: ColoredBox(
-                          color: colorScheme.surfaceContainerHighest,
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.broken_image_outlined,
-                                color: colorScheme.onSurfaceVariant,
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'Tap to retry',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: colorScheme.onSurfaceVariant,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.12),
+                          blurRadius: 12,
+                          offset: Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        CachedNetworkImage(
+                          imageUrl: url,
+                          fit: BoxFit.cover,
+                          httpHeaders: _authHeaders(),
+                          memCacheWidth: 300,
+                          fadeInDuration: const Duration(milliseconds: 200),
+                          placeholder: (_, __) => ColoredBox(
+                            color: colorScheme.surfaceContainerHighest,
+                            child: const Center(
+                              child: SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
                                 ),
                               ),
-                            ],
+                            ),
                           ),
-                        ),
-                      ),
-                    ),
-                    Positioned.fill(
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              Colors.transparent,
-                              Colors.black.withValues(alpha: 0.1),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (isCover)
-                      Positioned(
-                        top: 10,
-                        right: 10,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 5,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.56),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: const Text(
-                            'Cover',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
+                          errorWidget: (_, url, __) => GestureDetector(
+                            onTap: () {
+                              CachedNetworkImage.evictFromCache(url);
+                              setState(() {});
+                            },
+                            child: ColoredBox(
+                              color: colorScheme.surfaceContainerHighest,
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.broken_image_outlined,
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Tap to retry',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: colorScheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
+                        Positioned.fill(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  Colors.transparent,
+                                  Colors.black.withValues(alpha: 0.1),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (isCover)
+                          Positioned(
+                            top: 10,
+                            right: 10,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 5,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.56),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: const Text(
+                                'Cover',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
             if (!showAll)
               Padding(
                 padding: const EdgeInsets.only(top: 12),
                 child: TextButton(
                   onPressed: () => setState(() => _galleryExpanded = true),
-                  child: Text(
-                    'Show all ${_media.length} photos',
-                  ),
+                  child: Text('Show all ${_media.length} photos'),
                 ),
               ),
           ],
@@ -2921,7 +3189,15 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
 
   static const _videoExtensions = {'.mp4', '.mov', '.avi', '.wmv'};
   static const _rawExtensions = {
-    '.dng', '.cr2', '.cr3', '.nef', '.arw', '.orf', '.rw2', '.raf', '.srw',
+    '.dng',
+    '.cr2',
+    '.cr3',
+    '.nef',
+    '.arw',
+    '.orf',
+    '.rw2',
+    '.raf',
+    '.srw',
   };
 
   static bool _isVideoFile(String name) {
@@ -2946,10 +3222,9 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     final date = media.date;
     final name = media.fileName;
     if (date.isNotEmpty && name.isNotEmpty) {
-      final compressedName =
-          (_isVideoFile(name) || _isRawFile(name))
-              ? _compressedJpgName(name)
-              : name;
+      final compressedName = (_isVideoFile(name) || _isRawFile(name))
+          ? _compressedJpgName(name)
+          : name;
       return _authenticatedUrl(
         '${AppConfig.backendUrl}/api/images/$date/compressed/$compressedName',
       );
@@ -3043,6 +3318,24 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
       'X-Blue-Client': 'mobile',
     };
   }
+}
+
+class _ActivityMetricDetail {
+  const _ActivityMetricDetail({
+    required this.title,
+    required this.icon,
+    required this.accentColor,
+    required this.value,
+    required this.explanation,
+    required this.source,
+  });
+
+  final String title;
+  final IconData icon;
+  final Color accentColor;
+  final String value;
+  final String explanation;
+  final String source;
 }
 
 class _AddPersonSheet extends StatefulWidget {

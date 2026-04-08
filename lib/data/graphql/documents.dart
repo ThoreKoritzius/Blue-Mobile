@@ -35,7 +35,7 @@ query StoriesDay($day: String!) {
         date place names description food sport highlightImage keywords country latitude longitude
       }
       run {
-        id name type distance movingTime elapsedTime averageSpeed maxSpeed totalElevationGain startDateLocal startTime
+        id name type distance movingTime elapsedTime averageSpeed maxSpeed totalElevationGain startDateLocal startTime source sourceLabel
       }
     }
   }
@@ -147,7 +147,7 @@ query RunsList($first: Int!) {
     list(first: $first) {
       edges {
         node {
-          id name type distance movingTime elapsedTime averageSpeed maxSpeed totalElevationGain startDateLocal summaryPolyline startTime
+          id name type distance movingTime elapsedTime averageSpeed maxSpeed totalElevationGain startDateLocal summaryPolyline startTime source sourceLabel
         }
       }
     }
@@ -161,7 +161,7 @@ query RunsByDate($date: String!, $first: Int!) {
     byDate(date: $date, first: $first) {
       edges {
         node {
-          id name type distance movingTime elapsedTime averageSpeed maxSpeed totalElevationGain startDateLocal summaryPolyline startTime
+          id name type distance movingTime elapsedTime averageSpeed maxSpeed totalElevationGain startDateLocal summaryPolyline startTime source sourceLabel
         }
       }
     }
@@ -220,6 +220,26 @@ query CalendarEvents($date: String) {
 }
 ''';
 
+  static const calendarConnect = r'''
+mutation CalendarConnect {
+  calendar {
+    connect {
+      message
+    }
+  }
+}
+''';
+
+  static const calendarSyncNow = r'''
+mutation CalendarSyncNow {
+  calendar {
+    syncNow {
+      message
+    }
+  }
+}
+''';
+
   static const systemDataSources = r'''
 query SystemDataSources {
   system {
@@ -230,6 +250,7 @@ query SystemDataSources {
       status
       automated
       lastSyncAt
+      detail
     }
   }
 }
@@ -269,7 +290,7 @@ query DayBundle($day: String!, $filesFirst: Int!, $runsFirst: Int!) {
     dailyActivity(dateFrom: $day, dateTo: $day, first: 1) {
       edges {
         node {
-          date moveMinutes caloriesKcal distanceM heartPoints heartMinutes stepCount avgWeightKg cyclingDurationMs walkingDurationMs runningDurationMs
+          date moveMinutes caloriesKcal distanceM heartPoints heartMinutes stepCount avgWeightKg cyclingDurationMs walkingDurationMs runningDurationMs source sourceLabel
         }
       }
     }
@@ -491,7 +512,7 @@ query DailyActivity($date: String!) {
     dailyActivity(dateFrom: $date, dateTo: $date, first: 1) {
       edges {
         node {
-          date moveMinutes caloriesKcal distanceM heartPoints heartMinutes stepCount avgWeightKg cyclingDurationMs walkingDurationMs runningDurationMs
+          date moveMinutes caloriesKcal distanceM heartPoints heartMinutes stepCount avgWeightKg cyclingDurationMs walkingDurationMs runningDurationMs source sourceLabel
         }
       }
     }

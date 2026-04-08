@@ -10,7 +10,7 @@ import '../../core/widgets/section_card.dart';
 import '../../data/models/run_detail_model.dart';
 import '../../data/models/run_model.dart';
 
-class RunDetailPage extends StatelessWidget {
+class RunDetailPage extends StatefulWidget {
   const RunDetailPage({
     super.key,
     required this.run,
@@ -23,6 +23,29 @@ class RunDetailPage extends StatelessWidget {
   final RunDetailModel detail;
 
   @override
+  State<RunDetailPage> createState() => _RunDetailPageState();
+}
+
+class _RunDetailPageState extends State<RunDetailPage> {
+  bool _showMap = true;
+  bool _allowPop = false;
+  bool _popInProgress = false;
+
+  Future<void> _handleBack() async {
+    if (_popInProgress) return;
+    _popInProgress = true;
+
+    if (_showMap && mounted) {
+      setState(() => _showMap = false);
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    if (!mounted) return;
+    _allowPop = true;
+    Navigator.of(context).pop();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
@@ -32,35 +55,48 @@ class RunDetailPage extends StatelessWidget {
     final noteLines = _buildNoteLines();
     final splits = _parseSplits();
     final bestEfforts = _parseBestEfforts();
+    final sourceLabel = _runSourceLabel;
 
-    return Scaffold(
-      backgroundColor: colorScheme.surface,
-      body: CustomScrollView(
-        slivers: [
-          SliverAppBar(
-            pinned: true,
-            backgroundColor: colorScheme.surfaceContainerHighest,
-            foregroundColor: colorScheme.onSurface,
-            title: Text(
-              run.name.isEmpty ? 'Run ${run.id}' : run.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w600,
+    return PopScope<void>(
+      canPop: _allowPop,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleBack();
+      },
+      child: Scaffold(
+        backgroundColor: colorScheme.surface,
+        body: CustomScrollView(
+          slivers: [
+            SliverAppBar(
+              pinned: true,
+              backgroundColor: colorScheme.surfaceContainerHighest,
+              foregroundColor: colorScheme.onSurface,
+              leading: BackButton(onPressed: _handleBack),
+              title: Text(
+                widget.run.name.isEmpty
+                    ? 'Run ${widget.run.id}'
+                    : widget.run.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600),
               ),
             ),
-          ),
-          SliverToBoxAdapter(
-            child: _Body(
-              routePoints: routePoints,
-              bounds: bounds,
-              stats: stats,
-              noteLines: noteLines,
-              splits: splits,
-              bestEfforts: bestEfforts,
+            SliverToBoxAdapter(
+              child: _Body(
+                routePoints: routePoints,
+                bounds: bounds,
+                stats: stats,
+                noteLines: noteLines,
+                splits: splits,
+                bestEfforts: bestEfforts,
+                sourceLabel: sourceLabel,
+                showMap: _showMap,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -86,8 +122,8 @@ class RunDetailPage extends StatelessWidget {
     final elapsedTime = _numberFromPayload('elapsed_time')?.round();
 
     final stats = <(String, String)>[
-      ('Distance', '${run.distanceKm.toStringAsFixed(2)} km'),
-      ('Date', run.startDateLocal),
+      ('Distance', '${widget.run.distanceKm.toStringAsFixed(2)} km'),
+      ('Date', widget.run.startDateLocal),
     ];
 
     if (_formattedDuration != null) {
@@ -111,14 +147,13 @@ class RunDetailPage extends StatelessWidget {
     if (calories != null && calories > 0) {
       stats.add(('Calories', calories.toStringAsFixed(0)));
     }
-
     return stats;
   }
 
   List<String> _buildNoteLines() {
     final lines = <String>[];
-    final summaryPayload = summary.payload;
-    final detailPayload = detail.payload;
+    final summaryPayload = widget.summary.payload;
+    final detailPayload = widget.detail.payload;
 
     final place = _stringFromPayload('place');
     if (place != null && place.isNotEmpty) {
@@ -145,11 +180,39 @@ class RunDetailPage extends StatelessWidget {
     return lines;
   }
 
+  String? get _runSource {
+    final summarySource = widget.summary.payload['source']?.toString().trim();
+    if (summarySource != null && summarySource.isNotEmpty) return summarySource;
+    final detailSource = widget.detail.payload['source']?.toString().trim();
+    if (detailSource != null && detailSource.isNotEmpty) return detailSource;
+    final modelSource = widget.run.source.trim();
+    if (modelSource.isNotEmpty) return modelSource;
+    return null;
+  }
+
+  String? get _runSourceLabel {
+    final summaryLabel = widget.summary.payload['source_label']
+        ?.toString()
+        .trim();
+    if (summaryLabel != null && summaryLabel.isNotEmpty) return summaryLabel;
+    final detailLabel = widget.detail.payload['source_label']
+        ?.toString()
+        .trim();
+    if (detailLabel != null && detailLabel.isNotEmpty) return detailLabel;
+    final modelLabel = widget.run.sourceLabel.trim();
+    if (modelLabel.isNotEmpty) return modelLabel;
+    final source = _runSource;
+    if (source == 'strava') return 'Strava';
+    if (source == null || source.isEmpty) return null;
+    return source.replaceAll('_', ' ');
+  }
+
   /// Parse per-km splits from Strava detail JSON.
   /// The data can be either a list or wrapped in {"0": [...]}.
   List<_Split> _parseSplits() {
-    final raw = detail.payload['splits_metric'] ??
-        summary.payload['splits_metric'];
+    final raw =
+        widget.detail.payload['splits_metric'] ??
+        widget.summary.payload['splits_metric'];
     if (raw == null) return const [];
 
     List<dynamic> items;
@@ -185,8 +248,9 @@ class RunDetailPage extends StatelessWidget {
 
   /// Parse best efforts from Strava detail JSON.
   List<_BestEffort> _parseBestEfforts() {
-    final raw = detail.payload['best_efforts'] ??
-        summary.payload['best_efforts'];
+    final raw =
+        widget.detail.payload['best_efforts'] ??
+        widget.summary.payload['best_efforts'];
     if (raw == null) return const [];
 
     List<dynamic> items;
@@ -217,7 +281,7 @@ class RunDetailPage extends StatelessWidget {
 
   List<LatLng> _decodePolylinePoints() {
     final polyline =
-        _stringFromPayload('summary_polyline') ?? run.summaryPolyline;
+        _stringFromPayload('summary_polyline') ?? widget.run.summaryPolyline;
     if (polyline.isEmpty) return const [];
     try {
       return decodePolyline(
@@ -245,11 +309,11 @@ class RunDetailPage extends StatelessWidget {
   }
 
   String? _stringFromPayload(String key) {
-    final summaryValue = summary.payload[key];
+    final summaryValue = widget.summary.payload[key];
     if (summaryValue != null && summaryValue.toString().trim().isNotEmpty) {
       return summaryValue.toString();
     }
-    final detailValue = detail.payload[key];
+    final detailValue = widget.detail.payload[key];
     if (detailValue != null && detailValue.toString().trim().isNotEmpty) {
       return detailValue.toString();
     }
@@ -257,7 +321,7 @@ class RunDetailPage extends StatelessWidget {
   }
 
   double? _numberFromPayload(String key) {
-    final value = summary.payload[key] ?? detail.payload[key];
+    final value = widget.summary.payload[key] ?? widget.detail.payload[key];
     if (value is num) return value.toDouble();
     if (value is Map) {
       // Strava export: {"0": 1234}
@@ -336,6 +400,8 @@ class _Body extends StatelessWidget {
     required this.noteLines,
     required this.splits,
     required this.bestEfforts,
+    required this.sourceLabel,
+    required this.showMap,
   });
 
   final List<LatLng> routePoints;
@@ -344,10 +410,12 @@ class _Body extends StatelessWidget {
   final List<String> noteLines;
   final List<_Split> splits;
   final List<_BestEffort> bestEfforts;
+  final String? sourceLabel;
+  final bool showMap;
 
   @override
   Widget build(BuildContext context) {
-    final hasMap = routePoints.length >= 2;
+    final hasMap = showMap && routePoints.length >= 2;
     const maxContentWidth = 960.0;
 
     return Center(
@@ -358,8 +426,7 @@ class _Body extends StatelessWidget {
           child: Column(
             children: [
               if (hasMap)
-                _RouteMapCard(
-                    points: routePoints, bounds: bounds, height: 280),
+                _RouteMapCard(points: routePoints, bounds: bounds, height: 280),
               if (hasMap) const SizedBox(height: 12),
               _StatsSection(stats: stats),
               if (splits.isNotEmpty) const SizedBox(height: 12),
@@ -369,10 +436,59 @@ class _Body extends StatelessWidget {
                 _BestEffortsSection(efforts: bestEfforts),
               if (noteLines.isNotEmpty) const SizedBox(height: 12),
               if (noteLines.isNotEmpty) _DetailsSection(noteLines: noteLines),
+              if (sourceLabel != null && sourceLabel!.isNotEmpty)
+                const SizedBox(height: 14),
+              if (sourceLabel != null && sourceLabel!.isNotEmpty)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: _SourceFooter(label: sourceLabel!),
+                ),
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+class _SourceFooter extends StatelessWidget {
+  const _SourceFooter({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    return Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 8,
+      children: [
+        Text(
+          'Origin',
+          style: theme.textTheme.labelMedium?.copyWith(
+            color: colorScheme.onSurfaceVariant,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.2,
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerLow,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+            ),
+          ),
+          child: Text(
+            label,
+            style: theme.textTheme.labelLarge?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -432,28 +548,38 @@ class _SplitsSection extends StatelessWidget {
               children: [
                 SizedBox(
                   width: 32,
-                  child: Text('km',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant)),
+                  child: Text(
+                    'km',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
                 ),
                 Expanded(
-                  child: Text('Pace',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant)),
+                  child: Text(
+                    'Pace',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
                 ),
                 SizedBox(
                   width: 52,
-                  child: Text('Elev',
-                      textAlign: TextAlign.right,
-                      style: theme.textTheme.labelSmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant)),
+                  child: Text(
+                    'Elev',
+                    textAlign: TextAlign.right,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
                 ),
               ],
             ),
           ),
           ...splits.map((split) {
-            final secsPerKm =
-                split.avgSpeedMs > 0 ? 1000 / split.avgSpeedMs : 0.0;
+            final secsPerKm = split.avgSpeedMs > 0
+                ? 1000 / split.avgSpeedMs
+                : 0.0;
             // Bar fill: 1.0 = fastest, smaller = slower
             final barFraction = paceRange > 0
                 ? 1.0 - ((secsPerKm - fastestPace) / paceRange) * 0.6
@@ -484,14 +610,16 @@ class _SplitsSection extends StatelessWidget {
                               children: [
                                 Container(
                                   height: 22,
-                                  width: constraints.maxWidth *
+                                  width:
+                                      constraints.maxWidth *
                                       barFraction.clamp(0.1, 1.0),
                                   decoration: BoxDecoration(
                                     color: isFastest
-                                        ? colorScheme.primary
-                                            .withValues(alpha: 0.25)
+                                        ? colorScheme.primary.withValues(
+                                            alpha: 0.25,
+                                          )
                                         : colorScheme.primaryContainer
-                                            .withValues(alpha: 0.5),
+                                              .withValues(alpha: 0.5),
                                     borderRadius: BorderRadius.circular(4),
                                   ),
                                 ),
@@ -499,19 +627,18 @@ class _SplitsSection extends StatelessWidget {
                                   child: Align(
                                     alignment: Alignment.centerLeft,
                                     child: Padding(
-                                      padding:
-                                          const EdgeInsets.only(left: 6),
+                                      padding: const EdgeInsets.only(left: 6),
                                       child: Text(
                                         '${split.pace} /km',
                                         style: theme.textTheme.bodySmall
                                             ?.copyWith(
-                                          fontWeight: isFastest
-                                              ? FontWeight.w800
-                                              : FontWeight.w600,
-                                          color: isFastest
-                                              ? colorScheme.primary
-                                              : colorScheme.onSurface,
-                                        ),
+                                              fontWeight: isFastest
+                                                  ? FontWeight.w800
+                                                  : FontWeight.w600,
+                                              color: isFastest
+                                                  ? colorScheme.primary
+                                                  : colorScheme.onSurface,
+                                            ),
                                       ),
                                     ),
                                   ),
@@ -703,7 +830,9 @@ class _RouteMapCard extends StatelessWidget {
                     color: theme.colorScheme.primary,
                     shape: BoxShape.circle,
                     border: Border.all(
-                        color: theme.colorScheme.surface, width: 2),
+                      color: theme.colorScheme.surface,
+                      width: 2,
+                    ),
                   ),
                 ),
               ),
@@ -716,7 +845,9 @@ class _RouteMapCard extends StatelessWidget {
                     color: theme.colorScheme.tertiary,
                     shape: BoxShape.circle,
                     border: Border.all(
-                        color: theme.colorScheme.surface, width: 2),
+                      color: theme.colorScheme.surface,
+                      width: 2,
+                    ),
                   ),
                 ),
               ),

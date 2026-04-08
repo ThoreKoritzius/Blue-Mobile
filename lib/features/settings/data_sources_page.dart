@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 
 import '../../core/network/graphql_service.dart';
 import '../../core/utils/breakpoints.dart';
+import '../../data/graphql/documents.dart';
 import '../../data/models/data_source_status_model.dart';
 import '../../providers.dart';
 
@@ -19,8 +20,10 @@ class _DataSourcesPageState extends ConsumerState<DataSourcesPage> {
   late Future<List<DataSourceStatusModel>> _sourcesFuture;
   bool _timelineImporting = false;
   bool _takeoutImporting = false;
+  bool _calendarLoading = false;
   String? _timelineImportResult;
   String? _takeoutImportResult;
+  String? _calendarResult;
 
   @override
   void initState() {
@@ -169,6 +172,76 @@ class _DataSourcesPageState extends ConsumerState<DataSourcesPage> {
     } finally {
       setState(() {
         _takeoutImporting = false;
+      });
+    }
+  }
+
+  Future<void> _calendarConnect() async {
+    await _runCalendarMutation(
+      document: GqlDocuments.calendarConnect,
+      title: 'Google Calendar Connected',
+      intro: 'The current Google Calendar connection was stored and synced.',
+      errorTitle: 'Calendar Connection Failed',
+      errorIntro:
+          'Google Calendar could not be connected. Make sure a Google access token is available from the proxy.',
+      responseKey: 'connect',
+    );
+  }
+
+  Future<void> _calendarSyncNow() async {
+    await _runCalendarMutation(
+      document: GqlDocuments.calendarSyncNow,
+      title: 'Google Calendar Synced',
+      intro: 'Your primary Google Calendar was synced into local storage.',
+      errorTitle: 'Calendar Sync Failed',
+      errorIntro: 'Google Calendar could not be synced.',
+      responseKey: 'syncNow',
+    );
+  }
+
+  Future<void> _runCalendarMutation({
+    required String document,
+    required String title,
+    required String intro,
+    required String errorTitle,
+    required String errorIntro,
+    required String responseKey,
+  }) async {
+    setState(() {
+      _calendarLoading = true;
+      _calendarResult = null;
+    });
+    try {
+      final data = await ref.read(graphqlServiceProvider).mutate(document);
+      final message =
+          (data['calendar'] as Map?)?[responseKey]?['message'] as String?;
+      final resultMessage = message ?? 'Sync complete';
+      setState(() {
+        _calendarResult = resultMessage;
+      });
+      await _refreshSources();
+      if (!mounted) return;
+      await _showImportDialog(
+        title: title,
+        intro: intro,
+        message: resultMessage,
+        isError: false,
+      );
+    } catch (e) {
+      final errorMessage = e.toString().replaceFirst('Exception: ', '');
+      setState(() {
+        _calendarResult = 'Error: $errorMessage';
+      });
+      if (!mounted) return;
+      await _showImportDialog(
+        title: errorTitle,
+        intro: errorIntro,
+        message: errorMessage,
+        isError: true,
+      );
+    } finally {
+      setState(() {
+        _calendarLoading = false;
       });
     }
   }
@@ -358,16 +431,24 @@ class _DataSourcesPageState extends ConsumerState<DataSourcesPage> {
                                           _timelineImportResult,
                                         'google_takeout' =>
                                           _takeoutImportResult,
+                                        'google_calendar' => _calendarResult,
                                         _ => null,
                                       },
                                       importing: switch (source.key) {
                                         'google_timeline' => _timelineImporting,
                                         'google_takeout' => _takeoutImporting,
+                                        'google_calendar' => _calendarLoading,
                                         _ => false,
                                       },
                                       onImport: switch (source.key) {
                                         'google_timeline' => _importTimeline,
                                         'google_takeout' => _importTakeout,
+                                        'google_calendar' =>
+                                          source.status.toLowerCase().contains(
+                                                'needs connection',
+                                              )
+                                              ? _calendarConnect
+                                              : _calendarSyncNow,
                                         _ => null,
                                       },
                                       formatTimestamp: _formatTimestamp,
@@ -497,7 +578,7 @@ class _DataSourceCard extends StatelessWidget {
     final colorScheme = theme.colorScheme;
     final accentColor = _accentColor(colorScheme);
     final statusTone = _statusTone(colorScheme);
-    final note = importResult ?? source.description;
+    final note = importResult ?? source.detail ?? source.description;
 
     return Card(
       elevation: 0,
@@ -655,7 +736,7 @@ class _DataSourceCard extends StatelessWidget {
                       )
                     : FilledButton.icon(
                         onPressed: onImport,
-                        icon: const Icon(Icons.upload_file_rounded),
+                        icon: Icon(_buttonIcon()),
                         label: Text(_buttonLabel()),
                       ),
               ),
@@ -705,8 +786,26 @@ class _DataSourceCard extends StatelessWidget {
         return 'Upload Timeline JSON';
       case 'google_takeout':
         return 'Upload Takeout ZIP';
+      case 'google_calendar':
+        return source.status.toLowerCase().contains('needs connection')
+            ? 'Connect Google Calendar'
+            : 'Sync Google Calendar';
       default:
         return 'Upload';
+    }
+  }
+
+  IconData _buttonIcon() {
+    switch (source.key) {
+      case 'google_timeline':
+      case 'google_takeout':
+        return Icons.upload_file_rounded;
+      case 'google_calendar':
+        return source.status.toLowerCase().contains('needs connection')
+            ? Icons.link_rounded
+            : Icons.sync_rounded;
+      default:
+        return Icons.play_arrow_rounded;
     }
   }
 
@@ -716,6 +815,10 @@ class _DataSourceCard extends StatelessWidget {
         return 'Uploading Timeline JSON';
       case 'google_takeout':
         return 'Uploading Takeout ZIP';
+      case 'google_calendar':
+        return source.status.toLowerCase().contains('needs connection')
+            ? 'Connecting Google Calendar'
+            : 'Syncing Google Calendar';
       default:
         return 'Uploading';
     }
