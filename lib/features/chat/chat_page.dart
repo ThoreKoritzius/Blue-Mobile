@@ -1,22 +1,17 @@
 import 'dart:async';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/config/app_config.dart';
 import '../../core/utils/date_format.dart';
-import '../../data/models/chat_attachment_model.dart';
 import '../../data/models/chat_event_model.dart';
 import '../../data/models/chat_response_model.dart';
-import '../../data/models/chat_widget_model.dart';
-import 'widgets/chat_inline_chart.dart';
-import 'widgets/chat_inline_map.dart';
 import '../../data/models/story_day_model.dart';
 import '../../providers.dart';
+import 'chat_models.dart';
 import 'chat_parsing.dart';
+import 'widgets/chat_message_tile.dart';
 
 class ChatPage extends ConsumerStatefulWidget {
   const ChatPage({super.key});
@@ -28,7 +23,7 @@ class ChatPage extends ConsumerStatefulWidget {
 class _ChatPageState extends ConsumerState<ChatPage> {
   final _input = TextEditingController();
   final _scrollController = ScrollController();
-  final _messages = <_UiMessage>[];
+  final _messages = <UiMessage>[];
   StreamSubscription<ChatEventModel>? _streamSub;
   bool _sending = false;
   bool _autoScroll = true;
@@ -54,6 +49,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     super.dispose();
   }
 
+  // ---------------------------------------------------------------------------
+  // Scroll
+  // ---------------------------------------------------------------------------
+
   void _handleScroll() {
     if (!_scrollController.hasClients) return;
     final position = _scrollController.position;
@@ -75,36 +74,36 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
   }
 
-  Future<void> _send() async {
-    final prompt = _input.text.trim();
+  // ---------------------------------------------------------------------------
+  // Send / Stream
+  // ---------------------------------------------------------------------------
+
+  Future<void> _send([String? overridePrompt]) async {
+    final prompt = overridePrompt ?? _input.text.trim();
     if (prompt.isEmpty || _sending) return;
 
     final chatRepo = ref.read(chatRepositoryProvider);
     final history = [
-      ..._messages.map((item) => {'role': item.role, 'content': item.rawText}),
+      ..._messages.map((m) => {'role': m.role, 'content': m.rawText}),
       {'role': 'user', 'content': prompt},
     ];
 
     final assistantId = DateTime.now().microsecondsSinceEpoch.toString();
 
     setState(() {
-      _messages.add(
-        _UiMessage(
-          id: 'u_$assistantId',
-          role: 'user',
-          rawText: prompt,
-          text: prompt,
-        ),
-      );
-      _messages.add(
-        _UiMessage(
-          id: assistantId,
-          role: 'assistant',
-          rawText: '',
-          text: '',
-          state: _UiMessageState.streaming,
-        ),
-      );
+      _messages.add(UiMessage(
+        id: 'u_$assistantId',
+        role: 'user',
+        rawText: prompt,
+        text: prompt,
+      ));
+      _messages.add(UiMessage(
+        id: assistantId,
+        role: 'assistant',
+        rawText: '',
+        text: '',
+        state: UiMessageState.streaming,
+      ));
       _sending = true;
       _input.clear();
       _autoScroll = true;
@@ -115,122 +114,131 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     var streamedAnyDelta = false;
 
     _streamSub?.cancel();
-    _streamSub = chatRepo
-        .stream(history)
-        .listen(
-          (event) {
-            if (!mounted) return;
-            switch (event.type) {
-              case 'status':
-                final nextStatus = _UiStatusEntry(
-                  id: '${assistantId}_${event.stage ?? 'status'}_${DateTime.now().microsecondsSinceEpoch}',
-                  stage: event.stage ?? 'status',
-                  summary: event.summary ?? '',
-                  meta: event.meta ?? const {},
-                );
-                _updateAssistant(
-                  assistantId,
-                  (message) => message.copyWith(
-                    statuses: [
-                      ...message.statuses,
-                      if (nextStatus.summary.trim().isNotEmpty) nextStatus,
-                    ],
-                  ),
-                );
-                break;
-              case 'delta':
-                final delta = event.delta ?? '';
-                if (delta.isEmpty) break;
-                streamedAnyDelta = true;
-                buffer += delta;
-                final attachments = parseChatAttachments(buffer);
-                _updateAssistant(
-                  assistantId,
-                  (message) => message.copyWith(
-                    rawText: buffer,
-                    text: attachments.text,
-                    dates: attachments.dates,
-                    images: attachments.images,
-                    state: _UiMessageState.streaming,
-                  ),
-                );
-                break;
-              case 'final':
-                final response = event.response;
-                if (response != null) {
-                  final parsed = response.copyWithAttachments(
-                    parseChatAttachments(response.text),
-                  );
-                  _applyFinalResponse(assistantId, parsed);
-                }
-                break;
-              case 'done':
-                _updateAssistant(
-                  assistantId,
-                  (message) => message.copyWith(state: _UiMessageState.done),
-                );
-                setState(() => _sending = false);
-                break;
-              case 'error':
-                _updateAssistant(
-                  assistantId,
-                  (message) => message.copyWith(
-                    state: _UiMessageState.error,
-                    errorText: event.message ?? 'Stream failed.',
-                  ),
-                );
-                setState(() => _sending = false);
-                break;
-            }
-            WidgetsBinding.instance.addPostFrameCallback(
-              (_) => _scrollToBottom(),
+    _streamSub = chatRepo.stream(history).listen(
+      (event) {
+        if (!mounted) return;
+        switch (event.type) {
+          case 'status':
+            final nextStatus = UiStatusEntry(
+              id: '${assistantId}_${event.stage ?? 'status'}_${DateTime.now().microsecondsSinceEpoch}',
+              stage: event.stage ?? 'status',
+              summary: event.summary ?? '',
+              meta: event.meta ?? const {},
             );
-          },
-          onError: (_) async {
-            if (!mounted) return;
-            if (streamedAnyDelta) {
-              _updateAssistant(
-                assistantId,
-                (message) => message.copyWith(
-                  state: _UiMessageState.error,
-                  errorText: 'Streaming stopped. You can retry.',
-                ),
+            _updateAssistant(
+              assistantId,
+              (m) => m.copyWith(
+                statuses: [
+                  ...m.statuses,
+                  if (nextStatus.summary.trim().isNotEmpty) nextStatus,
+                ],
+              ),
+            );
+            break;
+          case 'delta':
+            final delta = event.delta ?? '';
+            if (delta.isEmpty) break;
+            streamedAnyDelta = true;
+            buffer += delta;
+            final attachments = parseChatAttachments(buffer);
+            _updateAssistant(
+              assistantId,
+              (m) => m.copyWith(
+                rawText: buffer,
+                text: attachments.text,
+                dates: attachments.dates,
+                images: attachments.images,
+                state: UiMessageState.streaming,
+              ),
+            );
+            break;
+          case 'final':
+            final response = event.response;
+            if (response != null) {
+              final parsed = response.copyWithAttachments(
+                parseChatAttachments(response.text),
               );
-              setState(() => _sending = false);
-              return;
+              _applyFinalResponse(assistantId, parsed);
             }
+            break;
+          case 'done':
+            _updateAssistant(
+              assistantId,
+              (m) => m.copyWith(state: UiMessageState.done),
+            );
+            setState(() => _sending = false);
+            break;
+          case 'error':
+            _updateAssistant(
+              assistantId,
+              (m) => m.copyWith(
+                state: UiMessageState.error,
+                errorText: event.message ?? 'Stream failed.',
+              ),
+            );
+            setState(() => _sending = false);
+            break;
+        }
+        WidgetsBinding.instance
+            .addPostFrameCallback((_) => _scrollToBottom());
+      },
+      onError: (_) async {
+        if (!mounted) return;
+        if (streamedAnyDelta) {
+          _updateAssistant(
+            assistantId,
+            (m) => m.copyWith(
+              state: UiMessageState.error,
+              errorText: 'Streaming stopped. You can retry.',
+            ),
+          );
+          setState(() => _sending = false);
+          return;
+        }
+        try {
+          final fallback = await chatRepo.complete(history);
+          if (!mounted) return;
+          _applyFinalResponse(assistantId, fallback);
+        } catch (error) {
+          if (!mounted) return;
+          _updateAssistant(
+            assistantId,
+            (m) => m.copyWith(
+              state: UiMessageState.error,
+              errorText: error.toString().replaceFirst('Exception: ', ''),
+            ),
+          );
+        } finally {
+          if (mounted) setState(() => _sending = false);
+        }
+      },
+      onDone: () {
+        if (mounted) setState(() => _sending = false);
+      },
+    );
+  }
 
-            try {
-              final fallback = await chatRepo.complete(history);
-              if (!mounted) return;
-              _applyFinalResponse(assistantId, fallback);
-            } catch (error) {
-              if (!mounted) return;
-              _updateAssistant(
-                assistantId,
-                (message) => message.copyWith(
-                  state: _UiMessageState.error,
-                  errorText: error.toString().replaceFirst('Exception: ', ''),
-                ),
-              );
-            } finally {
-              if (mounted) {
-                setState(() => _sending = false);
-              }
-            }
-          },
-          onDone: () {
-            if (mounted) {
-              setState(() => _sending = false);
-            }
-          },
-        );
+  void _stopStream() {
+    _streamSub?.cancel();
+    _streamSub = null;
+    final lastAssistant = _messages.lastWhere(
+      (m) => m.role == 'assistant',
+      orElse: () => const UiMessage(id: '', role: '', rawText: '', text: ''),
+    );
+    if (lastAssistant.id.isNotEmpty &&
+        lastAssistant.state == UiMessageState.streaming) {
+      _updateAssistant(
+        lastAssistant.id,
+        (m) => m.copyWith(state: UiMessageState.done),
+      );
+    }
+    setState(() => _sending = false);
   }
 
   void _applyFinalResponse(String id, ChatResponseModel response) {
     _updateAssistant(
       id,
-      (message) => message.copyWith(
+      (m) => m.copyWith(
         rawText: response.text,
         text: response.text,
         dates: response.dates,
@@ -238,16 +246,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         toolCalls: response.toolCalls,
         maps: response.maps,
         charts: response.charts,
-        state: _UiMessageState.done,
+        state: UiMessageState.done,
         clearError: true,
       ),
     );
     setState(() => _sending = false);
   }
 
-  void _updateAssistant(String id, _UiMessage Function(_UiMessage) update) {
+  void _updateAssistant(String id, UiMessage Function(UiMessage) update) {
     setState(() {
-      final index = _messages.indexWhere((item) => item.id == id);
+      final index = _messages.indexWhere((m) => m.id == id);
       if (index == -1) return;
       _messages[index] = update(_messages[index]);
     });
@@ -255,20 +263,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   void _retryLastPrompt() {
     final lastUser = _messages.lastWhere(
-      (item) => item.role == 'user',
+      (m) => m.role == 'user',
       orElse: () =>
-          const _UiMessage(id: '', role: 'user', rawText: '', text: ''),
+          const UiMessage(id: '', role: 'user', rawText: '', text: ''),
     );
     if (lastUser.rawText.isEmpty) return;
-    _input.text = lastUser.rawText;
-    _send();
+    _send(lastUser.rawText);
   }
 
   Future<StoryDayModel?> _loadDayPreview(String date) {
     final cached = _dayPreviewCache[date];
-    if (cached != null) {
-      return Future.value(cached);
-    }
+    if (cached != null) return Future.value(cached);
     final existing = _dayPreviewFutures[date];
     if (existing != null) return existing;
 
@@ -294,1260 +299,263 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     ref.read(selectedTabProvider.notifier).state = 0;
   }
 
+  // ---------------------------------------------------------------------------
+  // Build
+  // ---------------------------------------------------------------------------
+
+  /// Constrains a child to the centered content column.
+  Widget _constrained(Widget child) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 768),
+        child: child,
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
     return Column(
       children: [
         Expanded(
           child: _messages.isEmpty
               ? _buildEmptyState(theme)
-              : Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 768),
-                    child: ListView.builder(
-                      controller: _scrollController,
-                      padding: const EdgeInsets.fromLTRB(16, 18, 16, 18),
-                      itemCount: _messages.length + 1,
-                      itemBuilder: (context, index) {
-                        if (index < _messages.length) {
-                          return _buildMessageBubble(
-                              context, theme, _messages[index]);
-                        }
-                        if (_sending) return const SizedBox.shrink();
-                        return Padding(
-                          padding: const EdgeInsets.only(top: 24, bottom: 8),
-                          child: Center(
-                            child: TextButton.icon(
-                              onPressed: () =>
-                                  setState(() => _messages.clear()),
-                              icon: Icon(Icons.delete_outline,
-                                  size: 18,
-                                  color: colorScheme.onSurfaceVariant),
-                              label: Text(
-                                'Clear chat',
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                    color: colorScheme.onSurfaceVariant),
-                              ),
-                            ),
+              : ListView.builder(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.fromLTRB(0, 24, 0, 16),
+                  itemCount: _messages.length + 1,
+                  itemBuilder: (context, index) {
+                    if (index < _messages.length) {
+                      return _constrained(
+                        Padding(
+                          padding:
+                              const EdgeInsets.symmetric(horizontal: 16),
+                          child: ChatMessageTile(
+                            message: _messages[index],
+                            expandedDetailIds: _expandedDetailIds,
+                            onToggleDetail: (id) {
+                              setState(() {
+                                if (_expandedDetailIds.contains(id)) {
+                                  _expandedDetailIds.remove(id);
+                                } else {
+                                  _expandedDetailIds.add(id);
+                                }
+                              });
+                            },
+                            onOpenDay: _openDayFromChat,
+                            onRetry: _retryLastPrompt,
+                            loadDayPreview: _loadDayPreview,
                           ),
-                        );
-                      },
-                    ),
-                  ),
-                ),
-        ),
-        SafeArea(
-          top: false,
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 768),
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
-                decoration: BoxDecoration(
-                  color: colorScheme.surface,
-                  border: Border(
-                    top: BorderSide(color: colorScheme.outlineVariant),
-                  ),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Expanded(
-                      child: Focus(
-                        onKeyEvent: (node, event) {
-                          if (event is KeyDownEvent &&
-                              event.logicalKey ==
-                                  LogicalKeyboardKey.enter &&
-                              !HardwareKeyboard.instance.isShiftPressed) {
-                            if (!_sending) _send();
-                            return KeyEventResult.handled;
-                          }
-                          return KeyEventResult.ignored;
-                        },
-                        child: TextField(
-                          controller: _input,
-                          minLines: 1,
-                          maxLines: 6,
-                          textInputAction: TextInputAction.newline,
-                          decoration: const InputDecoration(
-                            hintText: 'Message Blue...',
-                            contentPadding: EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 14,
+                        ),
+                      );
+                    }
+                    if (_sending) return const SizedBox.shrink();
+                    return _constrained(
+                      Padding(
+                        padding:
+                            const EdgeInsets.only(top: 16, bottom: 8),
+                        child: Center(
+                          child: TextButton.icon(
+                            onPressed: () =>
+                                setState(() => _messages.clear()),
+                            icon: Icon(Icons.delete_outline,
+                                size: 16,
+                                color:
+                                    theme.colorScheme.onSurfaceVariant),
+                            label: Text(
+                              'Clear chat',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme
+                                      .colorScheme.onSurfaceVariant),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 10),
-                    FilledButton(
-                      onPressed: _sending ? null : _send,
-                      style: FilledButton.styleFrom(
-                        minimumSize: const Size(50, 50),
-                        padding: EdgeInsets.zero,
-                      ),
-                      child: _sending
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Icon(Icons.arrow_upward_rounded),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildEmptyState(ThemeData theme) {
-    final colorScheme = theme.colorScheme;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 28),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.auto_awesome_outlined,
-              color: colorScheme.primary,
-              size: 48,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Ask about your days',
-              style: theme.textTheme.headlineMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Memories, runs, places, photos.',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMessageBubble(
-    BuildContext context,
-    ThemeData theme,
-    _UiMessage item,
-  ) {
-    final isUser = item.role == 'user';
-    final colorScheme = theme.colorScheme;
-    final bubbleColor = isUser
-        ? colorScheme.primary
-        : colorScheme.surfaceContainer;
-    final textColor = isUser ? colorScheme.onPrimary : colorScheme.onSurface;
-    final screenWidth = MediaQuery.sizeOf(context).width;
-    final maxBubbleWidth = screenWidth > 768
-        ? 640.0
-        : screenWidth * 0.85;
-    final borderRadius = BorderRadius.only(
-      topLeft: const Radius.circular(20),
-      topRight: const Radius.circular(20),
-      bottomLeft: Radius.circular(isUser ? 20 : 6),
-      bottomRight: Radius.circular(isUser ? 6 : 20),
-    );
-
-    return Align(
-      alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        constraints: BoxConstraints(maxWidth: maxBubbleWidth),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: bubbleColor,
-          borderRadius: borderRadius,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (isUser)
-              Text(
-                item.text,
-                style: theme.textTheme.bodyLarge?.copyWith(
-                  color: textColor,
-                  height: 1.45,
-                ),
-              )
-            else ...[
-              if (item.statuses.isNotEmpty || item.toolCalls.isNotEmpty)
-                _AgentActivityBar(
-                  messageId: item.id,
-                  statuses: item.statuses,
-                  toolCalls: item.toolCalls,
-                  isStreaming: item.state == _UiMessageState.streaming,
-                  hasText: item.text.trim().isNotEmpty,
-                  expandedDetailIds: _expandedDetailIds,
-                  onToggleDetail: (id) {
-                    setState(() {
-                      if (_expandedDetailIds.contains(id)) {
-                        _expandedDetailIds.remove(id);
-                      } else {
-                        _expandedDetailIds.add(id);
-                      }
-                    });
-                  },
-                ),
-              MarkdownBody(
-                data:
-                    item.text.isEmpty && item.state == _UiMessageState.streaming
-                    ? ' '
-                    : item.text,
-                selectable: false,
-                sizedImageBuilder: (config) => Padding(
-                  padding: const EdgeInsets.only(top: 10),
-                  child: SizedBox(
-                    width: config.width,
-                    height: config.height,
-                    child: _InlineChatImage(
-                      imageUrl: _resolveChatImageUrl(config.uri.toString()),
-                      headers: _authHeaders(),
-                      onTap: () => _showImagePreview(
-                        context,
-                        ChatAttachmentImage(path: config.uri.toString()),
-                      ),
-                    ),
-                  ),
-                ),
-                styleSheet: MarkdownStyleSheet(
-                  p: theme.textTheme.bodyLarge?.copyWith(
-                    color: textColor,
-                    height: 1.5,
-                  ),
-                  code: theme.textTheme.bodyMedium?.copyWith(
-                    color: colorScheme.primary,
-                    backgroundColor: colorScheme.primary.withValues(
-                      alpha: 0.14,
-                    ),
-                  ),
-                  blockquote: theme.textTheme.bodyMedium?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                  listBullet: theme.textTheme.bodyLarge?.copyWith(
-                    color: textColor,
-                  ),
-                  a: TextStyle(color: colorScheme.primary),
-                ),
-                onTapLink: (text, href, title) {},
-              ),
-            ],
-            if (item.state == _UiMessageState.streaming && item.text.isEmpty && item.statuses.isEmpty) ...[
-              const SizedBox(height: 8),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: const [
-                  _TypingDot(delay: 0),
-                  SizedBox(width: 4),
-                  _TypingDot(delay: 120),
-                  SizedBox(width: 4),
-                  _TypingDot(delay: 240),
-                ],
-              ),
-            ],
-            if (item.dates.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              SizedBox(
-                height: 124,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: item.dates.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 10),
-                  itemBuilder: (context, index) {
-                    final date = item.dates[index];
-                    return FutureBuilder<StoryDayModel?>(
-                      future: _loadDayPreview(date),
-                      builder: (context, snapshot) {
-                        return _DayMemoryCard(
-                          date: date,
-                          story: snapshot.data,
-                          loading:
-                              snapshot.connectionState ==
-                              ConnectionState.waiting,
-                          headers: _authHeaders(),
-                          onTap: () => _openDayFromChat(date),
-                        );
-                      },
                     );
                   },
                 ),
-              ),
-            ],
-            if (item.images.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              _buildInlineImageGallery(context, theme, item.images),
-            ],
-            if (item.maps.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              for (final mapSpec in item.maps)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: ChatInlineMap(spec: mapSpec),
-                ),
-            ],
-            if (item.charts.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              for (final chartSpec in item.charts)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: ChatInlineChart(spec: chartSpec),
-                ),
-            ],
-            if (item.state == _UiMessageState.error &&
-                item.errorText != null &&
-                item.errorText!.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: colorScheme.errorContainer,
-                  borderRadius: BorderRadius.circular(12),
-                ),
+        ),
+        _buildInputBar(theme),
+      ],
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Empty state with suggestion chips
+  // ---------------------------------------------------------------------------
+
+  Widget _buildEmptyState(ThemeData theme) {
+    final colorScheme = theme.colorScheme;
+
+    const suggestions = [
+      'What did I do last weekend?',
+      'Show my running stats',
+      'Best photos from March',
+      'Where have I traveled?',
+      'Summarize this month',
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        controller: _scrollController,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: constraints.maxHeight),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 480),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 28),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
+                    Container(
+                      width: 52,
+                      height: 52,
+                      decoration: BoxDecoration(
+                        color: colorScheme.primaryContainer,
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.auto_awesome,
+                        color: colorScheme.onPrimaryContainer,
+                        size: 26,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
                     Text(
-                      item.errorText!,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: colorScheme.onErrorContainer,
-                        fontWeight: FontWeight.w600,
+                      'Ask about your days',
+                      style: theme.textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                     const SizedBox(height: 8),
-                    TextButton(
-                      onPressed: _retryLastPrompt,
-                      child: const Text('Retry'),
+                    Text(
+                      'Memories, runs, places, photos — all searchable.',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 28),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      alignment: WrapAlignment.center,
+                      children: suggestions
+                          .map((s) => ActionChip(
+                                label: Text(s),
+                                onPressed: () => _send(s),
+                                backgroundColor:
+                                    colorScheme.surfaceContainerLow,
+                                side: BorderSide(
+                                  color: colorScheme.outlineVariant
+                                      .withValues(alpha: 0.5),
+                                ),
+                                labelStyle:
+                                    theme.textTheme.bodyMedium?.copyWith(
+                                  color: colorScheme.onSurface,
+                                ),
+                              ))
+                          .toList(),
                     ),
                   ],
                 ),
               ),
-            ],
-          ],
+            ),
+          ),
         ),
       ),
     );
   }
 
-  Future<void> _showImagePreview(
-    BuildContext context,
-    ChatAttachmentImage image,
-  ) async {
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        return Dialog(
-          insetPadding: const EdgeInsets.all(18),
-          backgroundColor: Colors.transparent,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(24),
-            child: CachedNetworkImage(
-              imageUrl: _resolveChatImageUrl(image.path),
-              fit: BoxFit.contain,
-              httpHeaders: _authHeaders(),
-              errorWidget: (_, __, ___) => Container(
-                height: 260,
-                color: Theme.of(context).colorScheme.surface,
-                child: const Center(child: Icon(Icons.broken_image_outlined)),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
+  // ---------------------------------------------------------------------------
+  // Input bar — pinned at bottom, never overlapping
+  // ---------------------------------------------------------------------------
 
-  Map<String, String> _authHeaders() {
-    final tokenStore = ref.read(authTokenStoreProvider);
-    final token =
-        ref.read(authControllerProvider).value?.accessToken ??
-        tokenStore.peekToken();
-    return {
-      if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
-      'X-Blue-Client': 'mobile',
-    };
-  }
-
-  String _resolveChatImageUrl(String rawPath) {
-    if (rawPath.startsWith('http://') || rawPath.startsWith('https://')) {
-      return rawPath;
-    }
-    return AppConfig.imageUrlFromPath(rawPath);
-  }
-
-  Widget _buildInlineImageGallery(
-    BuildContext context,
-    ThemeData theme,
-    List<ChatAttachmentImage> images,
-  ) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final single = images.length == 1;
-        final tileWidth = single
-            ? constraints.maxWidth
-            : (constraints.maxWidth - 10) / 2;
-        final tileHeight = single ? 190.0 : tileWidth;
-
-        return Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: images
-              .map(
-                (image) => SizedBox(
-                  width: tileWidth,
-                  height: tileHeight,
-                  child: _InlineChatImage(
-                    imageUrl: _resolveChatImageUrl(
-                      image.previewPath ?? image.path,
-                    ),
-                    headers: _authHeaders(),
-                    onTap: () => _showImagePreview(context, image),
-                  ),
-                ),
-              )
-              .toList(),
-        );
-      },
-    );
-  }
-}
-
-enum _UiMessageState { streaming, done, error }
-
-class _UiStatusEntry {
-  const _UiStatusEntry({
-    required this.id,
-    required this.stage,
-    required this.summary,
-    required this.meta,
-  });
-
-  final String id;
-  final String stage;
-  final String summary;
-  final Map<String, dynamic> meta;
-}
-
-class _UiMessage {
-  const _UiMessage({
-    required this.id,
-    required this.role,
-    required this.rawText,
-    required this.text,
-    this.state = _UiMessageState.done,
-    this.dates = const [],
-    this.images = const [],
-    this.statuses = const [],
-    this.toolCalls = const [],
-    this.maps = const [],
-    this.charts = const [],
-    this.errorText,
-  });
-
-  final String id;
-  final String role;
-  final String rawText;
-  final String text;
-  final _UiMessageState state;
-  final List<String> dates;
-  final List<ChatAttachmentImage> images;
-  final List<_UiStatusEntry> statuses;
-  final List<ChatToolCallModel> toolCalls;
-  final List<ChatMapSpec> maps;
-  final List<ChatChartSpec> charts;
-  final String? errorText;
-
-  _UiMessage copyWith({
-    String? rawText,
-    String? text,
-    _UiMessageState? state,
-    List<String>? dates,
-    List<ChatAttachmentImage>? images,
-    List<_UiStatusEntry>? statuses,
-    List<ChatToolCallModel>? toolCalls,
-    List<ChatMapSpec>? maps,
-    List<ChatChartSpec>? charts,
-    String? errorText,
-    bool clearError = false,
-  }) {
-    return _UiMessage(
-      id: id,
-      role: role,
-      rawText: rawText ?? this.rawText,
-      text: text ?? this.text,
-      state: state ?? this.state,
-      dates: dates ?? this.dates,
-      images: images ?? this.images,
-      statuses: statuses ?? this.statuses,
-      toolCalls: toolCalls ?? this.toolCalls,
-      maps: maps ?? this.maps,
-      charts: charts ?? this.charts,
-      errorText: clearError ? null : (errorText ?? this.errorText),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Agent activity bar — unified streaming + completed view
-// ---------------------------------------------------------------------------
-
-class _AgentActivityBar extends StatelessWidget {
-  const _AgentActivityBar({
-    required this.messageId,
-    required this.statuses,
-    required this.toolCalls,
-    required this.isStreaming,
-    required this.hasText,
-    required this.expandedDetailIds,
-    required this.onToggleDetail,
-  });
-
-  final String messageId;
-  final List<_UiStatusEntry> statuses;
-  final List<ChatToolCallModel> toolCalls;
-  final bool isStreaming;
-  final bool hasText;
-  final Set<String> expandedDetailIds;
-  final void Function(String id) onToggleDetail;
-
-  String get _panelId => 'activity_panel_$messageId';
-
-  @override
-  Widget build(BuildContext context) {
-    if (statuses.isEmpty && toolCalls.isEmpty) return const SizedBox.shrink();
-
-    final showLive = isStreaming && !hasText;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (showLive)
-          _ActivityStreamingView(statuses: statuses)
-        else ...[
-          _ActivitySummaryBar(
-            statuses: statuses,
-            toolCalls: toolCalls,
-            isExpanded: expandedDetailIds.contains(_panelId),
-            onTap: () => onToggleDetail(_panelId),
-          ),
-          if (expandedDetailIds.contains(_panelId))
-            _ActivityDetailPanel(
-              statuses: statuses,
-              toolCalls: toolCalls,
-              expandedDetailIds: expandedDetailIds,
-              onToggleDetail: onToggleDetail,
-            ),
-        ],
-        const SizedBox(height: 10),
-      ],
-    );
-  }
-}
-
-class _ActivityStreamingView extends StatelessWidget {
-  const _ActivityStreamingView({required this.statuses});
-
-  final List<_UiStatusEntry> statuses;
-
-  static const _stageIcons = {
-    'plan': Icons.psychology_outlined,
-    'query': Icons.travel_explore_outlined,
-    'db': Icons.check_circle_outline,
-    'compose': Icons.edit_note_outlined,
-  };
-
-  static String _humanLabel(String stage, String summary) {
-    switch (stage) {
-      case 'plan':
-        return 'Analyzing request';
-      case 'query':
-        return 'Searching diary';
-      case 'db':
-        return 'Data received';
-      case 'compose':
-        return 'Writing answer';
-      default:
-        return summary;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // Build progressive step list — each status becomes a row
-    // Deduplicate consecutive same-stage entries, keep count for queries
-    final steps = <_StreamingStep>[];
-    var queryCount = 0;
-    for (final s in statuses) {
-      if (s.stage == 'query') queryCount++;
-      if (s.stage == 'db') {
-        // db confirms the previous query — mark it done, skip db row
-        if (steps.isNotEmpty && steps.last.stage == 'query') {
-          steps.last.done = true;
-        }
-        continue;
-      }
-      // If same stage as previous, update it (e.g. query round 2 replaces round 1)
-      if (steps.isNotEmpty && steps.last.stage == s.stage) {
-        steps.last.label = _humanLabel(s.stage, s.summary);
-        steps.last.count = s.stage == 'query' ? queryCount : null;
-        steps.last.done = false;
-      } else {
-        steps.add(_StreamingStep(
-          stage: s.stage,
-          label: _humanLabel(s.stage, s.summary),
-          count: s.stage == 'query' ? queryCount : null,
-        ));
-      }
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        for (var i = 0; i < steps.length; i++)
-          Padding(
-            padding: EdgeInsets.only(top: i == 0 ? 0 : 4),
-            child: _buildStepRow(
-              context,
-              step: steps[i],
-              isLast: i == steps.length - 1,
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildStepRow(
-    BuildContext context, {
-    required _StreamingStep step,
-    required bool isLast,
-  }) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final isActive = isLast && !step.done;
-    final color = isActive
-        ? colorScheme.primary
-        : colorScheme.onSurfaceVariant.withValues(alpha: 0.55);
-    final icon = _stageIcons[step.stage] ?? Icons.circle_outlined;
-    final queryLabel = step.count != null && step.count! > 1
-        ? '${step.label} (${step.count})'
-        : step.label;
-
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (isActive)
-          const _PulsingDot()
-        else
-          Icon(
-            step.done ? Icons.check_circle_outline : icon,
-            size: 16,
-            color: color,
-          ),
-        const SizedBox(width: 8),
-        Flexible(
-          child: Text(
-            queryLabel,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: color,
-              fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
-            ),
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _StreamingStep {
-  _StreamingStep({
-    required this.stage,
-    required this.label,
-    this.count,
-  });
-
-  final String stage;
-  String label;
-  int? count;
-  bool done = false;
-}
-
-class _PulsingDot extends StatefulWidget {
-  const _PulsingDot();
-
-  @override
-  State<_PulsingDot> createState() => _PulsingDotState();
-}
-
-class _PulsingDotState extends State<_PulsingDot>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1000),
-  )..repeat(reverse: true);
-
-  late final Animation<double> _opacity = Tween<double>(
-    begin: 0.4,
-    end: 1.0,
-  ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _opacity,
-      builder: (context, child) => Opacity(
-        opacity: _opacity.value,
-        child: child,
-      ),
-      child: Container(
-        width: 8,
-        height: 8,
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.primary,
-          shape: BoxShape.circle,
-        ),
-      ),
-    );
-  }
-}
-
-class _ActivitySummaryBar extends StatelessWidget {
-  const _ActivitySummaryBar({
-    required this.statuses,
-    required this.toolCalls,
-    required this.isExpanded,
-    required this.onTap,
-  });
-
-  final List<_UiStatusEntry> statuses;
-  final List<ChatToolCallModel> toolCalls;
-  final bool isExpanded;
-  final VoidCallback onTap;
-
-  String _summaryText() {
-    final queryCount = toolCalls.isNotEmpty
-        ? toolCalls.length
-        : statuses.where((s) => s.stage == 'query').length;
-    if (queryCount == 0) return 'Analyzed your request';
-    final errorCount = toolCalls
-        .where((t) => t.errors != null && t.errors!.isNotEmpty)
-        .length;
-    final base = queryCount == 1 ? 'Ran 1 query' : 'Ran $queryCount queries';
-    if (errorCount > 0) return '$base ($errorCount failed)';
-    return base;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+  Widget _buildInputBar(ThemeData theme) {
     final colorScheme = theme.colorScheme;
 
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: colorScheme.outlineVariant.withValues(alpha: 0.5),
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.auto_awesome_outlined,
-              size: 18,
-              color: colorScheme.primary,
-            ),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                _summaryText(),
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
-                  fontWeight: FontWeight.w600,
-                ),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            const SizedBox(width: 6),
-            Icon(
-              isExpanded ? Icons.expand_less : Icons.expand_more,
-              size: 18,
-              color: colorScheme.onSurfaceVariant,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ActivityDetailPanel extends StatelessWidget {
-  const _ActivityDetailPanel({
-    required this.statuses,
-    required this.toolCalls,
-    required this.expandedDetailIds,
-    required this.onToggleDetail,
-  });
-
-  final List<_UiStatusEntry> statuses;
-  final List<ChatToolCallModel> toolCalls;
-  final Set<String> expandedDetailIds;
-  final void Function(String id) onToggleDetail;
-
-  static const _stageIcons = {
-    'plan': Icons.psychology_outlined,
-    'query': Icons.travel_explore_outlined,
-    'db': Icons.storage_outlined,
-    'compose': Icons.edit_note_outlined,
-  };
-
-  @override
-  Widget build(BuildContext context) {
-    // Build merged step list: unique stages, query stages paired with toolCalls
-    final stageOrder = <String>[];
-    final lastByStage = <String, _UiStatusEntry>{};
-    for (final s in statuses) {
-      if (!lastByStage.containsKey(s.stage)) stageOrder.add(s.stage);
-      lastByStage[s.stage] = s;
-    }
-
-    var queryIndex = 0;
-
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (final stage in stageOrder)
-            if (stage == 'query' || stage == 'db')
-              // Render all tool calls at the first query stage position
-              if (stage == 'query')
-                ...toolCalls.map((call) {
-                  final idx = queryIndex++;
-                  return _ActivityStepTile(
-                    icon: _stageIcons['query']!,
-                    label: call.displaySummary,
-                    hasError:
-                        call.errors != null && call.errors!.isNotEmpty,
-                    toolCall: call,
-                    isExpanded: expandedDetailIds
-                        .contains('tool_${call.name}_${idx}_${call.displayQuery.hashCode}'),
-                    onToggle: () => onToggleDetail(
-                        'tool_${call.name}_${idx}_${call.displayQuery.hashCode}'),
-                  );
-                })
-              else
-                const SizedBox.shrink()
-            else
-              _ActivityStepTile(
-                icon: _stageIcons[stage] ?? Icons.circle_outlined,
-                label: lastByStage[stage]!.summary,
-              ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ActivityStepTile extends StatelessWidget {
-  const _ActivityStepTile({
-    required this.icon,
-    required this.label,
-    this.hasError = false,
-    this.toolCall,
-    this.isExpanded = false,
-    this.onToggle,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool hasError;
-  final ChatToolCallModel? toolCall;
-  final bool isExpanded;
-  final VoidCallback? onToggle;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final color =
-        hasError ? colorScheme.error : colorScheme.onSurfaceVariant;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        InkWell(
-          onTap: onToggle,
-          borderRadius: BorderRadius.circular(8),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, size: 16, color: color),
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Text(
-                    label,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: color,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                if (toolCall != null) ...[
-                  const SizedBox(width: 6),
-                  Icon(
-                    isExpanded ? Icons.expand_less : Icons.expand_more,
-                    size: 16,
-                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-        if (isExpanded && toolCall != null)
-          _buildToolDetail(context, toolCall!),
-      ],
-    );
-  }
-
-  Widget _buildToolDetail(BuildContext context, ChatToolCallModel call) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-
-    return Container(
-      margin: const EdgeInsets.only(top: 4, bottom: 4, left: 23),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colorScheme.outlineVariant),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (call.displayQuery.trim().isNotEmpty)
-            _detailBlock(
-              context,
-              call.query != null ? 'GraphQL' : 'SQL',
-              call.displayQuery.trim(),
-              isCode: true,
-            ),
-          if (call.variables.isNotEmpty)
-            _detailBlock(context, 'Variables', call.variables.toString()),
-          if (call.sqlParams.isNotEmpty)
-            _detailBlock(context, 'Params', call.sqlParams.toString()),
-          if ((call.embeddingQuery ?? '').trim().isNotEmpty)
-            _detailBlock(
-                context, 'Embedding Query', call.embeddingQuery!.trim()),
-          if (call.errors != null && call.errors!.isNotEmpty)
-            _detailBlock(context, 'Errors', call.errors!.join('\n')),
-        ],
-      ),
-    );
-  }
-
-  static String _prettyPrintQuery(String query) {
-    var indent = 0;
-    final buffer = StringBuffer();
-    final trimmed = query.replaceAll(RegExp(r'\s+'), ' ').trim();
-    for (var i = 0; i < trimmed.length; i++) {
-      final ch = trimmed[i];
-      if (ch == '{') {
-        indent++;
-        buffer.writeln(' {');
-        buffer.write('  ' * indent);
-      } else if (ch == '}') {
-        indent--;
-        buffer.writeln();
-        buffer.write('  ' * indent);
-        buffer.write('}');
-      } else if (ch == ',' && i + 1 < trimmed.length && trimmed[i + 1] == ' ') {
-        buffer.writeln(',');
-        buffer.write('  ' * indent);
-      } else {
-        buffer.write(ch);
-      }
-    }
-    return buffer.toString().trim();
-  }
-
-  Widget _detailBlock(BuildContext context, String label, String value,
-      {bool isCode = false}) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final displayValue = isCode ? _prettyPrintQuery(value) : value;
-    return Padding(
-      padding: const EdgeInsets.only(top: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-              color: colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: colorScheme.surface,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: SelectableText(
-              displayValue,
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 14,
-                height: 1.5,
-                color: colorScheme.onSurface,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _TypingDot extends StatefulWidget {
-  const _TypingDot({required this.delay});
-
-  final int delay;
-
-  @override
-  State<_TypingDot> createState() => _TypingDotState();
-}
-
-class _TypingDotState extends State<_TypingDot>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 900),
-  )..repeat(reverse: true);
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _controller,
-      builder: (context, child) {
-        final value = ((_controller.value + (widget.delay / 900)) % 1.0);
-        final opacity = 0.35 + (value * 0.65);
-        return Opacity(
-          opacity: opacity,
+    return SafeArea(
+      top: false,
+      child: _constrained(
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
           child: Container(
-            width: 7,
-            height: 7,
             decoration: BoxDecoration(
-              color: Theme.of(
-                context,
-              ).colorScheme.primary.withValues(alpha: 0.78),
-              shape: BoxShape.circle,
+              color: colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(26),
             ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _DayMemoryCard extends StatelessWidget {
-  const _DayMemoryCard({
-    required this.date,
-    required this.story,
-    required this.loading,
-    required this.headers,
-    required this.onTap,
-  });
-
-  final String date;
-  final StoryDayModel? story;
-  final bool loading;
-  final Map<String, String> headers;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final previewUrl = _heroPreviewUrl();
-    final place = [
-      story?.place.trim() ?? '',
-      story?.country.trim() ?? '',
-    ].where((part) => part.isNotEmpty).join(', ');
-
-    return SizedBox(
-      width: 168,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(20),
-          child: Ink(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  if (previewUrl != null)
-                    CachedNetworkImage(
-                      imageUrl: previewUrl,
-                      fit: BoxFit.cover,
-                      httpHeaders: headers,
-                      errorWidget: (_, __, ___) => _fallback(context),
-                    )
-                  else
-                    _fallback(context),
-                  if (loading)
-                    Container(color: Colors.white.withValues(alpha: 0.28)),
-                  Container(
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Color(0x14000000),
-                          Color(0x22000000),
-                          Color(0xC40C1728),
-                        ],
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(
+                  child: Focus(
+                    onKeyEvent: (node, event) {
+                      if (event is KeyDownEvent &&
+                          event.logicalKey == LogicalKeyboardKey.enter &&
+                          !HardwareKeyboard.instance.isShiftPressed) {
+                        if (!_sending) _send();
+                        return KeyEventResult.handled;
+                      }
+                      return KeyEventResult.ignored;
+                    },
+                    child: TextField(
+                      controller: _input,
+                      minLines: 1,
+                      maxLines: 6,
+                      textInputAction: TextInputAction.newline,
+                      style: theme.textTheme.bodyLarge,
+                      decoration: InputDecoration(
+                        hintText: 'Message Blue...',
+                        hintStyle: theme.textTheme.bodyLarge?.copyWith(
+                          color: colorScheme.onSurfaceVariant
+                              .withValues(alpha: 0.5),
+                        ),
+                        filled: false,
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        contentPadding:
+                            const EdgeInsets.fromLTRB(20, 14, 8, 14),
                       ),
                     ),
                   ),
-                  Positioned(
-                    left: 14,
-                    right: 14,
-                    bottom: 14,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          date,
-                          style: Theme.of(context).textTheme.titleSmall
-                              ?.copyWith(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w800,
-                              ),
-                        ),
-                        if (place.isNotEmpty) ...[
-                          const SizedBox(height: 4),
-                          Text(
-                            place,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  color: Colors.white.withValues(alpha: 0.88),
-                                  height: 1.3,
-                                ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(right: 6, bottom: 6),
+                  child: SizedBox(
+                    width: 38,
+                    height: 38,
+                    child: _sending
+                        ? IconButton(
+                            onPressed: _stopStream,
+                            padding: EdgeInsets.zero,
+                            icon: Icon(Icons.stop_rounded,
+                                size: 20,
+                                color: colorScheme.onSurfaceVariant),
+                            tooltip: 'Stop generating',
+                            style: IconButton.styleFrom(
+                              backgroundColor:
+                                  colorScheme.surfaceContainerHigh,
+                              shape: const CircleBorder(),
+                            ),
+                          )
+                        : IconButton(
+                            onPressed: _send,
+                            padding: EdgeInsets.zero,
+                            icon: Icon(Icons.arrow_upward_rounded,
+                                size: 20,
+                                color: colorScheme.onPrimary),
+                            tooltip: 'Send',
+                            style: IconButton.styleFrom(
+                              backgroundColor: colorScheme.primary,
+                              shape: const CircleBorder(),
+                            ),
                           ),
-                        ],
-                      ],
-                    ),
                   ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _fallback(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [colorScheme.primaryContainer, colorScheme.surface],
-        ),
-      ),
-    );
-  }
-
-  String? _heroPreviewUrl() {
-    final highlight = story?.highlightImage.trim() ?? '';
-    if (highlight.isEmpty || story == null) return null;
-    if (!highlight.contains('/') && story!.date.isNotEmpty) {
-      return '${AppConfig.backendUrl}/api/images/${story!.date}/compressed/$highlight';
-    }
-    return AppConfig.imageUrlFromPath(highlight, date: story!.date);
-  }
-}
-
-class _InlineChatImage extends StatelessWidget {
-  const _InlineChatImage({
-    required this.imageUrl,
-    required this.headers,
-    required this.onTap,
-  });
-
-  final String imageUrl;
-  final Map<String, String> headers;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        child: Ink(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(18),
-            child: CachedNetworkImage(
-              imageUrl: imageUrl,
-              fit: BoxFit.cover,
-              httpHeaders: headers,
-              errorWidget: (_, __, ___) => Container(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                child: const Icon(Icons.broken_image_outlined),
-              ),
+                ),
+              ],
             ),
           ),
         ),
