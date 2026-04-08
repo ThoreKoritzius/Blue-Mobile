@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/utils/breakpoints.dart';
 import '../../providers.dart';
@@ -48,6 +49,8 @@ const _navItems = [
   ),
 ];
 
+const _tabPaths = ['/day/', '/calendar', '/chat', '/map'];
+
 class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key});
 
@@ -66,11 +69,14 @@ class _HomeShellState extends ConsumerState<HomeShell> {
           ref.read(runsRepositoryProvider).warmRecentCache(limitDays: 3650),
           ref.read(personRepositoryProvider).popular(first: 24),
         ]);
-      } catch (_) {
-        // Startup cache warming should not block the shell.
-      }
+      } catch (_) {}
     });
   }
+
+  String _dateStr(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-'
+      '${d.month.toString().padLeft(2, '0')}-'
+      '${d.day.toString().padLeft(2, '0')}';
 
   void _onDestinationSelected(int index) {
     final tabIndex = ref.read(selectedTabProvider);
@@ -85,7 +91,13 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       ).showSnackBar(SnackBar(content: Text(message)));
       return;
     }
-    ref.read(selectedTabProvider.notifier).state = index;
+    // Update URL to match the new tab.
+    if (index == 0) {
+      final date = ref.read(selectedDateProvider);
+      context.go('/day/${_dateStr(date)}');
+    } else {
+      context.go(_tabPaths[index]);
+    }
   }
 
   void _openSearch() {
@@ -103,8 +115,17 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   @override
   Widget build(BuildContext context) {
     final tabIndex = ref.watch(selectedTabProvider);
-    // Keep watching dayDraft so the guard in _onDestinationSelected is fresh.
     ref.watch(dayDraftControllerProvider);
+
+    // When selectedDate changes while on Day tab, update the URL.
+    ref.listen<DateTime>(selectedDateProvider, (prev, next) {
+      if (ref.read(selectedTabProvider) != 0) return;
+      final loc = GoRouterState.of(context).uri.toString();
+      final target = '/day/${_dateStr(next)}';
+      if (loc != target) {
+        context.go(target);
+      }
+    });
 
     final isWide = MediaQuery.sizeOf(context).width >= Breakpoints.compact;
 

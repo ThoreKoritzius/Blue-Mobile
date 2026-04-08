@@ -73,6 +73,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
   bool _saving = false;
   bool _transitioningDay = false;
   bool _heroPickerEnabled = false;
+  bool _galleryExpanded = false;
   bool _syncingControllers = false;
   String _status = '';
   int _activeLoadId = 0;
@@ -221,11 +222,8 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
         cached,
         detailsLoaded: cached.detailsLoaded,
         clearStatus: true,
+        finishTransition: true,
       );
-      setState(() {
-        _loading = false;
-        _transitioningDay = false;
-      });
       if (cached.activity == null && !isFutureDay) {
         unawaited(_loadDailyActivity(day));
       }
@@ -250,11 +248,8 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
           persisted,
           detailsLoaded: persisted.detailsLoaded,
           clearStatus: true,
+          finishTransition: true,
         );
-        setState(() {
-          _loading = false;
-          _transitioningDay = false;
-        });
       }
       unawaited(_refreshDate(normalized, requestId));
       return;
@@ -263,6 +258,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     setState(() {
       _loading = _current == null;
       _transitioningDay = _current != null;
+      _galleryExpanded = false;
       _status = '';
     });
     await _refreshDate(normalized, requestId);
@@ -399,6 +395,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     DayPayloadModel payload, {
     required bool detailsLoaded,
     bool clearStatus = false,
+    bool finishTransition = false,
   }) {
     final heroAsset = _resolveHeroAssetForModel(payload.story, payload.media);
 
@@ -419,6 +416,10 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
         _dailyActivity = payload.activity;
         _heroAsset = heroAsset;
         if (clearStatus) _status = '';
+        if (finishTransition) {
+          _loading = false;
+          _transitioningDay = false;
+        }
       });
       unawaited(_refreshPersonLookup(payload.story.people));
     } else {
@@ -428,6 +429,10 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
         _runs = payload.runs;
         if (payload.activity != null) _dailyActivity = payload.activity;
         _heroAsset = heroAsset;
+        if (finishTransition) {
+          _loading = false;
+          _transitioningDay = false;
+        }
       });
     }
     _syncDraftStatus();
@@ -1220,6 +1225,13 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     String day,
     int requestId,
   ) async {
+    // Skip palette generation on web — it's CPU-heavy and blocks the main thread.
+    if (kIsWeb) {
+      if (!_isActiveRequest(requestId, day) || !mounted) return;
+      setState(() => _heroAccent = _defaultHeroAccent);
+      return;
+    }
+
     final heroAsset = _resolveHeroAssetForModel(payload.story, payload.media);
     final normalized =
         (heroAsset?.previewUrl == null || heroAsset!.previewUrl.isEmpty)
@@ -1941,10 +1953,20 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
         padding: const EdgeInsets.all(28),
       );
     } else {
-      cameraFit = CameraFit.bounds(
-        bounds: LatLngBounds.fromPoints(allPoints),
-        padding: const EdgeInsets.all(28),
-      );
+      final bounds = LatLngBounds.fromPoints(allPoints);
+      // Guard against zero-area bounds (all points identical).
+      if (bounds.north == bounds.south && bounds.east == bounds.west) {
+        cameraFit = CameraFit.coordinates(
+          coordinates: [allPoints.first],
+          maxZoom: 15,
+          padding: const EdgeInsets.all(28),
+        );
+      } else {
+        cameraFit = CameraFit.bounds(
+          bounds: bounds,
+          padding: const EdgeInsets.all(28),
+        );
+      }
     }
 
     void openMapPage() {
@@ -2032,6 +2054,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                     if (data.imageLocations.isNotEmpty)
                       MarkerLayer(
                         markers: data.imageLocations
+                            .take(50)
                             .map(
                               (img) => Marker(
                                 point: LatLng(img.lat, img.lon),
@@ -2747,10 +2770,17 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
             : 1;
         final double childAspectRatio = crossAxisCount == 1 ? 1.35 : 1.0;
 
-        return GridView.builder(
+        const maxCollapsed = 24;
+        final showAll = _galleryExpanded || _media.length <= maxCollapsed;
+        final visibleCount = showAll ? _media.length : maxCollapsed;
+
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          itemCount: _media.length,
+          itemCount: visibleCount,
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: crossAxisCount,
             crossAxisSpacing: 12,
@@ -2791,6 +2821,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                       imageUrl: url,
                       fit: BoxFit.cover,
                       httpHeaders: _authHeaders(),
+                      memCacheWidth: 300,
                       fadeInDuration: const Duration(milliseconds: 200),
                       placeholder: (_, __) => ColoredBox(
                         color: colorScheme.surfaceContainerHighest,
@@ -2871,6 +2902,18 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
               ),
             );
           },
+        ),
+            if (!showAll)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: TextButton(
+                  onPressed: () => setState(() => _galleryExpanded = true),
+                  child: Text(
+                    'Show all ${_media.length} photos',
+                  ),
+                ),
+              ),
+          ],
         );
       },
     );
