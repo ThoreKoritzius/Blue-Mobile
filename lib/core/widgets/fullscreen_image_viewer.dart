@@ -34,6 +34,8 @@ class ImageViewerItem {
 }
 
 typedef ImageInfoFetcher = Future<ImageInfoResult> Function(String path);
+typedef ImageDeleter = Future<void> Function(String path);
+typedef ImageCoverSetter = Future<void> Function(String path);
 
 class FullscreenImageViewer extends StatefulWidget {
   const FullscreenImageViewer({
@@ -42,35 +44,44 @@ class FullscreenImageViewer extends StatefulWidget {
     required this.initialIndex,
     required this.httpHeaders,
     required this.fetchImageInfo,
+    this.onDelete,
+    this.onSetCover,
   });
 
   final List<ImageViewerItem> images;
   final int initialIndex;
   final Map<String, String> httpHeaders;
   final ImageInfoFetcher fetchImageInfo;
+  final ImageDeleter? onDelete;
+  final ImageCoverSetter? onSetCover;
 
-  static Future<void> show({
+  /// Returns the set of deleted image paths (empty if none deleted).
+  static Future<Set<String>> show({
     required BuildContext context,
     required List<ImageViewerItem> images,
     required int initialIndex,
     required Map<String, String> httpHeaders,
     required ImageInfoFetcher fetchImageInfo,
+    ImageDeleter? onDelete,
+    ImageCoverSetter? onSetCover,
   }) {
-    return Navigator.of(context).push(
-      PageRouteBuilder<void>(
+    return Navigator.of(context).push<Set<String>>(
+      PageRouteBuilder<Set<String>>(
         opaque: true,
         pageBuilder: (_, __, ___) => FullscreenImageViewer(
           images: images,
           initialIndex: initialIndex,
           httpHeaders: httpHeaders,
           fetchImageInfo: fetchImageInfo,
+          onDelete: onDelete,
+          onSetCover: onSetCover,
         ),
         transitionsBuilder: (_, animation, __, child) =>
             FadeTransition(opacity: animation, child: child),
         transitionDuration: const Duration(milliseconds: 200),
         reverseTransitionDuration: const Duration(milliseconds: 200),
       ),
-    );
+    ).then((v) => v ?? const {});
   }
 
   @override
@@ -80,16 +91,20 @@ class FullscreenImageViewer extends StatefulWidget {
 class _FullscreenImageViewerState extends State<FullscreenImageViewer> {
   late PageController _pageController;
   late int _currentIndex;
+  late List<ImageViewerItem> _images;
+  final Set<String> _deletedPaths = {};
   bool _overlayVisible = true;
   bool _isZoomed = false;
   bool _downloading = false;
   bool _sharing = false;
+  bool _deleting = false;
   final TransformationController _transformController =
       TransformationController();
 
   @override
   void initState() {
     super.initState();
+    _images = List.of(widget.images);
     _currentIndex = widget.initialIndex;
     _pageController = PageController(initialPage: widget.initialIndex);
     _transformController.addListener(_onTransformChanged);
@@ -120,7 +135,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer> {
     setState(() => _currentIndex = index);
   }
 
-  ImageViewerItem get _current => widget.images[_currentIndex];
+  ImageViewerItem get _current => _images[_currentIndex];
 
   Future<void> _share() async {
     if (_sharing) return;
@@ -186,6 +201,77 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer> {
     }
   }
 
+  Future<void> _setCover() async {
+    if (widget.onSetCover == null) return;
+    try {
+      await widget.onSetCover!(_current.path);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Cover updated')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to set cover: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _delete() async {
+    if (_deleting || widget.onDelete == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete image?'),
+        content: const Text('This will permanently delete the image.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _deleting = true);
+    try {
+      await widget.onDelete!(_current.path);
+      if (!mounted) return;
+      _deletedPaths.add(_current.path);
+      _images.removeAt(_currentIndex);
+      if (_images.isEmpty) {
+        Navigator.of(context).pop(_deletedPaths);
+        return;
+      }
+      final newIndex = _currentIndex.clamp(0, _images.length - 1);
+      setState(() {
+        _currentIndex = newIndex;
+        _pageController.jumpToPage(newIndex);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Image deleted')),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Delete failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
+  }
+
   void _showMetadataPanel() {
     final item = _current;
     showModalBottomSheet<void>(
@@ -212,13 +298,13 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer> {
           // Image pager
           PageView.builder(
             controller: _pageController,
-            itemCount: widget.images.length,
+            itemCount: _images.length,
             onPageChanged: _onPageChanged,
             physics: _isZoomed
                 ? const NeverScrollableScrollPhysics()
                 : const PageScrollPhysics(),
             itemBuilder: (_, index) {
-              final image = widget.images[index];
+              final image = _images[index];
               return GestureDetector(
                 onTap: _toggleOverlay,
                 child: InteractiveViewer(
@@ -271,7 +357,8 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer> {
                 child: Row(
                   children: [
                     IconButton(
-                      onPressed: () => Navigator.of(context).pop(),
+                      onPressed: () =>
+                          Navigator.of(context).pop(_deletedPaths),
                       icon: const Icon(Icons.arrow_back, color: Colors.white),
                     ),
                     Expanded(
@@ -302,7 +389,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer> {
                     Padding(
                       padding: const EdgeInsets.only(right: 12),
                       child: Text(
-                        '${_currentIndex + 1} / ${widget.images.length}',
+                        '${_currentIndex + 1} / ${_images.length}',
                         style: const TextStyle(
                           color: Colors.white70,
                           fontSize: 14,
@@ -380,6 +467,33 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer> {
                           color: Colors.white,
                         ),
                       ),
+                      if (widget.onSetCover != null)
+                        IconButton(
+                          onPressed: _setCover,
+                          tooltip: 'Set as cover',
+                          icon: const Icon(
+                            Icons.star_outline_rounded,
+                            color: Colors.white,
+                          ),
+                        ),
+                      if (widget.onDelete != null)
+                        IconButton(
+                          onPressed: _deleting ? null : _delete,
+                          tooltip: 'Delete',
+                          icon: _deleting
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(
+                                  Icons.delete_outline,
+                                  color: Colors.white,
+                                ),
+                        ),
                     ],
                   ),
                 ),

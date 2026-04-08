@@ -379,6 +379,8 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
                 images: payload.images,
                 headers: _authHeaders(),
                 fetchImageInfo: ref.read(filesRepositoryProvider).getImageInfo,
+                onDelete: (path) =>
+                    ref.read(filesRepositoryProvider).deleteFile(path),
               ),
             ],
           ),
@@ -508,11 +510,13 @@ class _PhotosTab extends StatelessWidget {
     required this.images,
     required this.headers,
     required this.fetchImageInfo,
+    this.onDelete,
   });
 
   final List<DayMediaModel> images;
   final Map<String, String> headers;
   final ImageInfoFetcher fetchImageInfo;
+  final ImageDeleter? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -584,6 +588,7 @@ class _PhotosTab extends StatelessWidget {
                     initialIndex: index,
                     httpHeaders: headers,
                     fetchImageInfo: fetchImageInfo,
+                    onDelete: onDelete,
                   );
                 },
                 child: ClipRRect(

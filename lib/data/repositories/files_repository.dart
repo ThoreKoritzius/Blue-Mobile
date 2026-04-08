@@ -18,6 +18,7 @@ abstract class FilesRepository {
   );
   Future<void> updateHighlight(String imagePath);
   Future<ImageInfoResult> getImageInfo(String path);
+  Future<void> deleteFile(String path);
 }
 
 class ImageInfoResult {
@@ -298,6 +299,14 @@ class GraphqlFilesRepository implements FilesRepository {
     await _gql.mutate(
       GqlDocuments.updateHighlight,
       variables: {'input': imagePath},
+    );
+  }
+
+  @override
+  Future<void> deleteFile(String path) async {
+    await _gql.mutate(
+      GqlDocuments.filesDeleteFile,
+      variables: {'path': path},
     );
   }
 }

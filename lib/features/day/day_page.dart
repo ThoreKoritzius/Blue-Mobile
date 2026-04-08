@@ -1127,13 +1127,23 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
         .toList();
     final index = _media.indexOf(media);
     final repo = ref.read(filesRepositoryProvider);
-    await FullscreenImageViewer.show(
+    final deleted = await FullscreenImageViewer.show(
       context: context,
       images: items,
       initialIndex: index >= 0 ? index : 0,
       httpHeaders: _authHeaders(),
       fetchImageInfo: (path) => repo.getImageInfo(path),
+      onDelete: (path) => repo.deleteFile(path),
+      onSetCover: (path) async {
+        final media = _media.firstWhere((m) => m.path == path);
+        await _setHighlight(media);
+      },
     );
+    if (deleted.isNotEmpty && mounted) {
+      setState(() {
+        _media.removeWhere((m) => deleted.contains(m.path));
+      });
+    }
     _dismissKeyboard();
   }
 
@@ -2867,26 +2877,38 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
   }
 
   static const _videoExtensions = {'.mp4', '.mov', '.avi', '.wmv'};
+  static const _rawExtensions = {
+    '.dng', '.cr2', '.cr3', '.nef', '.arw', '.orf', '.rw2', '.raf', '.srw',
+  };
 
   static bool _isVideoFile(String name) {
     final lower = name.toLowerCase();
     return _videoExtensions.any((ext) => lower.endsWith(ext));
   }
 
+  static bool _isRawFile(String name) {
+    final lower = name.toLowerCase();
+    return _rawExtensions.any((ext) => lower.endsWith(ext));
+  }
+
+  /// For videos and raw files, the compressed version is a .jpg with the same stem.
+  static String _compressedJpgName(String name) {
+    final stem = name.contains('.')
+        ? name.substring(0, name.lastIndexOf('.'))
+        : name;
+    return '$stem.jpg';
+  }
+
   String _galleryThumbUrl(DayMediaModel media) {
     final date = media.date;
     final name = media.fileName;
     if (date.isNotEmpty && name.isNotEmpty) {
-      if (_isVideoFile(name)) {
-        final stem = name.contains('.')
-            ? name.substring(0, name.lastIndexOf('.'))
-            : name;
-        return _authenticatedUrl(
-          '${AppConfig.backendUrl}/api/images/$date/compressed/$stem.jpg',
-        );
-      }
+      final compressedName =
+          (_isVideoFile(name) || _isRawFile(name))
+              ? _compressedJpgName(name)
+              : name;
       return _authenticatedUrl(
-        '${AppConfig.backendUrl}/api/images/$date/compressed/$name',
+        '${AppConfig.backendUrl}/api/images/$date/compressed/$compressedName',
       );
     }
     return _authenticatedUrl(
@@ -2898,6 +2920,12 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     final date = media.date;
     final name = media.fileName;
     if (date.isNotEmpty && name.isNotEmpty) {
+      // Raw files can't be displayed — use the compressed JPEG instead.
+      if (_isRawFile(name)) {
+        return _authenticatedUrl(
+          '${AppConfig.backendUrl}/api/images/$date/compressed/${_compressedJpgName(name)}',
+        );
+      }
       return _authenticatedUrl(
         '${AppConfig.backendUrl}/api/images/$date/$name',
       );

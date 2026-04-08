@@ -121,6 +121,16 @@ query FilesImageInfo($path: String!) {
 }
 ''';
 
+  static const filesDeleteFile = r'''
+mutation FilesDeleteFile($path: String!) {
+  files {
+    deleteFile(path: $path) {
+      data
+    }
+  }
+}
+''';
+
   static const updateHighlight = r'''
 mutation HighlightImage($input: String!) {
   files {
