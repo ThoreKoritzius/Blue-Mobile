@@ -1,10 +1,12 @@
 import 'dart:async';
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/config/app_config.dart';
+import '../../core/utils/breakpoints.dart';
 import '../../core/utils/date_format.dart';
 import '../../data/models/memory_search_result_model.dart';
 import '../../data/models/person_model.dart';
@@ -462,175 +464,195 @@ class _SearchPageState extends ConsumerState<SearchPage>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
     final authHeaders = _authHeaders();
     final activeState = _tabStates[_activeMode]!;
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final isWide = screenWidth >= Breakpoints.compact;
 
     return Scaffold(
       appBar: AppBar(
-        toolbarHeight: 88,
+        toolbarHeight: isWide ? 72 : 88,
         titleSpacing: 0,
-        title: Padding(
-          padding: const EdgeInsets.only(right: 12, top: 8, bottom: 8),
-          child: TextField(
-            controller: _controller,
-            autofocus: true,
-            onChanged: _onChanged,
-            textInputAction: TextInputAction.search,
-            onSubmitted: (value) => _runNewQuery(value.trim()),
-            decoration: InputDecoration(
-              hintText: 'Search memories',
-              prefixIcon: const Icon(Icons.search),
-              suffixIcon: _controller.text.isEmpty
-                  ? null
-                  : IconButton(
-                      onPressed: () {
-                        _controller.clear();
-                        _runNewQuery('');
-                      },
-                      icon: const Icon(Icons.close),
-                    ),
+        title: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 720),
+            child: Padding(
+              padding: const EdgeInsets.only(right: 12, top: 8, bottom: 8),
+              child: TextField(
+                controller: _controller,
+                autofocus: true,
+                onChanged: _onChanged,
+                textInputAction: TextInputAction.search,
+                onSubmitted: (value) => _runNewQuery(value.trim()),
+                decoration: InputDecoration(
+                  hintText: 'Search memories',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: _controller.text.isEmpty
+                      ? null
+                      : IconButton(
+                          onPressed: () {
+                            _controller.clear();
+                            _runNewQuery('');
+                          },
+                          icon: const Icon(Icons.close),
+                        ),
+                ),
+              ),
             ),
           ),
         ),
         bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(56),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(18),
-              ),
-              child: TabBar(
-                controller: _tabController,
-                indicator: BoxDecoration(
-                  color: theme.colorScheme.surface,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                indicatorSize: TabBarIndicatorSize.tab,
-                labelColor: theme.colorScheme.onSurface,
-                unselectedLabelColor: theme.colorScheme.onSurfaceVariant,
-                dividerColor: Colors.transparent,
-                tabs: [
-                  Tab(
-                    text: 'Days (${_tabStates[MemorySearchMode.days]!.total})',
+          preferredSize: const Size.fromHeight(48),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 720),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  Tab(
-                    text:
-                        'Images (${_tabStates[MemorySearchMode.images]!.total})',
-                  ),
-                  Tab(
-                    text: _nearResult != null
-                        ? 'Near (${_nearResult!.dates.length})'
-                        : 'Near',
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
-            child: Row(
-              children: [
-                Expanded(
-                  child: SizedBox(
-                    height: 34,
-                    child: ListView(
-                      scrollDirection: Axis.horizontal,
-                      children: [
-                        _buildFacetChip(theme, 'Places', _SearchFacet.place),
-                        const SizedBox(width: 8),
-                        _buildFacetChip(theme, 'People', _SearchFacet.people),
-                        const SizedBox(width: 8),
-                        _buildFacetChip(theme, 'Tags', _SearchFacet.tags),
-                        const SizedBox(width: 8),
-                        _buildFacetChip(theme, 'Text', _SearchFacet.text),
-                      ],
+                  child: TabBar(
+                    controller: _tabController,
+                    indicator: BoxDecoration(
+                      color: colorScheme.surface,
+                      borderRadius: BorderRadius.circular(10),
                     ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Text(
-                  _activeQuery.isEmpty ? '' : '${activeState.total}',
-                  style: theme.textTheme.labelLarge?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                if (activeState.loading) ...[
-                  const SizedBox(width: 8),
-                  SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: theme.colorScheme.primary,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-          if (_activeQuery.isNotEmpty) _buildPeopleHitsSection(theme),
-          if (activeState.isOfflineFallback &&
-              (activeState.offlineMessage?.isNotEmpty ?? false))
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE9F1FF),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.offline_bolt_rounded,
-                        size: 16,
-                        color: Color(0xFF1F4F96),
+                    indicatorSize: TabBarIndicatorSize.tab,
+                    labelColor: colorScheme.onSurface,
+                    unselectedLabelColor: colorScheme.onSurfaceVariant,
+                    dividerColor: Colors.transparent,
+                    tabs: [
+                      Tab(
+                        text:
+                            'Days (${_tabStates[MemorySearchMode.days]!.total})',
                       ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          activeState.offlineMessage!,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: const Color(0xFF1F4F96),
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
+                      Tab(
+                        text:
+                            'Images (${_tabStates[MemorySearchMode.images]!.total})',
+                      ),
+                      Tab(
+                        text: _nearResult != null
+                            ? 'Near (${_nearResult!.dates.length})'
+                            : 'Near',
                       ),
                     ],
                   ),
                 ),
               ),
             ),
-          Expanded(
-            child: TabBarView(
-              controller: _tabController,
-              children: [
-                _buildTabBody(
-                  mode: MemorySearchMode.days,
-                  state: _tabStates[MemorySearchMode.days]!,
-                  authHeaders: authHeaders,
-                ),
-                _buildTabBody(
-                  mode: MemorySearchMode.images,
-                  state: _tabStates[MemorySearchMode.images]!,
-                  authHeaders: authHeaders,
-                ),
-                _buildNearBody(),
-              ],
-            ),
           ),
-        ],
+        ),
+      ),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 960),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: SizedBox(
+                        height: 34,
+                        child: ListView(
+                          scrollDirection: Axis.horizontal,
+                          children: [
+                            _buildFacetChip(theme, 'Places', _SearchFacet.place),
+                            const SizedBox(width: 8),
+                            _buildFacetChip(
+                                theme, 'People', _SearchFacet.people),
+                            const SizedBox(width: 8),
+                            _buildFacetChip(theme, 'Tags', _SearchFacet.tags),
+                            const SizedBox(width: 8),
+                            _buildFacetChip(theme, 'Text', _SearchFacet.text),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      _activeQuery.isEmpty ? '' : '${activeState.total}',
+                      style: theme.textTheme.labelLarge?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (activeState.loading) ...[
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: colorScheme.primary,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              if (_activeQuery.isNotEmpty) _buildPeopleHitsSection(theme),
+              if (activeState.isOfflineFallback &&
+                  (activeState.offlineMessage?.isNotEmpty ?? false))
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: colorScheme.secondaryContainer,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.offline_bolt_rounded,
+                            size: 16,
+                            color: colorScheme.onSecondaryContainer,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              activeState.offlineMessage!,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: colorScheme.onSecondaryContainer,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              Expanded(
+                child: TabBarView(
+                  controller: _tabController,
+                  children: [
+                    _buildTabBody(
+                      mode: MemorySearchMode.days,
+                      state: _tabStates[MemorySearchMode.days]!,
+                      authHeaders: authHeaders,
+                    ),
+                    _buildTabBody(
+                      mode: MemorySearchMode.images,
+                      state: _tabStates[MemorySearchMode.images]!,
+                      authHeaders: authHeaders,
+                    ),
+                    _buildNearBody(),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -649,7 +671,7 @@ class _SearchPageState extends ConsumerState<SearchPage>
         color: selected
             ? theme.colorScheme.onSecondaryContainer
             : theme.colorScheme.onSurfaceVariant,
-        fontWeight: FontWeight.w700,
+        fontWeight: FontWeight.w500,
       ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
       onSelected: (_) => _toggleFacet(facet),
@@ -695,7 +717,7 @@ class _SearchPageState extends ConsumerState<SearchPage>
                   style: TextStyle(
                     color: theme.colorScheme.onPrimary,
                     fontSize: 11,
-                    fontWeight: FontWeight.w800,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
               ),
@@ -711,7 +733,7 @@ class _SearchPageState extends ConsumerState<SearchPage>
               side: BorderSide(color: theme.colorScheme.outlineVariant),
               labelStyle: TextStyle(
                 color: theme.colorScheme.onSurface,
-                fontWeight: FontWeight.w700,
+                fontWeight: FontWeight.w500,
               ),
               onPressed: () {
                 Navigator.of(context).push(
@@ -761,7 +783,7 @@ class _SearchPageState extends ConsumerState<SearchPage>
         itemBuilder: (context, index) {
           if (index >= state.items.length) {
             return Padding(
-              padding: EdgeInsets.symmetric(vertical: 18),
+              padding: const EdgeInsets.symmetric(vertical: 18),
               child: Center(
                 child: Container(
                   padding: const EdgeInsets.symmetric(
@@ -789,45 +811,58 @@ class _SearchPageState extends ConsumerState<SearchPage>
           return _SearchResultCard(
             item: state.items[index],
             authHeaders: authHeaders,
+            authenticateUrl: _authenticatedUrl,
             onTap: () => _openResult(state.items[index]),
           );
         },
       );
     }
 
-    return GridView.builder(
-      controller: _scrollControllerForMode(mode),
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-        childAspectRatio: 0.82,
-      ),
-      itemCount: state.items.length + (state.loadingMore ? 2 : 0),
-      itemBuilder: (context, index) {
-        if (index >= state.items.length) {
-          return DecoratedBox(
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Center(
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2.2,
-                  color: Theme.of(context).colorScheme.primary,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final crossAxisCount = width >= Breakpoints.medium
+            ? 4
+            : width >= Breakpoints.compact
+                ? 3
+                : 2;
+
+        return GridView.builder(
+          controller: _scrollControllerForMode(mode),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+            childAspectRatio: 0.82,
+          ),
+          itemCount: state.items.length + (state.loadingMore ? crossAxisCount : 0),
+          itemBuilder: (context, index) {
+            if (index >= state.items.length) {
+              return DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(12),
                 ),
-              ),
-            ),
-          );
-        }
-        return _ImageSearchTile(
-          item: state.items[index],
-          authHeaders: authHeaders,
-          onTap: () => _openResult(state.items[index]),
+                child: Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                ),
+              );
+            }
+            return _ImageSearchTile(
+              item: state.items[index],
+              authHeaders: authHeaders,
+              authenticateUrl: _authenticatedUrl,
+              onTap: () => _openResult(state.items[index]),
+            );
+          },
         );
       },
     );
@@ -866,7 +901,7 @@ class _SearchPageState extends ConsumerState<SearchPage>
               Text(
                 'Search nearby',
                 style: theme.textTheme.headlineSmall
-                    ?.copyWith(fontWeight: FontWeight.w800),
+                    ?.copyWith(fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 8),
               Text(
@@ -922,7 +957,7 @@ class _SearchPageState extends ConsumerState<SearchPage>
               Text(
                 'No visits found',
                 style: theme.textTheme.headlineSmall
-                    ?.copyWith(fontWeight: FontWeight.w800),
+                    ?.copyWith(fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 8),
               Text(
@@ -947,7 +982,7 @@ class _SearchPageState extends ConsumerState<SearchPage>
           return Card(
             margin: const EdgeInsets.only(bottom: 16),
             child: InkWell(
-              borderRadius: BorderRadius.circular(20),
+              borderRadius: BorderRadius.circular(12),
               onTap: () {
                 // Navigate to map tab and enter day-view on the first date
                 Navigator.of(context).pop();
@@ -983,7 +1018,7 @@ class _SearchPageState extends ConsumerState<SearchPage>
                           Text(
                             result.location,
                             style: theme.textTheme.titleMedium
-                                ?.copyWith(fontWeight: FontWeight.w700),
+                                ?.copyWith(fontWeight: FontWeight.w600),
                           ),
                           const SizedBox(height: 2),
                           Text(
@@ -1024,6 +1059,7 @@ class _SearchPageState extends ConsumerState<SearchPage>
             path: preview,
           ),
           authHeaders: authHeaders,
+          authenticateUrl: _authenticatedUrl,
           onTap: () {
             ref.read(selectedDateProvider.notifier).state = parseYmd(date);
             ref.read(selectedTabProvider.notifier).state = 0;
@@ -1034,11 +1070,22 @@ class _SearchPageState extends ConsumerState<SearchPage>
     );
   }
 
-  Map<String, String> _authHeaders() {
+  String? _authToken() {
     final tokenStore = ref.read(authTokenStoreProvider);
-    final token =
-        ref.read(authControllerProvider).value?.accessToken ??
+    return ref.read(authControllerProvider).value?.accessToken ??
         tokenStore.peekToken();
+  }
+
+  String _authenticatedUrl(String url) {
+    if (!kIsWeb) return url;
+    final token = _authToken();
+    if (token == null || token.isEmpty) return url;
+    final separator = url.contains('?') ? '&' : '?';
+    return '$url${separator}token=$token';
+  }
+
+  Map<String, String> _authHeaders() {
+    final token = _authToken();
     return {
       if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
       'X-Blue-Client': 'mobile',
@@ -1054,6 +1101,7 @@ class _SearchBlankState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDays = mode == MemorySearchMode.days;
+    final colorScheme = Theme.of(context).colorScheme;
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 28),
@@ -1067,8 +1115,8 @@ class _SearchBlankState extends StatelessWidget {
                 shape: BoxShape.circle,
                 gradient: LinearGradient(
                   colors: [
-                    Theme.of(context).colorScheme.surfaceContainerHighest,
-                    Theme.of(context).colorScheme.surfaceContainer,
+                    colorScheme.surfaceContainerHighest,
+                    colorScheme.surfaceContainer,
                   ],
                 ),
               ),
@@ -1077,15 +1125,16 @@ class _SearchBlankState extends StatelessWidget {
                     ? Icons.auto_stories_rounded
                     : Icons.photo_library_rounded,
                 size: 42,
-                color: Theme.of(context).colorScheme.primary,
+                color: colorScheme.primary,
               ),
             ),
             const SizedBox(height: 18),
             Text(
               isDays ? 'Search days' : 'Search images',
-              style: Theme.of(
-                context,
-              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+              style: Theme.of(context)
+                  .textTheme
+                  .headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 8),
             Text(
@@ -1094,8 +1143,8 @@ class _SearchBlankState extends StatelessWidget {
                   : 'Find matching images and jump straight to the related day.',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+                    color: colorScheme.onSurfaceVariant,
+                  ),
             ),
           ],
         ),
@@ -1113,6 +1162,7 @@ class _SearchEmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDays = mode == MemorySearchMode.days;
+    final colorScheme = Theme.of(context).colorScheme;
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 28),
@@ -1124,30 +1174,31 @@ class _SearchEmptyState extends StatelessWidget {
               height: 90,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(28),
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                color: colorScheme.surfaceContainerHighest,
               ),
               child: Icon(
                 isDays
                     ? Icons.event_busy_outlined
                     : Icons.image_search_outlined,
                 size: 42,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                color: colorScheme.onSurfaceVariant,
               ),
             ),
             const SizedBox(height: 18),
             Text(
               isDays ? 'No matching days' : 'No matching images',
-              style: Theme.of(
-                context,
-              ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+              style: Theme.of(context)
+                  .textTheme
+                  .headlineSmall
+                  ?.copyWith(fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 8),
             Text(
               'Nothing matched "$query". Try a broader place, person, or tag.',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+                    color: colorScheme.onSurfaceVariant,
+                  ),
             ),
           ],
         ),
@@ -1174,9 +1225,9 @@ class _SearchErrorState extends StatelessWidget {
               message,
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.error,
-                fontWeight: FontWeight.w600,
-              ),
+                    color: Theme.of(context).colorScheme.error,
+                    fontWeight: FontWeight.w500,
+                  ),
             ),
             const SizedBox(height: 12),
             OutlinedButton(onPressed: onRetry, child: const Text('Retry')),
@@ -1214,7 +1265,7 @@ class _DayCardSkeleton extends StatelessWidget {
             _SkeletonBox(
               width: 72,
               height: 72,
-              radius: BorderRadius.circular(14),
+              radius: BorderRadius.circular(10),
             ),
             const SizedBox(width: 12),
             const Expanded(
@@ -1243,16 +1294,26 @@ class _ImagesSkeletonGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GridView.builder(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-        childAspectRatio: 0.82,
-      ),
-      itemCount: 6,
-      itemBuilder: (_, __) => const _ImageTileSkeleton(),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final crossAxisCount = width >= Breakpoints.medium
+            ? 4
+            : width >= Breakpoints.compact
+                ? 3
+                : 2;
+        return GridView.builder(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            crossAxisSpacing: 12,
+            mainAxisSpacing: 12,
+            childAspectRatio: 0.82,
+          ),
+          itemCount: crossAxisCount * 2,
+          itemBuilder: (_, __) => const _ImageTileSkeleton(),
+        );
+      },
     );
   }
 }
@@ -1294,7 +1355,7 @@ class _SkeletonBox extends StatefulWidget {
   const _SkeletonBox({
     required this.width,
     required this.height,
-    this.radius = const BorderRadius.all(Radius.circular(12)),
+    this.radius = const BorderRadius.all(Radius.circular(8)),
   });
 
   final double width;
@@ -1320,17 +1381,16 @@ class _SkeletonBoxState extends State<_SkeletonBox>
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final baseColor = colorScheme.surfaceContainerHighest;
+    final highlightColor = colorScheme.surfaceContainerHigh;
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, child) {
         return DecoratedBox(
           decoration: BoxDecoration(
             borderRadius: widget.radius,
-            color: Color.lerp(
-              const Color(0xFFE9EFF7),
-              const Color(0xFFDCE6F4),
-              _controller.value,
-            ),
+            color: Color.lerp(baseColor, highlightColor, _controller.value),
           ),
           child: SizedBox(width: widget.width, height: widget.height),
         );
@@ -1343,21 +1403,25 @@ class _SearchResultCard extends StatelessWidget {
   const _SearchResultCard({
     required this.item,
     required this.authHeaders,
+    required this.authenticateUrl,
     required this.onTap,
   });
 
   final MemorySearchResultModel item;
   final Map<String, String> authHeaders;
+  final String Function(String) authenticateUrl;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
     final preview = item.previewImagePath.trim();
     final meta = [...item.people.take(3), ...item.tags.take(3)];
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: InkWell(
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(12),
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.all(14),
@@ -1366,12 +1430,12 @@ class _SearchResultCard extends StatelessWidget {
             children: [
               if (preview.isNotEmpty)
                 ClipRRect(
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(10),
                   child: CachedNetworkImage(
-                    imageUrl: AppConfig.imageUrlFromPath(
+                    imageUrl: authenticateUrl(AppConfig.imageUrlFromPath(
                       preview,
                       date: item.date,
-                    ),
+                    )),
                     httpHeaders: authHeaders,
                     width: 78,
                     height: 78,
@@ -1379,9 +1443,7 @@ class _SearchResultCard extends StatelessWidget {
                     errorWidget: (_, __, ___) => Container(
                       width: 78,
                       height: 78,
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.surfaceContainerHighest,
+                      color: colorScheme.surfaceContainerHighest,
                       child: const Icon(Icons.image_not_supported_outlined),
                     ),
                   ),
@@ -1393,17 +1455,17 @@ class _SearchResultCard extends StatelessWidget {
                   children: [
                     Text(
                       item.date.isEmpty ? 'Unknown date' : item.date,
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        color: Theme.of(context).colorScheme.primary,
-                        fontWeight: FontWeight.w800,
+                      style: theme.textTheme.labelLarge?.copyWith(
+                        color: colorScheme.primary,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                     if (item.place.isNotEmpty) ...[
                       const SizedBox(height: 4),
                       Text(
                         item.place,
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w700),
+                        style: theme.textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w600),
                       ),
                     ],
                     if (item.description.isNotEmpty) ...[
@@ -1412,7 +1474,7 @@ class _SearchResultCard extends StatelessWidget {
                         item.description,
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.bodyMedium,
+                        style: theme.textTheme.bodyMedium,
                       ),
                     ],
                     if (meta.isNotEmpty) ...[
@@ -1428,19 +1490,14 @@ class _SearchResultCard extends StatelessWidget {
                                   vertical: 4,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.surfaceContainerHighest,
+                                  color: colorScheme.surfaceContainerHighest,
                                   borderRadius: BorderRadius.circular(999),
                                 ),
                                 child: Text(
                                   entry,
-                                  style: Theme.of(context).textTheme.labelSmall
-                                      ?.copyWith(
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.onSurfaceVariant,
-                                      ),
+                                  style: theme.textTheme.labelSmall?.copyWith(
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
                                 ),
                               ),
                             )
@@ -1462,15 +1519,18 @@ class _ImageSearchTile extends StatelessWidget {
   const _ImageSearchTile({
     required this.item,
     required this.authHeaders,
+    required this.authenticateUrl,
     required this.onTap,
   });
 
   final MemorySearchResultModel item;
   final Map<String, String> authHeaders;
+  final String Function(String) authenticateUrl;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final preview = item.previewImagePath.trim();
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -1484,32 +1544,30 @@ class _ImageSearchTile extends StatelessWidget {
                 fit: StackFit.expand,
                 children: [
                   CachedNetworkImage(
-                    imageUrl: AppConfig.imageUrlFromPath(
+                    imageUrl: authenticateUrl(AppConfig.imageUrlFromPath(
                       preview,
                       date: item.date,
-                    ),
+                    )),
                     httpHeaders: authHeaders,
                     fit: BoxFit.cover,
                     errorWidget: (_, __, ___) => Container(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.surfaceContainerHighest,
+                      color: theme.colorScheme.surfaceContainerHighest,
                       child: const Icon(Icons.image_not_supported_outlined),
                     ),
                   ),
                   Positioned(
-                    left: 10,
-                    right: 10,
-                    bottom: 10,
+                    left: 8,
+                    right: 8,
+                    bottom: 8,
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        color: const Color(0xAA0B1422),
-                        borderRadius: BorderRadius.circular(12),
+                        color: const Color(0xCC0B1422),
+                        borderRadius: BorderRadius.circular(8),
                       ),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 10,
-                          vertical: 8,
+                          vertical: 6,
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1519,10 +1577,9 @@ class _ImageSearchTile extends StatelessWidget {
                               item.date.isEmpty ? 'Unknown date' : item.date,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.labelLarge
-                                  ?.copyWith(
+                              style: theme.textTheme.labelLarge?.copyWith(
                                     color: Colors.white,
-                                    fontWeight: FontWeight.w800,
+                                    fontWeight: FontWeight.w600,
                                   ),
                             ),
                             if (item.place.isNotEmpty)
@@ -1530,7 +1587,7 @@ class _ImageSearchTile extends StatelessWidget {
                                 item.place,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.bodySmall
+                                style: theme.textTheme.bodySmall
                                     ?.copyWith(color: const Color(0xFFD9E4F5)),
                               ),
                           ],

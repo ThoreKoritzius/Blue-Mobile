@@ -8,6 +8,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/config/app_config.dart';
+import '../../core/utils/breakpoints.dart';
 import '../../core/widgets/section_card.dart';
 import '../../data/models/day_media_model.dart';
 import '../../data/models/person_detail_payload_model.dart';
@@ -174,7 +175,7 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
                                 colorScheme.surfaceContainerHighest,
                                 colorScheme.surfaceContainer,
                               ]
-                            : const [Color(0xFFF6FAFF), Color(0xFFE7F0FB)],
+                            : [colorScheme.surface, colorScheme.primaryContainer],
                       ),
                     ),
                     child: SafeArea(
@@ -897,7 +898,7 @@ class _FormRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isNarrow = MediaQuery.sizeOf(context).width < 620;
+    final isNarrow = MediaQuery.sizeOf(context).width < Breakpoints.compact;
     if (isNarrow) {
       return Column(
         children:
@@ -990,13 +991,14 @@ class _AvatarFallback extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return ColoredBox(
-      color: const Color(0xFF174EA6),
+      color: colorScheme.primaryContainer,
       child: Center(
         child: Text(
           text,
-          style: const TextStyle(
-            color: Colors.white,
+          style: TextStyle(
+            color: colorScheme.onPrimaryContainer,
             fontSize: 36,
             fontWeight: FontWeight.w900,
           ),

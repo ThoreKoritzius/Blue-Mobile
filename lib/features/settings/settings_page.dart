@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/network/graphql_service.dart';
+import '../../core/utils/breakpoints.dart';
 import '../../data/models/auth_session.dart';
 import '../../providers.dart';
 
@@ -72,10 +73,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       appBar: AppBar(title: const Text('Settings')),
       body: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 600),
+          constraints: const BoxConstraints(maxWidth: Breakpoints.compact),
           child: ListView(
             padding: EdgeInsets.symmetric(
-              horizontal: screenWidth > 600 ? 32 : 20,
+              horizontal: screenWidth > Breakpoints.compact ? 32 : 20,
               vertical: 20,
             ),
             children: [

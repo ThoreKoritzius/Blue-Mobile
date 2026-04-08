@@ -16,6 +16,7 @@ import 'package:google_polyline_algorithm/google_polyline_algorithm.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../core/config/app_config.dart';
+import '../../core/utils/breakpoints.dart';
 import '../../core/utils/date_format.dart';
 import '../../data/graphql/documents.dart';
 import '../../core/widgets/section_card.dart';
@@ -864,17 +865,20 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
       runSpacing: 8,
       children: tags
           .map(
-            (tag) => InputChip(
-              backgroundColor: const Color(0xFFDCEBFF),
-              labelStyle: const TextStyle(
-                color: Color(0xFF184A93),
-                fontWeight: FontWeight.w700,
-              ),
-              side: BorderSide.none,
-              label: Text(tag),
-              deleteIconColor: const Color(0xFF184A93),
-              onDeleted: () => _removeTag(tag),
-            ),
+            (tag) {
+              final colorScheme = Theme.of(context).colorScheme;
+              return InputChip(
+                backgroundColor: colorScheme.secondaryContainer,
+                labelStyle: TextStyle(
+                  color: colorScheme.onSecondaryContainer,
+                  fontWeight: FontWeight.w500,
+                ),
+                side: BorderSide.none,
+                label: Text(tag),
+                deleteIconColor: colorScheme.onSecondaryContainer,
+                onDeleted: () => _removeTag(tag),
+              );
+            },
           )
           .toList(),
     );
@@ -1226,7 +1230,6 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
       setState(() {
         _heroAccent = _defaultHeroAccent;
       });
-      ref.read(dayAppBarAccentProvider.notifier).state = _heroAccent;
       return;
     }
 
@@ -1247,14 +1250,12 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
       setState(() {
         _heroAccent = nextAccent;
       });
-      ref.read(dayAppBarAccentProvider.notifier).state = nextAccent;
     } catch (_) {
       if (!mounted || !_isActiveRequest(requestId, day)) return;
       if (_paletteSourceUrl != '$day|$normalized') return;
       setState(() {
         _heroAccent = _defaultHeroAccent;
       });
-      ref.read(dayAppBarAccentProvider.notifier).state = _heroAccent;
     }
   }
 
@@ -1291,7 +1292,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     final now = DateUtils.dateOnly(DateTime.now());
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
     final screenWidth = MediaQuery.sizeOf(context).width;
-    final isWide = screenWidth >= 700;
+    final isWide = screenWidth >= Breakpoints.compact;
 
     return Focus(
       autofocus: true,
@@ -1511,10 +1512,6 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                             onPressed: _showAddPersonSheet,
                             icon: const Icon(Icons.add_rounded),
                             tooltip: 'Add person',
-                            style: IconButton.styleFrom(
-                              backgroundColor: const Color(0xFFE8F0FF),
-                              foregroundColor: const Color(0xFF1D4F91),
-                            ),
                           ),
                           padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
                           child: _buildPeopleEditor(context, model.people),
@@ -1526,10 +1523,6 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                             onPressed: _showAddTagDialog,
                             icon: const Icon(Icons.add_rounded),
                             tooltip: 'Add tag',
-                            style: IconButton.styleFrom(
-                              backgroundColor: const Color(0xFFDCEBFF),
-                              foregroundColor: const Color(0xFF184A93),
-                            ),
                           ),
                           padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
                           child: _buildTagsContent(model.tags),
@@ -1709,7 +1702,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                           context,
                           _saving ? 'Saving…' : draft.statusText,
                           color: draft.hasError
-                              ? const Color(0xFF832C2C)
+                              ? Theme.of(context).colorScheme.error
                               : _heroAccent,
                         ),
                       ),
@@ -1812,23 +1805,13 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: isDark
-              ? [
-                  Color.lerp(_heroAccent, colorScheme.surface, 0.86) ??
-                      colorScheme.surfaceContainer,
-                  colorScheme.surfaceContainerHighest,
-                ]
-              : [
-                  Color.lerp(_heroAccent, Colors.white, 0.9) ??
-                      const Color(0xFFF8FBFF),
-                  Colors.white,
-                ],
+          colors: [
+            colorScheme.surfaceContainerLow,
+            colorScheme.surfaceContainerHighest,
+          ],
         ),
         border: Border.all(
-          color: isDark
-              ? colorScheme.outlineVariant.withValues(alpha: 0.55)
-              : (Color.lerp(_heroAccent, Colors.white, 0.78) ??
-                    const Color(0xFFD9E4F2)),
+          color: colorScheme.outlineVariant.withValues(alpha: isDark ? 0.55 : 1.0),
         ),
       ),
       child: SingleChildScrollView(
@@ -1856,16 +1839,16 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                     },
               style: FilledButton.styleFrom(
                 backgroundColor: _heroPickerEnabled
-                    ? _heroAccent
-                    : Color.lerp(_heroAccent, Colors.white, 0.86),
+                    ? colorScheme.primary
+                    : colorScheme.secondaryContainer,
                 foregroundColor: _heroPickerEnabled
-                    ? Colors.white
-                    : _heroAccent,
+                    ? colorScheme.onPrimary
+                    : colorScheme.onSecondaryContainer,
                 minimumSize: const Size(0, 36),
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 textStyle: const TextStyle(
                   fontSize: 13,
-                  fontWeight: FontWeight.w700,
+                  fontWeight: FontWeight.w600,
                 ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14),
@@ -1883,13 +1866,13 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
             FilledButton.tonal(
               onPressed: draft.uploading ? null : _uploadFiles,
               style: FilledButton.styleFrom(
-                backgroundColor: Color.lerp(_heroAccent, Colors.white, 0.86),
-                foregroundColor: _heroAccent,
+                backgroundColor: colorScheme.secondaryContainer,
+                foregroundColor: colorScheme.onSecondaryContainer,
                 minimumSize: const Size(0, 36),
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 textStyle: const TextStyle(
                   fontSize: 13,
-                  fontWeight: FontWeight.w700,
+                  fontWeight: FontWeight.w600,
                 ),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14),
@@ -2318,7 +2301,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                   icon: Icons.straighten_rounded,
                   value: '${distKm.toStringAsFixed(1)} km',
                   label: 'distance',
-                  color: const Color(0xFF1A7A4A),
+                  color: const Color(0xFF2E7D32),
                 ),
               ),
             if (cyclingMin != null && cyclingMin > 0) ...[
@@ -2545,7 +2528,6 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
           run: run,
           summary: bundle.summary,
           detail: bundle.detail,
-          headers: _authHeaders(),
         ),
       ),
     );
@@ -2678,25 +2660,20 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
       decoration: BoxDecoration(
         color: isDark
-            ? Color.lerp(_heroAccent, colorScheme.surface, 0.82) ??
-                  colorScheme.surfaceContainerHighest
-            : (Color.lerp(_heroAccent, Colors.white, 0.88) ??
-                  const Color(0xFFEFF4FB)),
+            ? colorScheme.surfaceContainerHighest
+            : colorScheme.primaryContainer,
         borderRadius: BorderRadius.circular(999),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: _heroAccent),
+          Icon(icon, size: 14, color: isDark ? colorScheme.primary : colorScheme.onPrimaryContainer),
           const SizedBox(width: 5),
           Text(
             label,
             style: TextStyle(
-              color: isDark
-                  ? colorScheme.onSurface
-                  : (Color.lerp(_heroAccent, Colors.black, 0.35) ??
-                        const Color(0xFF173B73)),
-              fontWeight: FontWeight.w700,
+              color: isDark ? colorScheme.onSurface : colorScheme.onPrimaryContainer,
+              fontWeight: FontWeight.w600,
               fontSize: 11.5,
             ),
           ),
@@ -3609,7 +3586,7 @@ class _ProgressiveHeroImageState extends State<_ProgressiveHeroImage> {
                     colorScheme.surfaceContainerHighest,
                     colorScheme.surfaceContainer,
                   ]
-                : const [Color(0xFF9FBEEA), Color(0xFFDCE8FA)],
+                : [colorScheme.primaryContainer, colorScheme.surface],
           ),
         ),
       );
@@ -3633,7 +3610,7 @@ class _ProgressiveHeroImageState extends State<_ProgressiveHeroImage> {
                         colorScheme.surfaceContainerHighest,
                         colorScheme.surfaceContainer,
                       ]
-                    : const [Color(0xFF9FBEEA), Color(0xFFDCE8FA)],
+                    : [colorScheme.primaryContainer, colorScheme.surface],
               ),
             ),
             child: const Center(
@@ -3654,13 +3631,13 @@ class _ProgressiveHeroImageState extends State<_ProgressiveHeroImage> {
                         colorScheme.surfaceContainerHighest,
                         colorScheme.surfaceContainer,
                       ]
-                    : const [Color(0xFF9FBEEA), Color(0xFFDCE8FA)],
+                    : [colorScheme.primaryContainer, colorScheme.surface],
               ),
             ),
             child: Center(
               child: Icon(
                 Icons.image_not_supported_outlined,
-                color: isDark ? colorScheme.onSurfaceVariant : Colors.white,
+                color: colorScheme.onSurfaceVariant,
                 size: 34,
               ),
             ),

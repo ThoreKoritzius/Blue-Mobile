@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,6 +14,7 @@ import '../../core/utils/date_format.dart';
 import '../../data/models/run_model.dart';
 import '../../data/repositories/map_repository.dart';
 import '../../providers.dart';
+import '../runs/run_detail_page.dart';
 
 enum _MapStyle { light, dark, normal }
 
@@ -206,7 +208,7 @@ class _MapPageState extends ConsumerState<MapPage>
               run: run,
               points: decoded,
               anchor: decoded.first,
-              color: Colors.orangeAccent,
+              color: const Color(0xFFFF9800),
             ),
           );
         } catch (_) {
@@ -471,12 +473,9 @@ class _MapPageState extends ConsumerState<MapPage>
         ? _visibleImages()
         : const <_ImageOverlay>[];
     final loading = _runsLoading || (showImages && _imagesLoading);
-    final routeColor = _mapStyle == _MapStyle.dark
-        ? const Color(0xFFF79C70)
-        : const Color(0xFF2065D1);
-    final imageBorderColor = _mapStyle == _MapStyle.dark
-        ? const Color(0xFF6EB1FF)
-        : const Color(0xFFD32F2F);
+    final colorScheme = Theme.of(context).colorScheme;
+    final routeColor = colorScheme.primary;
+    final imageBorderColor = colorScheme.tertiary;
     final imageMarkerSize = _imageMarkerSizeForZoom(_currentZoom);
     final imageIconSize = imageMarkerSize * 0.5;
 
@@ -631,12 +630,9 @@ class _MapPageState extends ConsumerState<MapPage>
   Widget _buildDayView(BuildContext context) {
     final tileConfig = AppConfig.mapTileConfig(_mapStyle.name);
     final data = _dayViewData;
-    final walkColor = _mapStyle == _MapStyle.dark
-        ? const Color(0xFF81C784)
-        : const Color(0xFF2E7D32);
-    final imageBorderColor = _mapStyle == _MapStyle.dark
-        ? const Color(0xFF6EB1FF)
-        : const Color(0xFFD32F2F);
+    final dayColorScheme = Theme.of(context).colorScheme;
+    final walkColor = const Color(0xFF4CAF50);
+    final imageBorderColor = dayColorScheme.tertiary;
 
     // Walk points come directly as LatLng list from the repository
     final walkPoints = data != null
@@ -654,7 +650,7 @@ class _MapPageState extends ConsumerState<MapPage>
             run.summaryPolyline,
           ).map((p) => LatLng(p[0].toDouble(), p[1].toDouble())).toList();
           if (pts.length < 2) continue;
-          final color = Colors.orangeAccent;
+          final color = const Color(0xFFFF9800);
           runPolylines.add(Polyline(points: pts, strokeWidth: 3, color: color));
           // Try to find the matching full RunOverlay for the sheet.
           final matchingOverlay = _runs
@@ -742,7 +738,7 @@ class _MapPageState extends ConsumerState<MapPage>
                 width: isSelected ? 36 : 28,
                 height: isSelected ? 36 : 28,
                 decoration: BoxDecoration(
-                  color: const Color(0xE06EB1FF),
+                  color: dayColorScheme.primary.withValues(alpha: 0.88),
                   shape: BoxShape.circle,
                   border: Border.all(
                     color: Colors.white,
@@ -750,10 +746,10 @@ class _MapPageState extends ConsumerState<MapPage>
                   ),
                   boxShadow: [
                     if (isSelected)
-                      const BoxShadow(
+                      BoxShadow(
                         blurRadius: 8,
                         spreadRadius: 1,
-                        color: Color(0x556EB1FF),
+                        color: dayColorScheme.primary.withValues(alpha: 0.33),
                       )
                     else
                       const BoxShadow(blurRadius: 6, color: Color(0x33000000)),
@@ -796,9 +792,10 @@ class _MapPageState extends ConsumerState<MapPage>
       selectedVisitPlaceId: _selectedVisitPlaceId,
       selectedRunId: _selectedRunId,
       authHeaders: _authHeaders(),
+      authenticateUrl: _authenticatedUrl,
       runColors: {
         for (final r in data?.runs ?? <TimelineRun>[])
-          r.id: Colors.orangeAccent,
+          r.id: const Color(0xFFFF9800),
       },
     );
 
@@ -871,7 +868,7 @@ class _MapPageState extends ConsumerState<MapPage>
               child: Row(
                 children: [
                   Material(
-                    color: const Color(0xD9222222),
+                    color: const Color(0xE01C1C1E),
                     borderRadius: BorderRadius.circular(20),
                     child: InkWell(
                       borderRadius: BorderRadius.circular(20),
@@ -918,6 +915,7 @@ class _MapPageState extends ConsumerState<MapPage>
                   selectedRunId: sheetParams.selectedRunId,
                   sheetController: _sheetController,
                   authHeaders: sheetParams.authHeaders,
+                  authenticateUrl: sheetParams.authenticateUrl,
                   runColors: sheetParams.runColors,
                   onAddVisit: _showAddVisitDialog,
                   onDeleteSegment: _deleteManualVisit,
@@ -943,6 +941,7 @@ class _MapPageState extends ConsumerState<MapPage>
                   selectedVisitPlaceId: sheetParams.selectedVisitPlaceId,
                   selectedRunId: sheetParams.selectedRunId,
                   authHeaders: sheetParams.authHeaders,
+                  authenticateUrl: sheetParams.authenticateUrl,
                   runColors: sheetParams.runColors,
                   onAddVisit: _showAddVisitDialog,
                   onDeleteSegment: _deleteManualVisit,
@@ -986,7 +985,7 @@ class _MapPageState extends ConsumerState<MapPage>
                   ClipRRect(
                     borderRadius: BorderRadius.circular(16),
                     child: Image.network(
-                      AppConfig.runImageUrl(run.id),
+                      _authenticatedUrl(AppConfig.runImageUrl(run.id)),
                       headers: _authHeaders(),
                       height: 200,
                       width: double.infinity,
@@ -1003,9 +1002,9 @@ class _MapPageState extends ConsumerState<MapPage>
                   FilledButton(
                     onPressed: () {
                       Navigator.of(context).pop();
-                      ref.read(selectedTabProvider.notifier).state = 2;
+                      _openRunDetailFromTimeline(run);
                     },
-                    child: const Text('Open runs'),
+                    child: const Text('Open run'),
                   ),
                 ],
               ),
@@ -1034,7 +1033,7 @@ class _MapPageState extends ConsumerState<MapPage>
                   ClipRRect(
                     borderRadius: BorderRadius.circular(16),
                     child: CachedNetworkImage(
-                      imageUrl: img.path,
+                      imageUrl: _authenticatedUrl(img.path),
                       httpHeaders: _authHeaders(),
                       height: 220,
                       width: double.infinity,
@@ -1246,7 +1245,7 @@ class _MapPageState extends ConsumerState<MapPage>
                   ClipRRect(
                     borderRadius: BorderRadius.circular(16),
                     child: CachedNetworkImage(
-                      imageUrl: image.point.path,
+                      imageUrl: _authenticatedUrl(image.point.path),
                       httpHeaders: _authHeaders(),
                       height: 220,
                       width: double.infinity,
@@ -1301,7 +1300,7 @@ class _MapPageState extends ConsumerState<MapPage>
                   ClipRRect(
                     borderRadius: BorderRadius.circular(16),
                     child: Image.network(
-                      AppConfig.runImageUrl(run.id),
+                      _authenticatedUrl(AppConfig.runImageUrl(run.id)),
                       headers: _authHeaders(),
                       height: 200,
                       width: double.infinity,
@@ -1322,9 +1321,9 @@ class _MapPageState extends ConsumerState<MapPage>
                       FilledButton(
                         onPressed: () {
                           Navigator.of(context).pop();
-                          ref.read(selectedTabProvider.notifier).state = 2;
+                          _openRunDetail(run);
                         },
-                        child: const Text('Open runs'),
+                        child: const Text('Open run'),
                       ),
                       OutlinedButton(
                         onPressed: () {
@@ -1347,6 +1346,35 @@ class _MapPageState extends ConsumerState<MapPage>
   void _openDay(String date) {
     ref.read(selectedDateProvider.notifier).state = parseYmd(date);
     ref.read(selectedTabProvider.notifier).state = 0;
+  }
+
+  Future<void> _openRunDetail(RunModel run) async {
+    final repo = ref.read(runsRepositoryProvider);
+    final bundle = await repo.loadDetailBundle(run.id);
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => RunDetailPage(
+          run: run,
+          summary: bundle.summary,
+          detail: bundle.detail,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openRunDetailFromTimeline(TimelineRun timelineRun) async {
+    final run = RunModel(
+      id: timelineRun.id,
+      name: timelineRun.name,
+      startDateLocal: timelineRun.startTime?.toIso8601String() ?? '',
+      distance: (timelineRun.distanceMeters ?? 0).toDouble(),
+      summaryPolyline: timelineRun.summaryPolyline,
+      movingTime: timelineRun.movingTimeSeconds ?? 0,
+      averageSpeed: 0,
+      startTime: timelineRun.startTime?.toIso8601String() ?? '',
+    );
+    await _openRunDetail(run);
   }
 
   // ── Day-view ────────────────────────────────────────────────────────────────
@@ -1905,11 +1933,22 @@ class _MapPageState extends ConsumerState<MapPage>
     }
   }
 
-  Map<String, String> _authHeaders() {
+  String? _authToken() {
     final tokenStore = ref.read(authTokenStoreProvider);
-    final token =
-        ref.read(authControllerProvider).value?.accessToken ??
+    return ref.read(authControllerProvider).value?.accessToken ??
         tokenStore.peekToken();
+  }
+
+  String _authenticatedUrl(String url) {
+    if (!kIsWeb) return url;
+    final token = _authToken();
+    if (token == null || token.isEmpty) return url;
+    final separator = url.contains('?') ? '&' : '?';
+    return '$url${separator}token=$token';
+  }
+
+  Map<String, String> _authHeaders() {
+    final token = _authToken();
     return {
       if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
       'X-Blue-Client': 'mobile',
@@ -1956,6 +1995,7 @@ class _DayBottomSheet extends StatelessWidget {
     required this.onVisitTapped,
     required this.onSegmentTapped,
     required this.authHeaders,
+    required this.authenticateUrl,
     required this.runColors,
     required this.onRunTapped,
     required this.onImageTapped,
@@ -1980,6 +2020,7 @@ class _DayBottomSheet extends StatelessWidget {
   final String? selectedRunId;
   final DraggableScrollableController? sheetController;
   final Map<String, String> authHeaders;
+  final String Function(String url) authenticateUrl;
   final Map<String, Color> runColors;
   final bool isWideLayout;
   final VoidCallback? onAddVisit;
@@ -2363,7 +2404,7 @@ class _DayBottomSheet extends StatelessWidget {
         margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
         decoration: BoxDecoration(
-          color: isSelected ? const Color(0x336EB1FF) : Colors.transparent,
+          color: isSelected ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.2) : Colors.transparent,
           borderRadius: BorderRadius.circular(10),
         ),
         child: Row(
@@ -2375,7 +2416,7 @@ class _DayBottomSheet extends StatelessWidget {
               child: Text(
                 timeLabel,
                 style: TextStyle(
-                  color: isSelected ? const Color(0xFF6EB1FF) : Colors.white54,
+                  color: isSelected ? Theme.of(context).colorScheme.primary : Colors.white54,
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
                   fontFeatures: const [FontFeature.tabularFigures()],
@@ -2388,17 +2429,17 @@ class _DayBottomSheet extends StatelessWidget {
               height: 22,
               decoration: BoxDecoration(
                 color: isSelected
-                    ? const Color(0xFF6EB1FF).withValues(alpha: 0.25)
+                    ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.25)
                     : hasLocation
-                    ? const Color(0xCC6EB1FF).withValues(alpha: 0.25)
-                    : const Color(0x336EB1FF),
+                    ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.8).withValues(alpha: 0.25)
+                    : Theme.of(context).colorScheme.primary.withValues(alpha: 0.2),
                 shape: BoxShape.circle,
                 border: Border.all(
                   color: isSelected
-                      ? const Color(0xFF6EB1FF)
+                      ? Theme.of(context).colorScheme.primary
                       : hasLocation
-                      ? const Color(0xCC6EB1FF)
-                      : const Color(0x556EB1FF),
+                      ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.8)
+                      : Theme.of(context).colorScheme.primary.withValues(alpha: 0.33),
                   width: 1.5,
                 ),
               ),
@@ -2406,10 +2447,10 @@ class _DayBottomSheet extends StatelessWidget {
                 Icons.location_on,
                 size: 12,
                 color: isSelected
-                    ? const Color(0xFF6EB1FF)
+                    ? Theme.of(context).colorScheme.primary
                     : hasLocation
-                    ? const Color(0xCC6EB1FF)
-                    : const Color(0x556EB1FF),
+                    ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.8)
+                    : Theme.of(context).colorScheme.primary.withValues(alpha: 0.33),
               ),
             ),
             const SizedBox(width: 8),
@@ -2475,7 +2516,7 @@ class _DayBottomSheet extends StatelessWidget {
                 Icons.chevron_right,
                 size: 16,
                 color: isSelected
-                    ? const Color(0xFF6EB1FF)
+                    ? Theme.of(context).colorScheme.primary
                     : const Color(0x44FFFFFF),
               ),
           ],
@@ -2620,8 +2661,8 @@ class _DayBottomSheet extends StatelessWidget {
     final hasLocation = seg.startLat != null && seg.startLon != null;
     final isRunning = seg.activityType == 'RUNNING';
     final activityColor = isRunning
-        ? const Color(0xCCF79C70)
-        : const Color(0xCCBDBDBD);
+        ? const Color(0xCCFF9800)
+        : Colors.grey;
     final activityIcon = _activityTypeIcon(seg.activityType);
     // For running: prefer the Strava run name if matched.
     final typeLabel = isRunning && run != null && run.name.isNotEmpty
@@ -2750,7 +2791,7 @@ class _DayBottomSheet extends StatelessWidget {
         margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
         decoration: BoxDecoration(
-          color: isSelected ? const Color(0x336EB1FF) : Colors.transparent,
+          color: isSelected ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.2) : Colors.transparent,
           borderRadius: BorderRadius.circular(10),
         ),
         child: Row(
@@ -2863,7 +2904,7 @@ class _DayBottomSheet extends StatelessWidget {
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(10),
                 child: CachedNetworkImage(
-                  imageUrl: imgs[index].path,
+                  imageUrl: authenticateUrl(imgs[index].path),
                   httpHeaders: authHeaders,
                   width: 56,
                   height: 56,
@@ -2918,13 +2959,13 @@ class _StatusBanner extends StatelessWidget {
       return Material(
         color: Colors.transparent,
         child: Card(
-          color: const Color(0xFFFDEDED),
+          color: Theme.of(context).colorScheme.errorContainer,
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Text(
               error,
               key: _MapPageState._errorTextKey,
-              style: const TextStyle(color: Color(0xFF8A1C1C)),
+              style: TextStyle(color: Theme.of(context).colorScheme.onErrorContainer),
             ),
           ),
         ),
@@ -2935,7 +2976,7 @@ class _StatusBanner extends StatelessWidget {
       return Material(
         color: Colors.transparent,
         child: Card(
-          color: const Color(0xD9222222),
+          color: const Color(0xE01C1C1E),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             child: Row(
@@ -2963,7 +3004,7 @@ class _StatusBanner extends StatelessWidget {
       return Material(
         color: Colors.transparent,
         child: Card(
-          color: const Color(0xD9222222),
+          color: const Color(0xE01C1C1E),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             child: Text(
@@ -2981,7 +3022,7 @@ class _StatusBanner extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: Card(
-        color: const Color(0xD9222222),
+        color: const Color(0xE01C1C1E),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
           child: Text(

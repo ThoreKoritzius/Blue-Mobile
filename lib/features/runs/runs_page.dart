@@ -51,7 +51,6 @@ class _RunsPageState extends ConsumerState<RunsPage> {
           run: run,
           summary: bundle.summary,
           detail: bundle.detail,
-          headers: _authHeaders(),
         ),
       ),
     );
@@ -105,15 +104,15 @@ class _RunsPageState extends ConsumerState<RunsPage> {
                                 colorScheme.surfaceContainer,
                               ]
                             : [
-                                const Color(0xFFFFFFFF),
-                                const Color(0xFFF4F8FF),
+                                colorScheme.surface,
+                                colorScheme.surfaceContainerLow,
                               ],
                       ),
                       boxShadow: [
                         BoxShadow(
                           color: isDark
-                              ? const Color(0x24000000)
-                              : const Color(0x12000000),
+                              ? Colors.black.withValues(alpha: 0.14)
+                              : Colors.black.withValues(alpha: 0.07),
                           blurRadius: 16,
                           offset: Offset(0, 10),
                         ),
@@ -131,7 +130,7 @@ class _RunsPageState extends ConsumerState<RunsPage> {
                         decoration: BoxDecoration(
                           color: isDark
                               ? colorScheme.primary.withValues(alpha: 0.18)
-                              : const Color(0xFFE7F0FF),
+                              : colorScheme.primaryContainer,
                           borderRadius: BorderRadius.circular(16),
                         ),
                         child: Icon(
@@ -165,8 +164,8 @@ class _RunsPageState extends ConsumerState<RunsPage> {
                                     colorScheme.surfaceContainerHighest,
                                   ]
                                 : [
-                                    const Color(0xFFEAF2FF),
-                                    const Color(0xFFD8E7FF),
+                                    colorScheme.primaryContainer,
+                                    colorScheme.secondaryContainer,
                                   ],
                           ),
                         ),
@@ -186,16 +185,6 @@ class _RunsPageState extends ConsumerState<RunsPage> {
     );
   }
 
-  Map<String, String> _authHeaders() {
-    final tokenStore = ref.read(authTokenStoreProvider);
-    final token =
-        ref.read(authControllerProvider).value?.accessToken ??
-        tokenStore.peekToken();
-    return {
-      if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
-      'X-Blue-Client': 'mobile',
-    };
-  }
 }
 
 class _MetricCard extends StatelessWidget {

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/config/app_config.dart';
+import '../../core/utils/breakpoints.dart';
 import '../../providers.dart';
 
 class LoginPage extends ConsumerStatefulWidget {
@@ -78,7 +79,7 @@ class _LoginPageState extends ConsumerState<LoginPage> {
       body: Center(
         child: SingleChildScrollView(
           padding: EdgeInsets.symmetric(
-            horizontal: screenWidth > 600 ? 48 : 24,
+            horizontal: screenWidth > Breakpoints.compact ? 48 : 24,
             vertical: 24,
           ),
           child: ConstrainedBox(

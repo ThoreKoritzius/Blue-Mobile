@@ -24,9 +24,6 @@ import 'features/day/day_draft_controller.dart';
 
 final selectedDateProvider = StateProvider<DateTime>((ref) => DateTime.now());
 final selectedTabProvider = StateProvider<int>((ref) => 0);
-final dayAppBarAccentProvider = StateProvider<Color>(
-  (ref) => const Color(0xFF174EA6),
-);
 final dayDraftControllerProvider =
     NotifierProvider<DayDraftController, DayDraftState>(DayDraftController.new);
 final themeModeProvider = NotifierProvider<AppThemeModeController, ThemeMode>(

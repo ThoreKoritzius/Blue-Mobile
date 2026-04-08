@@ -423,7 +423,7 @@ mutation AddManualActivity(
   $date: String!,
   $startTime: String!,
   $endTime: String!,
-  $activityType: String!,
+  $activityType: ActivityTypeEnum!,
   $placeNameStart: String!,
   $placeNameEnd: String!
 ) {

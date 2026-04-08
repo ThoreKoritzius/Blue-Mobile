@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/config/app_config.dart';
+import '../../core/utils/breakpoints.dart';
 import '../../core/utils/date_format.dart';
 import '../../data/models/story_day_model.dart';
 import '../../providers.dart';
@@ -324,7 +325,7 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
-        _columns = width >= 700 ? 2 : 1;
+        _columns = width >= Breakpoints.compact ? 2 : 1;
         final columnWidth = (width - 40 - (_columns > 1 ? 16 : 0)) / _columns;
         _monthItemExtent = _computeMonthItemExtent(columnWidth);
 

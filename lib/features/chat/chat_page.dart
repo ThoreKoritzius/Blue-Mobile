@@ -816,20 +816,13 @@ class _AgentActivityBar extends StatelessWidget {
             isExpanded: expandedDetailIds.contains(_panelId),
             onTap: () => onToggleDetail(_panelId),
           ),
-          AnimatedSize(
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOutCubic,
-            alignment: Alignment.topCenter,
-            clipBehavior: Clip.none,
-            child: expandedDetailIds.contains(_panelId)
-                ? _ActivityDetailPanel(
-                    statuses: statuses,
-                    toolCalls: toolCalls,
-                    expandedDetailIds: expandedDetailIds,
-                    onToggleDetail: onToggleDetail,
-                  )
-                : const SizedBox.shrink(),
-          ),
+          if (expandedDetailIds.contains(_panelId))
+            _ActivityDetailPanel(
+              statuses: statuses,
+              toolCalls: toolCalls,
+              expandedDetailIds: expandedDetailIds,
+              onToggleDetail: onToggleDetail,
+            ),
         ],
         const SizedBox(height: 10),
       ],
@@ -933,14 +926,14 @@ class _ActivityStreamingView extends StatelessWidget {
         else
           Icon(
             step.done ? Icons.check_circle_outline : icon,
-            size: 14,
+            size: 16,
             color: color,
           ),
         const SizedBox(width: 8),
         Flexible(
           child: Text(
             queryLabel,
-            style: theme.textTheme.labelSmall?.copyWith(
+            style: theme.textTheme.bodyMedium?.copyWith(
               color: color,
               fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
             ),
@@ -1058,14 +1051,14 @@ class _ActivitySummaryBar extends StatelessWidget {
           children: [
             Icon(
               Icons.auto_awesome_outlined,
-              size: 16,
+              size: 18,
               color: colorScheme.primary,
             ),
             const SizedBox(width: 8),
             Flexible(
               child: Text(
                 _summaryText(),
-                style: theme.textTheme.labelMedium?.copyWith(
+                style: theme.textTheme.bodyMedium?.copyWith(
                   color: colorScheme.onSurfaceVariant,
                   fontWeight: FontWeight.w600,
                 ),
@@ -1075,7 +1068,7 @@ class _ActivitySummaryBar extends StatelessWidget {
             const SizedBox(width: 6),
             Icon(
               isExpanded ? Icons.expand_less : Icons.expand_more,
-              size: 16,
+              size: 18,
               color: colorScheme.onSurfaceVariant,
             ),
           ],
@@ -1188,12 +1181,12 @@ class _ActivityStepTile extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(icon, size: 15, color: color),
+                Icon(icon, size: 16, color: color),
                 const SizedBox(width: 8),
                 Flexible(
                   child: Text(
                     label,
-                    style: theme.textTheme.labelSmall?.copyWith(
+                    style: theme.textTheme.bodyMedium?.copyWith(
                       color: color,
                       fontWeight: FontWeight.w500,
                     ),
@@ -1204,7 +1197,7 @@ class _ActivityStepTile extends StatelessWidget {
                   const SizedBox(width: 6),
                   Icon(
                     isExpanded ? Icons.expand_less : Icons.expand_more,
-                    size: 14,
+                    size: 16,
                     color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
                   ),
                 ],
@@ -1212,16 +1205,8 @@ class _ActivityStepTile extends StatelessWidget {
             ),
           ),
         ),
-        if (toolCall != null)
-          AnimatedSize(
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOutCubic,
-            alignment: Alignment.topCenter,
-            clipBehavior: Clip.none,
-            child: isExpanded
-                ? _buildToolDetail(context, toolCall!)
-                : const SizedBox.shrink(),
-          ),
+        if (isExpanded && toolCall != null)
+          _buildToolDetail(context, toolCall!),
       ],
     );
   }
@@ -1246,6 +1231,7 @@ class _ActivityStepTile extends StatelessWidget {
               context,
               call.query != null ? 'GraphQL' : 'SQL',
               call.displayQuery.trim(),
+              isCode: true,
             ),
           if (call.variables.isNotEmpty)
             _detailBlock(context, 'Variables', call.variables.toString()),
@@ -1261,9 +1247,36 @@ class _ActivityStepTile extends StatelessWidget {
     );
   }
 
-  Widget _detailBlock(BuildContext context, String label, String value) {
+  static String _prettyPrintQuery(String query) {
+    var indent = 0;
+    final buffer = StringBuffer();
+    final trimmed = query.replaceAll(RegExp(r'\s+'), ' ').trim();
+    for (var i = 0; i < trimmed.length; i++) {
+      final ch = trimmed[i];
+      if (ch == '{') {
+        indent++;
+        buffer.writeln(' {');
+        buffer.write('  ' * indent);
+      } else if (ch == '}') {
+        indent--;
+        buffer.writeln();
+        buffer.write('  ' * indent);
+        buffer.write('}');
+      } else if (ch == ',' && i + 1 < trimmed.length && trimmed[i + 1] == ' ') {
+        buffer.writeln(',');
+        buffer.write('  ' * indent);
+      } else {
+        buffer.write(ch);
+      }
+    }
+    return buffer.toString().trim();
+  }
+
+  Widget _detailBlock(BuildContext context, String label, String value,
+      {bool isCode = false}) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    final displayValue = isCode ? _prettyPrintQuery(value) : value;
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: Column(
@@ -1271,8 +1284,7 @@ class _ActivityStepTile extends StatelessWidget {
         children: [
           Text(
             label,
-            style: TextStyle(
-              fontSize: 12,
+            style: theme.textTheme.bodyMedium?.copyWith(
               fontWeight: FontWeight.w700,
               color: colorScheme.onSurfaceVariant,
             ),
@@ -1286,10 +1298,11 @@ class _ActivityStepTile extends StatelessWidget {
               borderRadius: BorderRadius.circular(10),
             ),
             child: SelectableText(
-              value,
+              displayValue,
               style: TextStyle(
-                fontSize: 12,
-                height: 1.4,
+                fontFamily: 'monospace',
+                fontSize: 14,
+                height: 1.5,
                 color: colorScheme.onSurface,
               ),
             ),
@@ -1391,10 +1404,10 @@ class _DayMemoryCard extends StatelessWidget {
                       imageUrl: previewUrl,
                       fit: BoxFit.cover,
                       httpHeaders: headers,
-                      errorWidget: (_, __, ___) => _fallback(),
+                      errorWidget: (_, __, ___) => _fallback(context),
                     )
                   else
-                    _fallback(),
+                    _fallback(context),
                   if (loading)
                     Container(color: Colors.white.withValues(alpha: 0.28)),
                   Container(
@@ -1450,13 +1463,14 @@ class _DayMemoryCard extends StatelessWidget {
     );
   }
 
-  Widget _fallback() {
+  Widget _fallback(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [Color(0xFF9CB7D8), Color(0xFFD8E6F6)],
+          colors: [colorScheme.primaryContainer, colorScheme.surface],
         ),
       ),
     );

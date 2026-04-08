@@ -27,15 +27,16 @@ class SectionCard extends StatelessWidget {
                 Expanded(
                   child: Text(
                     title,
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
                   ),
                 ),
                 if (action != null) action!,
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             child,
           ],
         ),
