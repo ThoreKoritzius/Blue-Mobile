@@ -113,6 +113,14 @@ mutation UploadFiles($date: String!, $files: [Upload!]!) {
 }
 ''';
 
+  static const filesImageInfo = r'''
+query FilesImageInfo($path: String!) {
+  files {
+    imageInfo(path: $path)
+  }
+}
+''';
+
   static const updateHighlight = r'''
 mutation HighlightImage($input: String!) {
   files {

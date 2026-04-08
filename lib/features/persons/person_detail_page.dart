@@ -9,10 +9,12 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/config/app_config.dart';
 import '../../core/utils/breakpoints.dart';
+import '../../core/widgets/fullscreen_image_viewer.dart';
 import '../../core/widgets/section_card.dart';
 import '../../data/models/day_media_model.dart';
 import '../../data/models/person_detail_payload_model.dart';
 import '../../data/models/person_model.dart';
+import '../../data/repositories/files_repository.dart';
 import '../../providers.dart';
 
 class PersonDetailPage extends ConsumerStatefulWidget {
@@ -373,7 +375,11 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
                   ],
                 ],
               ),
-              _PhotosTab(images: payload.images, headers: _authHeaders()),
+              _PhotosTab(
+                images: payload.images,
+                headers: _authHeaders(),
+                fetchImageInfo: ref.read(filesRepositoryProvider).getImageInfo,
+              ),
             ],
           ),
         ),
@@ -498,10 +504,15 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
 }
 
 class _PhotosTab extends StatelessWidget {
-  const _PhotosTab({required this.images, required this.headers});
+  const _PhotosTab({
+    required this.images,
+    required this.headers,
+    required this.fetchImageInfo,
+  });
 
   final List<DayMediaModel> images;
   final Map<String, String> headers;
+  final ImageInfoFetcher fetchImageInfo;
 
   @override
   Widget build(BuildContext context) {
@@ -549,16 +560,32 @@ class _PhotosTab extends StatelessWidget {
               color: Colors.transparent,
               child: InkWell(
                 borderRadius: BorderRadius.circular(24),
-                onTap: () => showDialog<void>(
-                  context: context,
-                  barrierColor: Colors.black.withValues(alpha: 0.9),
-                  builder: (_) => _GalleryImageDialog(
-                    imageUrl: imageUrl,
-                    headers: headers,
-                    title: image.fileName,
-                    subtitle: image.date,
-                  ),
-                ),
+                onTap: () {
+                  final items = images
+                      .map((m) => ImageViewerItem(
+                            fullUrl: AppConfig.imageUrlFromPath(
+                              m.path,
+                              date: m.date,
+                            ),
+                            thumbnailUrl: AppConfig.imageUrlFromPath(
+                              m.path,
+                              date: m.date,
+                            ),
+                            fileName: m.fileName,
+                            path: m.path,
+                            date: m.date,
+                            gps: m.gps,
+                            favorite: m.favorite,
+                          ))
+                      .toList();
+                  FullscreenImageViewer.show(
+                    context: context,
+                    images: items,
+                    initialIndex: index,
+                    httpHeaders: headers,
+                    fetchImageInfo: fetchImageInfo,
+                  );
+                },
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(24),
                   child: Stack(
@@ -641,87 +668,6 @@ class _PhotosTab extends StatelessWidget {
           },
         );
       },
-    );
-  }
-}
-
-class _GalleryImageDialog extends StatelessWidget {
-  const _GalleryImageDialog({
-    required this.imageUrl,
-    required this.headers,
-    required this.title,
-    required this.subtitle,
-  });
-
-  final String imageUrl;
-  final Map<String, String> headers;
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog.fullscreen(
-      backgroundColor: Colors.black,
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: InteractiveViewer(
-              minScale: 0.7,
-              maxScale: 4,
-              child: Center(
-                child: CachedNetworkImage(
-                  imageUrl: imageUrl,
-                  httpHeaders: headers,
-                  fit: BoxFit.contain,
-                  errorWidget: (_, __, ___) => const Icon(
-                    Icons.image_not_supported_outlined,
-                    color: Colors.white70,
-                    size: 40,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            left: 12,
-            right: 12,
-            top: 18,
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        subtitle,
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.close_rounded, color: Colors.white),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

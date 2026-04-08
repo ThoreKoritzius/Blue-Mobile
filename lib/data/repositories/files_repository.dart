@@ -1,5 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 
 import '../../core/network/graphql_service.dart';
 import '../graphql/documents.dart';
@@ -14,6 +17,17 @@ abstract class FilesRepository {
     List<File> files,
   );
   Future<void> updateHighlight(String imagePath);
+  Future<ImageInfoResult> getImageInfo(String path);
+}
+
+class ImageInfoResult {
+  const ImageInfoResult({
+    required this.file,
+    required this.exif,
+  });
+
+  final Map<String, dynamic> file;
+  final Map<String, dynamic> exif;
 }
 
 class GraphqlFilesRepository implements FilesRepository {
@@ -221,6 +235,62 @@ class GraphqlFilesRepository implements FilesRepository {
     });
 
     return controller.stream;
+  }
+
+  @override
+  Future<ImageInfoResult> getImageInfo(String path) async {
+    final response = await _gql.query(
+      GqlDocuments.filesImageInfo,
+      variables: {'path': path},
+    );
+    final raw = (response['files'] as Map<String, dynamic>)['imageInfo'];
+    debugPrint('[IMAGE_INFO] raw type=${raw.runtimeType} value=$raw');
+    if (raw is List) {
+      if (raw.length >= 2) {
+        return ImageInfoResult(
+          file: raw[0] is Map<String, dynamic>
+              ? raw[0] as Map<String, dynamic>
+              : const {},
+          exif: raw[1] is Map<String, dynamic>
+              ? raw[1] as Map<String, dynamic>
+              : const {},
+        );
+      }
+      // File not found in DB — only exif dict returned
+      if (raw.length == 1) {
+        return ImageInfoResult(
+          file: const {},
+          exif: raw[0] is Map<String, dynamic>
+              ? raw[0] as Map<String, dynamic>
+              : const {},
+        );
+      }
+    }
+    // imageInfo might be returned as a JSON string that needs decoding
+    if (raw is String) {
+      try {
+        final decoded = _decodeJsonString(raw);
+        if (decoded is List) {
+          return ImageInfoResult(
+            file: decoded.length >= 2 && decoded[0] is Map<String, dynamic>
+                ? decoded[0] as Map<String, dynamic>
+                : const {},
+            exif: decoded.isNotEmpty && decoded.last is Map<String, dynamic>
+                ? decoded.last as Map<String, dynamic>
+                : const {},
+          );
+        }
+      } catch (_) {}
+    }
+    return const ImageInfoResult(file: {}, exif: {});
+  }
+
+  static dynamic _decodeJsonString(String s) {
+    try {
+      return json.decode(s);
+    } catch (_) {
+      return null;
+    }
   }
 
   @override

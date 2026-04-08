@@ -1675,6 +1675,7 @@ class _MapPageState extends ConsumerState<MapPage>
 
     final confirmed = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialogState) {

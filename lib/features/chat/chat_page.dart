@@ -11,6 +11,9 @@ import '../../core/utils/date_format.dart';
 import '../../data/models/chat_attachment_model.dart';
 import '../../data/models/chat_event_model.dart';
 import '../../data/models/chat_response_model.dart';
+import '../../data/models/chat_widget_model.dart';
+import 'widgets/chat_inline_chart.dart';
+import 'widgets/chat_inline_map.dart';
 import '../../data/models/story_day_model.dart';
 import '../../providers.dart';
 import 'chat_parsing.dart';
@@ -233,6 +236,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         dates: response.dates,
         images: response.images,
         toolCalls: response.toolCalls,
+        maps: response.maps,
+        charts: response.charts,
         state: _UiMessageState.done,
         clearError: true,
       ),
@@ -588,6 +593,22 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               const SizedBox(height: 12),
               _buildInlineImageGallery(context, theme, item.images),
             ],
+            if (item.maps.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              for (final mapSpec in item.maps)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: ChatInlineMap(spec: mapSpec),
+                ),
+            ],
+            if (item.charts.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              for (final chartSpec in item.charts)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: ChatInlineChart(spec: chartSpec),
+                ),
+            ],
             if (item.state == _UiMessageState.error &&
                 item.errorText != null &&
                 item.errorText!.isNotEmpty) ...[
@@ -733,6 +754,8 @@ class _UiMessage {
     this.images = const [],
     this.statuses = const [],
     this.toolCalls = const [],
+    this.maps = const [],
+    this.charts = const [],
     this.errorText,
   });
 
@@ -745,6 +768,8 @@ class _UiMessage {
   final List<ChatAttachmentImage> images;
   final List<_UiStatusEntry> statuses;
   final List<ChatToolCallModel> toolCalls;
+  final List<ChatMapSpec> maps;
+  final List<ChatChartSpec> charts;
   final String? errorText;
 
   _UiMessage copyWith({
@@ -755,6 +780,8 @@ class _UiMessage {
     List<ChatAttachmentImage>? images,
     List<_UiStatusEntry>? statuses,
     List<ChatToolCallModel>? toolCalls,
+    List<ChatMapSpec>? maps,
+    List<ChatChartSpec>? charts,
     String? errorText,
     bool clearError = false,
   }) {
@@ -768,6 +795,8 @@ class _UiMessage {
       images: images ?? this.images,
       statuses: statuses ?? this.statuses,
       toolCalls: toolCalls ?? this.toolCalls,
+      maps: maps ?? this.maps,
+      charts: charts ?? this.charts,
       errorText: clearError ? null : (errorText ?? this.errorText),
     );
   }

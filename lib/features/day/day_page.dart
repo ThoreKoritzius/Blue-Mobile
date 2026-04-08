@@ -19,6 +19,7 @@ import '../../core/config/app_config.dart';
 import '../../core/utils/breakpoints.dart';
 import '../../core/utils/date_format.dart';
 import '../../data/graphql/documents.dart';
+import '../../core/widgets/fullscreen_image_viewer.dart';
 import '../../core/widgets/section_card.dart';
 import '../../data/repositories/map_repository.dart';
 import '../../data/models/daily_activity_model.dart';
@@ -1111,36 +1112,27 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
 
   Future<void> _showImagePreview(DayMediaModel media) async {
     _dismissKeyboard();
-    await showDialog<void>(
-      context: context,
-      builder: (context) {
-        final colorScheme = Theme.of(context).colorScheme;
-        return Dialog(
-          insetPadding: const EdgeInsets.all(18),
-          backgroundColor: Colors.transparent,
-          child: CachedNetworkImage(
-            imageUrl: _galleryFullUrl(media),
-            fit: BoxFit.contain,
-            httpHeaders: _authHeaders(),
-            fadeInDuration: const Duration(milliseconds: 200),
-            placeholder: (_, __) => Container(
-              height: 260,
-              color: colorScheme.surfaceContainerHighest,
-              child: const Center(child: CircularProgressIndicator()),
-            ),
-            errorWidget: (_, __, ___) => Container(
-              height: 260,
-              color: colorScheme.surfaceContainerHighest,
-              child: Center(
-                child: Icon(
-                  Icons.broken_image_outlined,
-                  color: colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ),
+    final items = _media
+        .map(
+          (m) => ImageViewerItem(
+            fullUrl: _galleryFullUrl(m),
+            thumbnailUrl: _galleryThumbUrl(m),
+            fileName: m.fileName,
+            path: m.path,
+            date: m.date,
+            gps: m.gps,
+            favorite: m.favorite,
           ),
-        );
-      },
+        )
+        .toList();
+    final index = _media.indexOf(media);
+    final repo = ref.read(filesRepositoryProvider);
+    await FullscreenImageViewer.show(
+      context: context,
+      images: items,
+      initialIndex: index >= 0 ? index : 0,
+      httpHeaders: _authHeaders(),
+      fetchImageInfo: (path) => repo.getImageInfo(path),
     );
     _dismissKeyboard();
   }

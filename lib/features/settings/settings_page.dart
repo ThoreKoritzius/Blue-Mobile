@@ -87,6 +87,23 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 theme: theme,
                 onSignOut: _confirmSignOut,
               ),
+              const SizedBox(height: 8),
+              Card(
+                child: ListTile(
+                  leading: Icon(
+                    Icons.lock_outline_rounded,
+                    color: colorScheme.primary,
+                  ),
+                  title: Text(
+                    'Change Password',
+                    style: theme.textTheme.bodyLarge?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: _showChangePasswordDialog,
+                ),
+              ),
               const SizedBox(height: 24),
 
               // ── Appearance ──
@@ -204,6 +221,116 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         ),
       ),
     );
+  }
+
+  Future<void> _showChangePasswordDialog() async {
+    final currentCtrl = TextEditingController();
+    final newCtrl = TextEditingController();
+    final confirmCtrl = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        var loading = false;
+        String? errorMessage;
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Change Password'),
+              content: Form(
+                key: formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextFormField(
+                      controller: currentCtrl,
+                      obscureText: true,
+                      decoration: const InputDecoration(labelText: 'Current password'),
+                      validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: newCtrl,
+                      obscureText: true,
+                      decoration: const InputDecoration(labelText: 'New password'),
+                      validator: (v) {
+                        if (v == null || v.isEmpty) return 'Required';
+                        if (v.length < 8) return 'At least 8 characters';
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: confirmCtrl,
+                      obscureText: true,
+                      decoration: const InputDecoration(labelText: 'Confirm new password'),
+                      validator: (v) {
+                        if (v != newCtrl.text) return 'Passwords do not match';
+                        return null;
+                      },
+                    ),
+                    if (errorMessage != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        errorMessage!,
+                        style: TextStyle(color: Theme.of(context).colorScheme.error),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: loading ? null : () => Navigator.of(context).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: loading
+                      ? null
+                      : () async {
+                          if (!formKey.currentState!.validate()) return;
+                          setDialogState(() {
+                            loading = true;
+                            errorMessage = null;
+                          });
+                          try {
+                            await ref.read(authRepositoryProvider).changePassword(
+                                  currentCtrl.text,
+                                  newCtrl.text,
+                                );
+                            if (context.mounted) Navigator.of(context).pop(true);
+                          } catch (e) {
+                            setDialogState(() {
+                              loading = false;
+                              errorMessage = e.toString().replaceFirst('Exception: ', '');
+                            });
+                          }
+                        },
+                  child: loading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Change'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    currentCtrl.dispose();
+    newCtrl.dispose();
+    confirmCtrl.dispose();
+
+    if (result == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Password changed successfully')),
+      );
+    }
   }
 
   Future<void> _confirmSignOut() async {

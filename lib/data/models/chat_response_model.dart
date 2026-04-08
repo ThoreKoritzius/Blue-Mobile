@@ -1,4 +1,5 @@
 import 'chat_attachment_model.dart';
+import 'chat_widget_model.dart';
 
 class ChatToolCallModel {
   const ChatToolCallModel({
@@ -64,15 +65,21 @@ class ChatResponseModel {
     required this.dates,
     required this.images,
     this.toolCalls = const [],
+    this.maps = const [],
+    this.charts = const [],
   });
 
   final String text;
   final List<String> dates;
   final List<ChatAttachmentImage> images;
   final List<ChatToolCallModel> toolCalls;
+  final List<ChatMapSpec> maps;
+  final List<ChatChartSpec> charts;
 
   factory ChatResponseModel.fromJson(Map<String, dynamic> json) {
     final toolCalls = json['tool_calls'];
+    final maps = json['maps'];
+    final charts = json['charts'];
     return ChatResponseModel(
       text: (json['text'] ?? '').toString(),
       dates: const [],
@@ -81,6 +88,18 @@ class ChatResponseModel {
           ? toolCalls
                 .whereType<Map<String, dynamic>>()
                 .map(ChatToolCallModel.fromJson)
+                .toList()
+          : const [],
+      maps: maps is List
+          ? maps
+                .whereType<Map<String, dynamic>>()
+                .map(ChatMapSpec.fromJson)
+                .toList()
+          : const [],
+      charts: charts is List
+          ? charts
+                .whereType<Map<String, dynamic>>()
+                .map(ChatChartSpec.fromJson)
                 .toList()
           : const [],
     );
@@ -92,6 +111,8 @@ class ChatResponseModel {
       dates: attachments.dates,
       images: attachments.images,
       toolCalls: toolCalls,
+      maps: maps,
+      charts: charts,
     );
   }
 }

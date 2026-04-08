@@ -17,6 +17,7 @@ abstract class AuthRepository {
   Future<bool> hasStoredGatewayProof();
   Future<String> exchangeMobileCode(String code);
   Future<void> logout();
+  Future<void> changePassword(String currentPassword, String newPassword);
 }
 
 class GatewaySessionStatus {
@@ -229,6 +230,35 @@ class GraphqlAuthRepository implements AuthRepository {
     } finally {
       client.close();
       await _tokenStore.clear();
+    }
+  }
+
+  @override
+  Future<void> changePassword(String currentPassword, String newPassword) async {
+    final client = createGraphqlHttpClient();
+    try {
+      final token = await _tokenStore.readToken();
+      final response = await client
+          .post(
+            Uri.parse('${AppConfig.backendUrl}/api/auth/change-password'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'X-Blue-Client': 'mobile',
+              if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode({
+              'current_password': currentPassword,
+              'new_password': newPassword,
+            }),
+          )
+          .timeout(const Duration(seconds: 12));
+      final body = jsonDecode(response.body);
+      if (response.statusCode != 200) {
+        throw Exception(_extractError(body));
+      }
+    } finally {
+      client.close();
     }
   }
 
