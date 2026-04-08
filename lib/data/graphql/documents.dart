@@ -220,6 +220,21 @@ query CalendarEvents($date: String) {
 }
 ''';
 
+  static const systemDataSources = r'''
+query SystemDataSources {
+  system {
+    dataSources {
+      key
+      name
+      description
+      status
+      automated
+      lastSyncAt
+    }
+  }
+}
+''';
+
   static const dayBundle = r'''
 query DayBundle($day: String!, $filesFirst: Int!, $runsFirst: Int!) {
   stories {

@@ -19,6 +19,7 @@ import 'data/repositories/person_repository.dart';
 import 'data/repositories/runs_repository.dart';
 import 'data/repositories/search_repository.dart';
 import 'data/repositories/stories_repository.dart';
+import 'data/repositories/system_repository.dart';
 import 'features/auth/auth_error_storage.dart';
 import 'core/utils/url_sync.dart';
 import 'features/day/day_draft_controller.dart';
@@ -127,6 +128,10 @@ final searchRepositoryProvider = Provider<SearchRepository>((ref) {
     ref.watch(graphqlServiceProvider),
     ref.watch(storiesRepositoryProvider),
   );
+});
+
+final systemRepositoryProvider = Provider<SystemRepository>((ref) {
+  return GraphqlSystemRepository(ref.watch(graphqlServiceProvider));
 });
 
 final authControllerProvider =

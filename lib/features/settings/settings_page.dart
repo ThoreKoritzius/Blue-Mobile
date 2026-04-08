@@ -1,11 +1,10 @@
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/network/graphql_service.dart';
 import '../../core/utils/breakpoints.dart';
 import '../../data/models/auth_session.dart';
 import '../../providers.dart';
+import 'data_sources_page.dart';
 
 class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
@@ -15,51 +14,6 @@ class SettingsPage extends ConsumerStatefulWidget {
 }
 
 class _SettingsPageState extends ConsumerState<SettingsPage> {
-  bool _importing = false;
-  String? _importResult;
-
-  Future<void> _importTakeout() async {
-    final picked = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['json'],
-      withData: true,
-    );
-    if (picked == null || picked.files.isEmpty) return;
-    final bytes = picked.files.first.bytes;
-    if (bytes == null) return;
-
-    setState(() {
-      _importing = true;
-      _importResult = null;
-    });
-    try {
-      final graphql = ref.read(graphqlServiceProvider);
-      final data = await graphql.mutateMultipartWithProgress(
-        r'''
-          mutation ImportTakeout($files: [Upload!]!) {
-            timeline { importTakeout(files: $files) { message } }
-          }
-        ''',
-        files: [MultipartUploadFile(filename: 'Zeitachse.json', bytes: bytes)],
-        onProgress: (_, __) {},
-        timeout: const Duration(minutes: 5),
-      );
-      final message =
-          (data['timeline'] as Map?)?['importTakeout']?['message'] as String?;
-      setState(() {
-        _importResult = message ?? 'Import complete';
-      });
-    } catch (e) {
-      setState(() {
-        _importResult = 'Error: $e';
-      });
-    } finally {
-      setState(() {
-        _importing = false;
-      });
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -117,8 +71,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               const SizedBox(height: 8),
               Card(
                 child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
                   child: Row(
                     children: [
                       Icon(
@@ -171,49 +127,31 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               ),
               const SizedBox(height: 8),
               Card(
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.upload_file_rounded,
-                        color: colorScheme.primary,
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Google Timeline',
-                              style: theme.textTheme.bodyLarge?.copyWith(
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              _importResult ?? 'Import Zeitachse.json',
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (_importing)
-                        const SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      else
-                        FilledButton.tonal(
-                          onPressed: _importTakeout,
-                          child: const Text('Upload'),
-                        ),
-                    ],
+                child: ListTile(
+                  leading: Icon(
+                    Icons.storage_rounded,
+                    color: colorScheme.primary,
                   ),
+                  title: Text(
+                    'Data Sources',
+                    style: theme.textTheme.bodyLarge?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  subtitle: Text(
+                    'Timeline, Strava, Takeout and Calendar',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const DataSourcesPage(),
+                      ),
+                    );
+                  },
                 ),
               ),
             ],
@@ -246,14 +184,19 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                     TextFormField(
                       controller: currentCtrl,
                       obscureText: true,
-                      decoration: const InputDecoration(labelText: 'Current password'),
-                      validator: (v) => (v == null || v.isEmpty) ? 'Required' : null,
+                      decoration: const InputDecoration(
+                        labelText: 'Current password',
+                      ),
+                      validator: (v) =>
+                          (v == null || v.isEmpty) ? 'Required' : null,
                     ),
                     const SizedBox(height: 12),
                     TextFormField(
                       controller: newCtrl,
                       obscureText: true,
-                      decoration: const InputDecoration(labelText: 'New password'),
+                      decoration: const InputDecoration(
+                        labelText: 'New password',
+                      ),
                       validator: (v) {
                         if (v == null || v.isEmpty) return 'Required';
                         if (v.length < 8) return 'At least 8 characters';
@@ -264,7 +207,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                     TextFormField(
                       controller: confirmCtrl,
                       obscureText: true,
-                      decoration: const InputDecoration(labelText: 'Confirm new password'),
+                      decoration: const InputDecoration(
+                        labelText: 'Confirm new password',
+                      ),
                       validator: (v) {
                         if (v != newCtrl.text) return 'Passwords do not match';
                         return null;
@@ -274,7 +219,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                       const SizedBox(height: 12),
                       Text(
                         errorMessage!,
-                        style: TextStyle(color: Theme.of(context).colorScheme.error),
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
                       ),
                     ],
                   ],
@@ -282,7 +229,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               ),
               actions: [
                 TextButton(
-                  onPressed: loading ? null : () => Navigator.of(context).pop(false),
+                  onPressed: loading
+                      ? null
+                      : () => Navigator.of(context).pop(false),
                   child: const Text('Cancel'),
                 ),
                 FilledButton(
@@ -295,15 +244,19 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                             errorMessage = null;
                           });
                           try {
-                            await ref.read(authRepositoryProvider).changePassword(
-                                  currentCtrl.text,
-                                  newCtrl.text,
-                                );
-                            if (context.mounted) Navigator.of(context).pop(true);
+                            await ref
+                                .read(authRepositoryProvider)
+                                .changePassword(currentCtrl.text, newCtrl.text);
+                            if (context.mounted) {
+                              Navigator.of(context).pop(true);
+                            }
                           } catch (e) {
                             setDialogState(() {
                               loading = false;
-                              errorMessage = e.toString().replaceFirst('Exception: ', '');
+                              errorMessage = e.toString().replaceFirst(
+                                'Exception: ',
+                                '',
+                              );
                             });
                           }
                         },
