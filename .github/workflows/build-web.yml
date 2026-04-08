@@ -14,5 +14,4 @@ jobs:
         working-directory: /root/projects/Blue-Mobile
         run: |
           git pull
-          flutter pub get
-          flutter build web --release
+          docker run --rm -v "$(pwd)":/app -w /app ghcr.io/cirruslabs/flutter:stable bash -c "flutter pub get && flutter build web --release"
