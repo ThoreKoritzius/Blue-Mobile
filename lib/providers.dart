@@ -20,10 +20,20 @@ import 'data/repositories/runs_repository.dart';
 import 'data/repositories/search_repository.dart';
 import 'data/repositories/stories_repository.dart';
 import 'features/auth/auth_error_storage.dart';
+import 'core/utils/url_sync.dart';
 import 'features/day/day_draft_controller.dart';
 
-final selectedDateProvider = StateProvider<DateTime>((ref) => DateTime.now());
-final selectedTabProvider = StateProvider<int>((ref) => 0);
+final selectedDateProvider = StateProvider<DateTime>((ref) {
+  final urlDate = UrlSync.readInitialDate();
+  if (urlDate != null) {
+    final parsed = DateTime.tryParse(urlDate);
+    if (parsed != null) return DateUtils.dateOnly(parsed);
+  }
+  return DateUtils.dateOnly(DateTime.now());
+});
+final selectedTabProvider = StateProvider<int>(
+  (ref) => UrlSync.readInitialTab(),
+);
 final dayDraftControllerProvider =
     NotifierProvider<DayDraftController, DayDraftState>(DayDraftController.new);
 final themeModeProvider = NotifierProvider<AppThemeModeController, ThemeMode>(

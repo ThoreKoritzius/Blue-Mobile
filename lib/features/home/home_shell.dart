@@ -2,9 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
 import '../../core/utils/breakpoints.dart';
+import '../../core/utils/url_sync.dart';
 import '../../providers.dart';
 import '../calendar/calendar_page.dart';
 import '../chat/chat_page.dart';
@@ -49,8 +49,6 @@ const _navItems = [
   ),
 ];
 
-const _tabPaths = ['/day/', '/calendar', '/chat', '/map'];
-
 class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key});
 
@@ -73,7 +71,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     });
   }
 
-  String _dateStr(DateTime d) =>
+  static String _dateStr(DateTime d) =>
       '${d.year.toString().padLeft(4, '0')}-'
       '${d.month.toString().padLeft(2, '0')}-'
       '${d.day.toString().padLeft(2, '0')}';
@@ -91,12 +89,11 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       ).showSnackBar(SnackBar(content: Text(message)));
       return;
     }
-    // Update URL to match the new tab.
+    ref.read(selectedTabProvider.notifier).state = index;
     if (index == 0) {
-      final date = ref.read(selectedDateProvider);
-      context.go('/day/${_dateStr(date)}');
+      UrlSync.updateUrl(0, _dateStr(ref.read(selectedDateProvider)));
     } else {
-      context.go(_tabPaths[index]);
+      UrlSync.updateUrl(index);
     }
   }
 
@@ -117,14 +114,11 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     final tabIndex = ref.watch(selectedTabProvider);
     ref.watch(dayDraftControllerProvider);
 
-    // When selectedDate changes while on Day tab, update the URL.
+    // Sync date changes to browser URL.
     ref.listen<DateTime>(selectedDateProvider, (prev, next) {
+      if (prev == null) return;
       if (ref.read(selectedTabProvider) != 0) return;
-      final loc = GoRouterState.of(context).uri.toString();
-      final target = '/day/${_dateStr(next)}';
-      if (loc != target) {
-        context.go(target);
-      }
+      UrlSync.updateUrl(0, _dateStr(next));
     });
 
     final isWide = MediaQuery.sizeOf(context).width >= Breakpoints.compact;
