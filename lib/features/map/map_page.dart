@@ -250,6 +250,9 @@ class _MapPageState extends ConsumerState<MapPage>
   void _handleCameraChanged(MapCamera camera) {
     final nextZoom = camera.zoom;
     final nextBounds = camera.visibleBounds;
+    if (!nextZoom.isFinite || !_isFiniteBounds(nextBounds)) {
+      return;
+    }
     final zoomChanged = (nextZoom - _currentZoom).abs() > 0.01;
     final boundsChanged = !_boundsCloseEnough(_currentBounds, nextBounds);
     if (!zoomChanged && !boundsChanged) return;
@@ -266,6 +269,9 @@ class _MapPageState extends ConsumerState<MapPage>
   void _onMapReady() {
     if (!mounted) return;
     final camera = _mapController.camera;
+    if (!camera.zoom.isFinite || !_isFiniteBounds(camera.visibleBounds)) {
+      return;
+    }
     setState(() {
       _currentZoom = camera.zoom;
       _currentBounds = camera.visibleBounds;
@@ -303,6 +309,7 @@ class _MapPageState extends ConsumerState<MapPage>
 
   bool _needsImagesForViewport() {
     return _isVisibleTab &&
+        !_dayViewMode &&
         _displayType != _DisplayType.runs &&
         _currentBounds != null &&
         _currentZoom >= _imageLoadZoomThreshold;
@@ -1408,6 +1415,8 @@ class _MapPageState extends ConsumerState<MapPage>
   // ── Day-view ────────────────────────────────────────────────────────────────
 
   Future<void> _enterDayView(String date) async {
+    _stopImageSearch();
+    _viewportDebounceTimer?.cancel();
     // Build a sorted list of unique dates from loaded runs, capped at today.
     final today = DateTime.now();
     final todayStr =
@@ -1452,6 +1461,7 @@ class _MapPageState extends ConsumerState<MapPage>
       _selectedVisitPlaceId = null;
       _selectedRunId = null;
     });
+    _ensureImagesLoadedIfNeeded();
   }
 
   Future<void> _loadDayView(String date) async {
@@ -2102,6 +2112,17 @@ class _MapPageState extends ConsumerState<MapPage>
         (a.northWest.longitude - b.northWest.longitude).abs() < 0.2 &&
         (a.southEast.latitude - b.southEast.latitude).abs() < 0.2 &&
         (a.southEast.longitude - b.southEast.longitude).abs() < 0.2;
+  }
+
+  bool _isFiniteBounds(LatLngBounds bounds) {
+    return bounds.northWest.latitude.isFinite &&
+        bounds.northWest.longitude.isFinite &&
+        bounds.northEast.latitude.isFinite &&
+        bounds.northEast.longitude.isFinite &&
+        bounds.southWest.latitude.isFinite &&
+        bounds.southWest.longitude.isFinite &&
+        bounds.southEast.latitude.isFinite &&
+        bounds.southEast.longitude.isFinite;
   }
 }
 
