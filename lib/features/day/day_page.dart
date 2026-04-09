@@ -219,9 +219,9 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     _activeDayKey = day;
     _lastNavigationAt = DateTime.now();
     _timelineDay = null;
-    _calendarEventsFuture = ref.read(calendarRepositoryProvider).eventsForDate(
-      day,
-    );
+    _calendarEventsFuture = ref
+        .read(calendarRepositoryProvider)
+        .eventsForDate(day);
     ref.read(dayDraftControllerProvider.notifier).setCurrentDay(day);
     unawaited(_loadTimeline(day));
     unawaited(_loadCalendarEvents(day));
@@ -279,7 +279,8 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     final isFutureDay = _isFutureDate(date);
 
     try {
-      final cachedEvents = _dayCache[day]?.events ?? const <CalendarEventModel>[];
+      final cachedEvents =
+          _dayCache[day]?.events ?? const <CalendarEventModel>[];
       final basePayload = await ref
           .read(dayRepositoryProvider)
           .getDayCorePayload(day);
@@ -384,7 +385,9 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
 
   Future<void> _loadCalendarEvents(String day) async {
     try {
-      final events = await ref.read(calendarRepositoryProvider).eventsForDate(day);
+      final events = await ref
+          .read(calendarRepositoryProvider)
+          .eventsForDate(day);
       _cacheUpdate(day, (p) => p.copyWith(events: events));
       if (_activeDayKey == day && mounted) {
         setState(() => _calendarEvents = events);
@@ -444,7 +447,9 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
         _current = payload.story;
         _media = payload.media;
         _runs = payload.runs;
-        _calendarEvents = payload.events.isNotEmpty ? payload.events : _calendarEvents;
+        _calendarEvents = payload.events.isNotEmpty
+            ? payload.events
+            : _calendarEvents;
         _dailyActivity = payload.activity;
         _dailyWeather = payload.weather;
         _heroAsset = heroAsset;
@@ -1473,7 +1478,9 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                                               18,
                                               18,
                                             ),
-                                            child: _buildWeatherSection(context),
+                                            child: _buildWeatherSection(
+                                              context,
+                                            ),
                                           ),
                                         ],
                                       ],
@@ -2025,6 +2032,10 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
   Widget _buildTimelineMapCard(BuildContext context) {
     final data = _timelineDay!;
     final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final mapBackground = isDark
+        ? const Color(0xFF111315)
+        : colorScheme.surfaceContainerHighest;
 
     final walkLatLngs = data.walkPoints
         .map((p) => LatLng(p.lat, p.lon))
@@ -2124,6 +2135,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                 child: FlutterMap(
                   options: MapOptions(
                     initialCameraFit: cameraFit,
+                    backgroundColor: mapBackground,
                     interactionOptions: const InteractionOptions(
                       flags: InteractiveFlag.none,
                     ),
@@ -2134,6 +2146,9 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                           'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
                       subdomains: const ['a', 'b', 'c'],
                       userAgentPackageName: 'com.blue.app',
+                      tileDisplay: isDark
+                          ? const TileDisplay.instantaneous()
+                          : const TileDisplay.fadeIn(),
                     ),
                     if (walkLatLngs.length > 1)
                       PolylineLayer(
@@ -2723,12 +2738,14 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
             if (weather.sunriseAt != null)
               _WeatherStatChip(
                 icon: Icons.wb_twilight_rounded,
-                label: 'Sunrise ${DateFormat('HH:mm').format(weather.sunriseAt!.toLocal())}',
+                label:
+                    'Sunrise ${DateFormat('HH:mm').format(weather.sunriseAt!.toLocal())}',
               ),
             if (weather.sunsetAt != null)
               _WeatherStatChip(
                 icon: Icons.nightlight_round_rounded,
-                label: 'Sunset ${DateFormat('HH:mm').format(weather.sunsetAt!.toLocal())}',
+                label:
+                    'Sunset ${DateFormat('HH:mm').format(weather.sunsetAt!.toLocal())}',
               ),
           ],
         ),

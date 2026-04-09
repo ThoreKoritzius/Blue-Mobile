@@ -62,6 +62,8 @@ class _MapPageState extends ConsumerState<MapPage>
   static const double _minViewportLonPad = 0.01;
   static const double _sidePanelWidth = 400;
   static const double _wideBreakpoint = 840;
+  static const double _webBottomPanelMinHeight = 280;
+  static const double _webBottomPanelMaxHeight = 420;
   static const int _maxDayWalkRenderPoints = 3000;
   static const int _maxDayFitPoints = 4200;
   static const int _maxDayImageMarkers = 240;
@@ -1541,6 +1543,14 @@ class _MapPageState extends ConsumerState<MapPage>
 
   double _sheetBottomPadding() {
     if (_useWideLayout) return 0;
+    if (kIsWeb) {
+      final screenHeight = MediaQuery.of(context).size.height;
+      if (!screenHeight.isFinite || screenHeight <= 0) return 320;
+      return (screenHeight * 0.42).clamp(
+        _webBottomPanelMinHeight,
+        _webBottomPanelMaxHeight,
+      );
+    }
     if (!_sheetController.isAttached) return 120;
     final extent = _sheetController.size;
     final screenHeight = MediaQuery.of(context).size.height;
@@ -2174,6 +2184,8 @@ class _DayBottomSheet extends StatelessWidget {
   final VoidCallback? onDateTapped;
 
   static const double _collapsedHeight = 120;
+  static const double _webPanelMinHeight = 280;
+  static const double _webPanelMaxHeight = 420;
 
   /// Max photos to show inline per visit. Remaining are aggregated.
   static const int _maxInlinePhotos = 4;
@@ -2377,6 +2389,42 @@ class _DayBottomSheet extends StatelessWidget {
       );
     }
 
+    if (kIsWeb) {
+      final panelHeight = (screenHeight * 0.42).clamp(
+        _webPanelMinHeight,
+        _webPanelMaxHeight,
+      );
+      return Align(
+        alignment: Alignment.bottomCenter,
+        child: Container(
+          height: panelHeight,
+          decoration: const BoxDecoration(
+            color: Color(0xFF222222),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+          ),
+          child: ListView(
+            padding: EdgeInsets.zero,
+            children: [
+              Center(
+                child: Container(
+                  margin: const EdgeInsets.only(top: 10, bottom: 4),
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white38,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              _buildSlider(context, safeIndex),
+              ...timelineChildren,
+              SizedBox(height: MediaQuery.of(context).padding.bottom + 16),
+            ],
+          ),
+        ),
+      );
+    }
+
     return DraggableScrollableSheet(
       controller: sheetController,
       initialChildSize: minFraction,
@@ -2472,14 +2520,6 @@ class _DayBottomSheet extends StatelessWidget {
           ],
         ),
       ),
-      if (isLoading && hasTimeline)
-        const Padding(
-          padding: EdgeInsets.fromLTRB(16, 0, 16, 10),
-          child: Text(
-            'Updating timeline…',
-            style: TextStyle(color: Colors.white54, fontSize: 12),
-          ),
-        ),
       if (errorText.isNotEmpty && hasTimeline)
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
