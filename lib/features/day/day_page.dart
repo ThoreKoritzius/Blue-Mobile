@@ -25,6 +25,7 @@ import '../../core/widgets/section_card.dart';
 import '../../data/models/calendar_event_model.dart';
 import '../../data/repositories/map_repository.dart';
 import '../../data/models/daily_activity_model.dart';
+import '../../data/models/daily_weather_model.dart';
 import '../../data/models/day_media_model.dart';
 import '../../data/models/day_payload_model.dart';
 import '../../data/models/person_model.dart';
@@ -68,6 +69,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
   List<CalendarEventModel> _calendarEvents = const [];
   Future<List<CalendarEventModel>>? _calendarEventsFuture;
   DailyActivityModel? _dailyActivity;
+  DailyWeatherModel? _dailyWeather;
   TimelineDayData? _timelineDay;
   List<UploadItemStateModel> _uploadQueue = const [];
   double _uploadProgress = 0.0;
@@ -444,6 +446,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
         _runs = payload.runs;
         _calendarEvents = payload.events.isNotEmpty ? payload.events : _calendarEvents;
         _dailyActivity = payload.activity;
+        _dailyWeather = payload.weather;
         _heroAsset = heroAsset;
         if (clearStatus) _status = '';
         if (finishTransition) {
@@ -461,6 +464,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
           _calendarEvents = payload.events;
         }
         if (payload.activity != null) _dailyActivity = payload.activity;
+        _dailyWeather = payload.weather;
         _heroAsset = heroAsset;
         if (finishTransition) {
           _loading = false;
@@ -1060,6 +1064,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
             runs: _runs,
             events: const [],
             detailsLoaded: true,
+            weather: _dailyWeather,
           ),
           nextStory.date,
           _activeLoadId,
@@ -1099,6 +1104,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
         runs: _runs,
         events: const [],
         detailsLoaded: true,
+        weather: _dailyWeather,
       ),
       nextModel.date,
       _activeLoadId,
@@ -1134,6 +1140,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
           runs: _runs,
           events: const [],
           detailsLoaded: true,
+          weather: _dailyWeather,
         ),
         previousModel.date,
         _activeLoadId,
@@ -1456,6 +1463,19 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                                             ),
                                             child: _buildActivityBar(context),
                                           ),
+                                        if (_dailyWeather != null) ...[
+                                          const SizedBox(height: 12),
+                                          SectionCard(
+                                            title: 'Weather',
+                                            padding: const EdgeInsets.fromLTRB(
+                                              18,
+                                              16,
+                                              18,
+                                              18,
+                                            ),
+                                            child: _buildWeatherSection(context),
+                                          ),
+                                        ],
                                       ],
                                     ),
                                   ),
@@ -1569,6 +1589,19 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                                   16,
                                 ),
                                 child: _buildActivityBar(context),
+                              ),
+                            ],
+                            if (_dailyWeather != null) ...[
+                              const SizedBox(height: 12),
+                              SectionCard(
+                                title: 'Weather',
+                                padding: const EdgeInsets.fromLTRB(
+                                  18,
+                                  16,
+                                  18,
+                                  18,
+                                ),
+                                child: _buildWeatherSection(context),
                               ),
                             ],
                             const SizedBox(height: 12),
@@ -2599,6 +2632,118 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     );
   }
 
+  Widget _buildWeatherSection(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final weather = _dailyWeather;
+    if (weather == null) return const SizedBox.shrink();
+
+    final condition = _weatherConditionLabel(weather.weatherCode);
+    final range = _temperatureRangeLabel(weather);
+    final source = weather.sourceLabel?.trim().isNotEmpty == true
+        ? weather.sourceLabel!.trim()
+        : 'Historical weather archive';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(22),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                colorScheme.primaryContainer.withValues(alpha: 0.88),
+                colorScheme.secondaryContainer.withValues(alpha: 0.78),
+              ],
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: colorScheme.surface.withValues(alpha: 0.28),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Icon(
+                  _weatherIcon(weather.weatherCode),
+                  color: colorScheme.onPrimaryContainer,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      condition,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        color: colorScheme.onPrimaryContainer,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      range,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: colorScheme.onPrimaryContainer.withValues(
+                          alpha: 0.86,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            if (weather.precipitationSumMm != null)
+              _WeatherStatChip(
+                icon: Icons.water_drop_rounded,
+                label:
+                    '${weather.precipitationSumMm!.toStringAsFixed(weather.precipitationSumMm! >= 10 ? 0 : 1)} mm rain',
+              ),
+            if (weather.windSpeedMaxKmh != null)
+              _WeatherStatChip(
+                icon: Icons.air_rounded,
+                label:
+                    '${weather.windSpeedMaxKmh!.toStringAsFixed(0)} km/h wind',
+              ),
+            if (weather.sunriseAt != null)
+              _WeatherStatChip(
+                icon: Icons.wb_twilight_rounded,
+                label: 'Sunrise ${DateFormat('HH:mm').format(weather.sunriseAt!.toLocal())}',
+              ),
+            if (weather.sunsetAt != null)
+              _WeatherStatChip(
+                icon: Icons.nightlight_round_rounded,
+                label: 'Sunset ${DateFormat('HH:mm').format(weather.sunsetAt!.toLocal())}',
+              ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        Text(
+          source,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: colorScheme.onSurfaceVariant,
+            height: 1.35,
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildRunRow(BuildContext context, RunModel run) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
@@ -2916,6 +3061,103 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
       return 'Google Takeout / Google Fit daily activity export imported into Blue.';
     }
     return 'Imported daily activity data.';
+  }
+
+  String _weatherConditionLabel(int? code) {
+    switch (code) {
+      case 0:
+        return 'Clear sky';
+      case 1:
+      case 2:
+        return 'Partly cloudy';
+      case 3:
+        return 'Overcast';
+      case 45:
+      case 48:
+        return 'Fog';
+      case 51:
+      case 53:
+      case 55:
+      case 56:
+      case 57:
+        return 'Drizzle';
+      case 61:
+      case 63:
+      case 65:
+      case 66:
+      case 67:
+        return 'Rain';
+      case 71:
+      case 73:
+      case 75:
+      case 77:
+        return 'Snow';
+      case 80:
+      case 81:
+      case 82:
+        return 'Rain showers';
+      case 85:
+      case 86:
+        return 'Snow showers';
+      case 95:
+      case 96:
+      case 99:
+        return 'Thunderstorm';
+      default:
+        return 'Weather summary';
+    }
+  }
+
+  IconData _weatherIcon(int? code) {
+    switch (code) {
+      case 0:
+        return Icons.wb_sunny_rounded;
+      case 1:
+      case 2:
+      case 3:
+        return Icons.cloud_rounded;
+      case 45:
+      case 48:
+        return Icons.blur_on_rounded;
+      case 51:
+      case 53:
+      case 55:
+      case 56:
+      case 57:
+      case 61:
+      case 63:
+      case 65:
+      case 66:
+      case 67:
+      case 80:
+      case 81:
+      case 82:
+        return Icons.umbrella_rounded;
+      case 71:
+      case 73:
+      case 75:
+      case 77:
+      case 85:
+      case 86:
+        return Icons.ac_unit_rounded;
+      case 95:
+      case 96:
+      case 99:
+        return Icons.thunderstorm_rounded;
+      default:
+        return Icons.cloud_queue_rounded;
+    }
+  }
+
+  String _temperatureRangeLabel(DailyWeatherModel weather) {
+    final max = weather.temperatureMaxC;
+    final min = weather.temperatureMinC;
+    if (max == null && min == null) return 'No temperature range available';
+    if (max != null && min != null) {
+      return '${max.toStringAsFixed(0)}° / ${min.toStringAsFixed(0)}°';
+    }
+    if (max != null) return '${max.toStringAsFixed(0)}° high';
+    return '${min!.toStringAsFixed(0)}° low';
   }
 
   String _formatSteps(int steps) {
@@ -3700,6 +3942,44 @@ class _CalendarMetaPill extends StatelessWidget {
                 color: colorScheme.onSurface,
                 fontWeight: FontWeight.w700,
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WeatherStatChip extends StatelessWidget {
+  const _WeatherStatChip({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.65),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: colorScheme.onSurfaceVariant),
+          const SizedBox(width: 7),
+          Text(
+            label,
+            style: theme.textTheme.labelMedium?.copyWith(
+              color: colorScheme.onSurface,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ],

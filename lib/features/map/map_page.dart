@@ -56,9 +56,15 @@ class _MapPageState extends ConsumerState<MapPage>
   static const int _imagePageSize = 60;
   static const Duration _viewportDebounce = Duration(milliseconds: 350);
   static const Duration _pageDelay = Duration(milliseconds: 650);
+  static const Duration _dayViewLoadTimeout = Duration(seconds: 24);
   static const double _viewportPadFactor = 0.2;
+  static const double _minViewportLatPad = 0.01;
+  static const double _minViewportLonPad = 0.01;
   static const double _sidePanelWidth = 400;
   static const double _wideBreakpoint = 840;
+  static const int _maxDayWalkRenderPoints = 3000;
+  static const int _maxDayFitPoints = 4200;
+  static const int _maxDayImageMarkers = 240;
   static const _loadingTextKey = Key('map-loading-text');
   static const _loadedTextKey = Key('map-loaded-text');
   static const _errorTextKey = Key('map-error-text');
@@ -434,8 +440,14 @@ class _MapPageState extends ConsumerState<MapPage>
       bounds.northEast.longitude,
       bounds.southEast.longitude,
     );
-    final latPad = ((north - south).abs() * _viewportPadFactor).clamp(1, 30);
-    final lonPad = ((east - west).abs() * _viewportPadFactor).clamp(1, 40);
+    final latPad = ((north - south).abs() * _viewportPadFactor).clamp(
+      _minViewportLatPad,
+      30,
+    );
+    final lonPad = ((east - west).abs() * _viewportPadFactor).clamp(
+      _minViewportLonPad,
+      40,
+    );
 
     return LatLngBounds(
       LatLng(
@@ -640,7 +652,10 @@ class _MapPageState extends ConsumerState<MapPage>
 
     // Walk points come directly as LatLng list from the repository
     final walkPoints = data != null
-        ? data.walkPoints.map((p) => LatLng(p.lat, p.lon)).toList()
+        ? _sampleLatLngs(
+            data.walkPoints.map((p) => LatLng(p.lat, p.lon)).toList(),
+            _maxDayWalkRenderPoints,
+          )
         : const <LatLng>[];
 
     // Decode run polylines
@@ -690,7 +705,10 @@ class _MapPageState extends ConsumerState<MapPage>
     // Image markers
     final imageMarkers = <Marker>[];
     if (data != null) {
-      for (final img in data.imageLocations) {
+      for (final img in _sampleItems(
+        data.imageLocations,
+        _maxDayImageMarkers,
+      )) {
         imageMarkers.add(
           Marker(
             point: LatLng(img.lat, img.lon),
@@ -966,13 +984,6 @@ class _MapPageState extends ConsumerState<MapPage>
                 child: const Icon(Icons.tune),
               ),
             ),
-            if (_dayViewLoading)
-              Positioned(
-                top: 72,
-                left: 16,
-                right: isWide ? _sidePanelWidth + 16 : 16,
-                child: const LinearProgressIndicator(minHeight: 3),
-              ),
           ],
         );
       },
@@ -1448,13 +1459,20 @@ class _MapPageState extends ConsumerState<MapPage>
     setState(() {
       _dayViewLoading = true;
       _dayViewError = '';
-      _dayViewData = null;
       _dayViewDate = date;
       _selectedVisitPlaceId = null;
       _selectedRunId = null;
     });
     try {
-      final data = await ref.read(mapRepositoryProvider).loadTimelineDay(date);
+      final data = await ref
+          .read(mapRepositoryProvider)
+          .loadTimelineDay(date)
+          .timeout(
+            _dayViewLoadTimeout,
+            onTimeout: () => throw TimeoutException(
+              'Loading this day took too long. Please try again.',
+            ),
+          );
       if (!mounted || requestToken != _dayViewRequestToken) return;
       setState(() {
         _dayViewData = data;
@@ -1466,9 +1484,12 @@ class _MapPageState extends ConsumerState<MapPage>
       debugPrint('[DAY_VIEW] loadDayView failed date=$date error=$error');
       debugPrintStack(stackTrace: stackTrace);
       if (!mounted || requestToken != _dayViewRequestToken) return;
+      final message = error is TimeoutException
+          ? (error.message ?? 'Loading this day took too long.')
+          : error.toString().replaceFirst('Exception: ', '');
       setState(() {
         _dayViewLoading = false;
-        _dayViewError = error.toString().replaceFirst('Exception: ', '');
+        _dayViewError = message;
       });
     }
   }
@@ -1483,12 +1504,13 @@ class _MapPageState extends ConsumerState<MapPage>
     for (final run in data.runs) {
       points.addAll(_decodePolylinePoints(run.id, run.summaryPolyline));
     }
-    if (points.isEmpty) return;
-    if (points.length == 1) {
-      _flyToPoint(points.first);
+    final sampledPoints = _sampleLatLngs(points, _maxDayFitPoints);
+    if (sampledPoints.isEmpty) return;
+    if (sampledPoints.length == 1) {
+      _flyToPoint(sampledPoints.first);
       return;
     }
-    final bounds = LatLngBounds.fromPoints(points);
+    final bounds = LatLngBounds.fromPoints(sampledPoints);
     _mapController.fitCamera(
       CameraFit.bounds(
         bounds: bounds,
@@ -1543,6 +1565,32 @@ class _MapPageState extends ConsumerState<MapPage>
       _decodedPolylineCache[cacheKey] = const <LatLng>[];
       return const <LatLng>[];
     }
+  }
+
+  List<LatLng> _sampleLatLngs(List<LatLng> points, int maxPoints) {
+    if (points.length <= maxPoints) return points;
+    final step = (points.length / maxPoints).ceil();
+    final sampled = <LatLng>[];
+    for (var i = 0; i < points.length; i += step) {
+      sampled.add(points[i]);
+    }
+    if (sampled.last != points.last) {
+      sampled.add(points.last);
+    }
+    return sampled;
+  }
+
+  List<T> _sampleItems<T>(List<T> items, int maxItems) {
+    if (items.length <= maxItems) return items;
+    final step = (items.length / maxItems).ceil();
+    final sampled = <T>[];
+    for (var i = 0; i < items.length; i += step) {
+      sampled.add(items[i]);
+    }
+    if (sampled.last != items.last) {
+      sampled.add(items.last);
+    }
+    return sampled;
   }
 
   Future<void> _onDateTapped() async {
@@ -1629,12 +1677,9 @@ class _MapPageState extends ConsumerState<MapPage>
       _selectedRunId = run.id;
       _selectedVisitPlaceId = null;
     });
-    if (run.summaryPolyline.isEmpty) return;
+    final pts = _decodePolylinePoints(run.id, run.summaryPolyline);
+    if (pts.length < 2) return;
     try {
-      final pts = decodePolyline(
-        run.summaryPolyline,
-      ).map((p) => LatLng(p[0].toDouble(), p[1].toDouble())).toList();
-      if (pts.length < 2) return;
       final bounds = LatLngBounds.fromPoints(pts);
       _mapController.fitCamera(
         CameraFit.bounds(
@@ -2392,6 +2437,22 @@ class _DayBottomSheet extends StatelessWidget {
           ],
         ),
       ),
+      if (isLoading && hasTimeline)
+        const Padding(
+          padding: EdgeInsets.fromLTRB(16, 0, 16, 10),
+          child: Text(
+            'Updating timeline…',
+            style: TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+        ),
+      if (errorText.isNotEmpty && hasTimeline)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+          child: Text(
+            errorText,
+            style: const TextStyle(color: Color(0xFFFFB4AB), fontSize: 12),
+          ),
+        ),
       if (entries.isNotEmpty)
         Stack(
           children: [

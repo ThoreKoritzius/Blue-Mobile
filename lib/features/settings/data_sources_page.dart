@@ -875,6 +875,8 @@ class _DataSourceCard extends StatelessWidget {
       case 'google_calendar':
       case 'google_calendar_import':
         return Icons.calendar_month_rounded;
+      case 'weather_archive':
+        return Icons.cloud_queue_rounded;
       default:
         return Icons.storage_rounded;
     }

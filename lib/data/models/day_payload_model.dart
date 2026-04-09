@@ -1,5 +1,6 @@
 import 'calendar_event_model.dart';
 import 'daily_activity_model.dart';
+import 'daily_weather_model.dart';
 import 'day_media_model.dart';
 import 'run_model.dart';
 import 'story_day_model.dart';
@@ -12,6 +13,7 @@ class DayPayloadModel {
     required this.events,
     required this.detailsLoaded,
     this.activity,
+    this.weather,
   });
 
   final StoryDayModel story;
@@ -20,6 +22,7 @@ class DayPayloadModel {
   final List<CalendarEventModel> events;
   final bool detailsLoaded;
   final DailyActivityModel? activity;
+  final DailyWeatherModel? weather;
 
   DayPayloadModel copyWith({
     StoryDayModel? story,
@@ -28,6 +31,7 @@ class DayPayloadModel {
     List<CalendarEventModel>? events,
     bool? detailsLoaded,
     DailyActivityModel? activity,
+    DailyWeatherModel? weather,
   }) {
     return DayPayloadModel(
       story: story ?? this.story,
@@ -36,6 +40,7 @@ class DayPayloadModel {
       events: events ?? this.events,
       detailsLoaded: detailsLoaded ?? this.detailsLoaded,
       activity: activity ?? this.activity,
+      weather: weather ?? this.weather,
     );
   }
 }

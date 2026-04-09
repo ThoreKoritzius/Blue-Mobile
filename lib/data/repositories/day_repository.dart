@@ -1,6 +1,7 @@
 import '../../core/network/graphql_service.dart';
 import '../graphql/documents.dart';
 import '../models/daily_activity_model.dart';
+import '../models/daily_weather_model.dart';
 import '../models/day_media_model.dart';
 import '../models/day_payload_model.dart';
 import '../models/run_model.dart';
@@ -47,6 +48,7 @@ class GraphqlDayRepository implements DayRepository {
       runs: runs,
       events: const [],
       detailsLoaded: false,
+      weather: null,
     );
   }
 
@@ -131,6 +133,18 @@ class GraphqlDayRepository implements DayRepository {
           activity = DailyActivityModel.fromJson(node);
         }
       }
+      final weatherEdges =
+          (((response['health'] as Map<String, dynamic>?)?['dailyWeather']
+                      as Map<String, dynamic>?)?['edges']
+                  as List<dynamic>?) ??
+              const [];
+      DailyWeatherModel? weather;
+      if (weatherEdges.isNotEmpty) {
+        final node = (weatherEdges.first as Map<String, dynamic>)['node'];
+        if (node is Map<String, dynamic>) {
+          weather = DailyWeatherModel.fromJson(node);
+        }
+      }
 
       return DayPayloadModel(
         story: story,
@@ -143,6 +157,7 @@ class GraphqlDayRepository implements DayRepository {
         events: const [],
         detailsLoaded: false,
         activity: activity,
+        weather: weather,
       );
     } catch (_) {
       final cached = await getCachedDayCorePayload(day);

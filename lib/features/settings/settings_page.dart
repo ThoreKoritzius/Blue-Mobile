@@ -139,7 +139,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                     ),
                   ),
                   subtitle: Text(
-                    'Timeline, Strava, Takeout and Calendar',
+                    'Timeline, Strava, Takeout, Calendar and Weather',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: colorScheme.onSurfaceVariant,
                     ),
