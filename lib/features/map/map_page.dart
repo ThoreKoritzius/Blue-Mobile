@@ -10,6 +10,7 @@ import 'package:google_polyline_algorithm/google_polyline_algorithm.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../core/config/app_config.dart';
+import '../../core/widgets/calendar_event_detail_sheet.dart';
 import '../../core/utils/date_format.dart';
 import '../../data/models/run_model.dart';
 import '../../data/repositories/map_repository.dart';
@@ -1651,94 +1652,13 @@ class _MapPageState extends ConsumerState<MapPage>
   }
 
   void _onCalendarEventTapped(TimelineCalendarEvent event) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      backgroundColor: const Color(0xFF1F1F1F),
-      builder: (context) {
-        final theme = Theme.of(context);
-        final colorScheme = theme.colorScheme;
-        final timeLabel = _formatCalendarEventTime(event);
-        final sourceLabel = _formatCalendarSourceLabel(event);
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: colorScheme.primary.withValues(alpha: 0.18),
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Icon(
-                        Icons.calendar_month_rounded,
-                        color: colorScheme.primary,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        event.summary.isEmpty ? 'Calendar event' : event.summary,
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 18),
-                _DetailRow(
-                  icon: Icons.schedule_rounded,
-                  label: 'Time',
-                  value: timeLabel,
-                ),
-                if ((event.location ?? '').isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  _DetailRow(
-                    icon: Icons.place_rounded,
-                    label: 'Location',
-                    value: event.location!,
-                  ),
-                ],
-                if (sourceLabel.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  _DetailRow(
-                    icon: Icons.storage_rounded,
-                    label: 'Source',
-                    value: sourceLabel,
-                  ),
-                ],
-                if ((event.description ?? '').isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  Text(
-                    'Description',
-                    style: theme.textTheme.labelLarge?.copyWith(
-                      color: Colors.white70,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    event.description!,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: Colors.white,
-                      height: 1.45,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        );
-      },
+    showCalendarEventDetailSheet(
+      context,
+      summary: event.summary,
+      timeLabel: _formatCalendarEventTime(event),
+      location: event.location ?? '',
+      description: event.description ?? '',
+      sourceLabel: _formatCalendarSourceLabel(event),
     );
   }
 
@@ -2106,52 +2026,6 @@ class _MapPageState extends ConsumerState<MapPage>
         (a.northWest.longitude - b.northWest.longitude).abs() < 0.2 &&
         (a.southEast.latitude - b.southEast.latitude).abs() < 0.2 &&
         (a.southEast.longitude - b.southEast.longitude).abs() < 0.2;
-  }
-}
-
-class _DetailRow extends StatelessWidget {
-  const _DetailRow({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 18, color: Colors.white54),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style: theme.textTheme.labelLarge?.copyWith(
-                  color: Colors.white54,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                value,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: Colors.white,
-                  height: 1.35,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
   }
 }
 

@@ -20,6 +20,7 @@ import '../../core/utils/breakpoints.dart';
 import '../../core/utils/date_format.dart';
 import '../../data/graphql/documents.dart';
 import '../../core/widgets/fullscreen_image_viewer.dart';
+import '../../core/widgets/calendar_event_detail_sheet.dart';
 import '../../core/widgets/section_card.dart';
 import '../../data/models/calendar_event_model.dart';
 import '../../data/repositories/map_repository.dart';
@@ -1335,7 +1336,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     final now = DateUtils.dateOnly(DateTime.now());
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
     final screenWidth = MediaQuery.sizeOf(context).width;
-    final isWide = screenWidth >= Breakpoints.compact;
+    final isWide = screenWidth >= Breakpoints.medium;
 
     return Focus(
       autofocus: true,
@@ -1375,8 +1376,8 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                 keyboardDismissBehavior:
                     ScrollViewKeyboardDismissBehavior.onDrag,
                 padding: isWide
-                    ? const EdgeInsets.only(top: 24, bottom: 40)
-                    : EdgeInsets.zero,
+                    ? const EdgeInsets.fromLTRB(20, 24, 20, 40)
+                    : const EdgeInsets.fromLTRB(16, 0, 16, 24),
                 children: [
                   Center(
                     child: ConstrainedBox(
@@ -2456,6 +2457,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
             for (var index = 0; index < events.length; index++) ...[
               _CalendarEventTile(
                 event: events[index],
+                onTap: _showCalendarEventDetail,
                 showConnector: index != events.length - 1,
               ),
             ],
@@ -2463,6 +2465,29 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
         );
       },
     );
+  }
+
+  void _showCalendarEventDetail(CalendarEventModel event) {
+    showCalendarEventDetailSheet(
+      context,
+      summary: event.summary,
+      timeLabel: _calendarDetailTimeLabel(event),
+      location: event.location,
+      description: event.description,
+      sourceLabel: _calendarSourceLabel(event),
+    );
+  }
+
+  String _calendarSourceLabel(CalendarEventModel event) {
+    final sourceName = event.sourceName.trim();
+    final source = event.source.trim();
+    if (sourceName.isNotEmpty && source == 'google_calendar_manual') {
+      return '$sourceName (manual import)';
+    }
+    if (sourceName.isNotEmpty) return sourceName;
+    if (source == 'google_calendar_manual') return 'Manual calendar import';
+    if (source == 'google_calendar') return 'Connected Google Calendar';
+    return source;
   }
 
   String? _personPhotoUrl(PersonModel? person) {
@@ -3486,10 +3511,12 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
 class _CalendarEventTile extends StatelessWidget {
   const _CalendarEventTile({
     required this.event,
+    required this.onTap,
     required this.showConnector,
   });
 
   final CalendarEventModel event;
+  final ValueChanged<CalendarEventModel> onTap;
   final bool showConnector;
 
   @override
@@ -3498,123 +3525,127 @@ class _CalendarEventTile extends StatelessWidget {
     final colorScheme = theme.colorScheme;
     final timeLabel = _timePresentation(event);
 
-    return Container(
-      width: double.infinity,
-      margin: EdgeInsets.only(bottom: showConnector ? 12 : 0),
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SizedBox(
-              width: 86,
-              child: Column(
-                children: [
-                  Container(
-                    width: 72,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 12,
-                    ),
-                    decoration: BoxDecoration(
-                      color: colorScheme.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Text(
-                      timeLabel,
-                      textAlign: TextAlign.center,
-                      maxLines: 1,
-                      overflow: TextOverflow.visible,
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        color: colorScheme.onSurface,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.2,
-                        height: 1.0,
-                      ),
-                    ),
-                  ),
-                  if (showConnector)
-                    Expanded(
-                      child: Container(
-                        width: 2,
-                        margin: const EdgeInsets.symmetric(vertical: 6),
-                        decoration: BoxDecoration(
-                          color: colorScheme.outlineVariant,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: colorScheme.surfaceContainerLow,
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(
-                    color: colorScheme.outlineVariant.withValues(alpha: 0.7),
-                  ),
-                ),
+    return InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: () => onTap(event),
+      child: Container(
+        width: double.infinity,
+        margin: EdgeInsets.only(bottom: showConnector ? 12 : 0),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(
+                width: 86,
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            event.summary.isEmpty
-                                ? 'Untitled event'
-                                : event.summary,
-                            style: theme.textTheme.titleSmall?.copyWith(
-                              fontWeight: FontWeight.w800,
-                              height: 1.15,
-                            ),
-                          ),
+                    Container(
+                      width: 72,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 12,
+                      ),
+                      decoration: BoxDecoration(
+                        color: colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Text(
+                        timeLabel,
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.visible,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          color: colorScheme.onSurface,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.2,
+                          height: 1.0,
                         ),
-                        const SizedBox(width: 10),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 5,
-                          ),
+                      ),
+                    ),
+                    if (showConnector)
+                      Expanded(
+                        child: Container(
+                          width: 2,
+                          margin: const EdgeInsets.symmetric(vertical: 6),
                           decoration: BoxDecoration(
-                            color: colorScheme.primaryContainer,
+                            color: colorScheme.outlineVariant,
                             borderRadius: BorderRadius.circular(999),
                           ),
-                          child: Text(
-                            event.allDay ? 'All day' : 'Scheduled',
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: colorScheme.onPrimaryContainer,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        _CalendarMetaPill(
-                          icon: Icons.schedule_rounded,
-                          label: _detailTimeLabel(event),
-                        ),
-                        if (event.location.isNotEmpty)
-                          _CalendarMetaPill(
-                            icon: Icons.place_rounded,
-                            label: event.location,
-                          ),
-                      ],
-                    ),
+                      ),
                   ],
                 ),
               ),
-            ),
-          ],
+              const SizedBox(width: 12),
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: colorScheme.surfaceContainerLow,
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: colorScheme.outlineVariant.withValues(alpha: 0.7),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              event.summary.isEmpty
+                                  ? 'Untitled event'
+                                  : event.summary,
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                height: 1.15,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: colorScheme.primaryContainer,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              event.allDay ? 'All day' : 'Scheduled',
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: colorScheme.onPrimaryContainer,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          _CalendarMetaPill(
+                            icon: Icons.schedule_rounded,
+                            label: _calendarDetailTimeLabel(event),
+                          ),
+                          if (event.location.isNotEmpty)
+                            _CalendarMetaPill(
+                              icon: Icons.place_rounded,
+                              label: event.location,
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -3626,17 +3657,17 @@ class _CalendarEventTile extends StatelessWidget {
     if (start == null) return 'Time';
     return DateFormat('HH:mm').format(start.toLocal());
   }
+}
 
-  String _detailTimeLabel(CalendarEventModel event) {
-    if (event.allDay) return 'All day';
-    final start = DateTime.tryParse(event.start);
-    final end = DateTime.tryParse(event.end);
-    if (start == null) return 'Time unavailable';
-    final startLabel = DateFormat('HH:mm').format(start.toLocal());
-    if (end == null) return startLabel;
-    final endLabel = DateFormat('HH:mm').format(end.toLocal());
-    return '$startLabel – $endLabel';
-  }
+String _calendarDetailTimeLabel(CalendarEventModel event) {
+  if (event.allDay) return 'All day';
+  final start = DateTime.tryParse(event.start);
+  final end = DateTime.tryParse(event.end);
+  if (start == null) return 'Time unavailable';
+  final startLabel = DateFormat('HH:mm').format(start.toLocal());
+  if (end == null) return startLabel;
+  final endLabel = DateFormat('HH:mm').format(end.toLocal());
+  return '$startLabel – $endLabel';
 }
 
 class _CalendarMetaPill extends StatelessWidget {
