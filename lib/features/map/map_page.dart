@@ -97,12 +97,15 @@ class _MapPageState extends ConsumerState<MapPage>
   bool _dayViewLoading = false;
   String _dayViewError = '';
   TimelineDayData? _dayViewData;
+  int _dayViewRequestToken = 0;
   // All dates with run data, used to build the slider
   List<String> _dayViewDates = const [];
   int _dayViewDateIndex = 0;
   String? _selectedVisitPlaceId;
   String? _selectedRunId;
   bool? _wasWideLayout;
+  final Map<String, List<LatLng>> _decodedPolylineCache =
+      <String, List<LatLng>>{};
   final DraggableScrollableController _sheetController =
       DraggableScrollableController();
 
@@ -645,47 +648,42 @@ class _MapPageState extends ConsumerState<MapPage>
     final runMarkers = <Marker>[];
     if (data != null) {
       for (final run in data.runs) {
-        if (run.summaryPolyline.isEmpty) continue;
-        try {
-          final pts = decodePolyline(
-            run.summaryPolyline,
-          ).map((p) => LatLng(p[0].toDouble(), p[1].toDouble())).toList();
-          if (pts.length < 2) continue;
-          final color = const Color(0xFFFF9800);
-          runPolylines.add(Polyline(points: pts, strokeWidth: 3, color: color));
-          // Try to find the matching full RunOverlay for the sheet.
-          final matchingOverlay = _runs
-              .where((r) => r.run.id == run.id)
-              .firstOrNull;
-          runMarkers.add(
-            Marker(
-              point: pts.first,
-              width: 28,
-              height: 28,
-              child: GestureDetector(
-                onTap: () {
-                  if (matchingOverlay != null) {
-                    _showRunSheet(matchingOverlay);
-                  } else {
-                    _showDayRunSheet(run);
-                  }
-                },
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.88),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white),
-                  ),
-                  child: const Icon(
-                    Icons.directions_run,
-                    size: 16,
-                    color: Colors.white,
-                  ),
+        final pts = _decodePolylinePoints(run.id, run.summaryPolyline);
+        if (pts.length < 2) continue;
+        final color = const Color(0xFFFF9800);
+        runPolylines.add(Polyline(points: pts, strokeWidth: 3, color: color));
+        // Try to find the matching full RunOverlay for the sheet.
+        final matchingOverlay = _runs
+            .where((r) => r.run.id == run.id)
+            .firstOrNull;
+        runMarkers.add(
+          Marker(
+            point: pts.first,
+            width: 28,
+            height: 28,
+            child: GestureDetector(
+              onTap: () {
+                if (matchingOverlay != null) {
+                  _showRunSheet(matchingOverlay);
+                } else {
+                  _showDayRunSheet(run);
+                }
+              },
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.88),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white),
+                ),
+                child: const Icon(
+                  Icons.directions_run,
+                  size: 16,
+                  color: Colors.white,
                 ),
               ),
             ),
-          );
-        } catch (_) {}
+          ),
+        );
       }
     }
 
@@ -793,6 +791,8 @@ class _MapPageState extends ConsumerState<MapPage>
           _showDayImageSheet(img, _dayViewDate),
       selectedVisitPlaceId: _selectedVisitPlaceId,
       selectedRunId: _selectedRunId,
+      isLoading: _dayViewLoading,
+      errorText: _dayViewError,
       authHeaders: _authHeaders(),
       authenticateUrl: _authenticatedUrl,
       runColors: {
@@ -916,6 +916,8 @@ class _MapPageState extends ConsumerState<MapPage>
                   onImageTapped: sheetParams.onImageTapped,
                   selectedVisitPlaceId: sheetParams.selectedVisitPlaceId,
                   selectedRunId: sheetParams.selectedRunId,
+                  isLoading: sheetParams.isLoading,
+                  errorText: sheetParams.errorText,
                   sheetController: _sheetController,
                   authHeaders: sheetParams.authHeaders,
                   authenticateUrl: sheetParams.authenticateUrl,
@@ -944,6 +946,8 @@ class _MapPageState extends ConsumerState<MapPage>
                   onImageTapped: sheetParams.onImageTapped,
                   selectedVisitPlaceId: sheetParams.selectedVisitPlaceId,
                   selectedRunId: sheetParams.selectedRunId,
+                  isLoading: sheetParams.isLoading,
+                  errorText: sheetParams.errorText,
                   authHeaders: sheetParams.authHeaders,
                   authenticateUrl: sheetParams.authenticateUrl,
                   runColors: sheetParams.runColors,
@@ -962,6 +966,13 @@ class _MapPageState extends ConsumerState<MapPage>
                 child: const Icon(Icons.tune),
               ),
             ),
+            if (_dayViewLoading)
+              Positioned(
+                top: 72,
+                left: 16,
+                right: isWide ? _sidePanelWidth + 16 : 16,
+                child: const LinearProgressIndicator(minHeight: 3),
+              ),
           ],
         );
       },
@@ -1421,6 +1432,7 @@ class _MapPageState extends ConsumerState<MapPage>
   }
 
   void _exitDayView() {
+    _dayViewRequestToken += 1;
     setState(() {
       _dayViewMode = false;
       _dayViewData = null;
@@ -1432,6 +1444,7 @@ class _MapPageState extends ConsumerState<MapPage>
   }
 
   Future<void> _loadDayView(String date) async {
+    final requestToken = ++_dayViewRequestToken;
     setState(() {
       _dayViewLoading = true;
       _dayViewError = '';
@@ -1442,7 +1455,7 @@ class _MapPageState extends ConsumerState<MapPage>
     });
     try {
       final data = await ref.read(mapRepositoryProvider).loadTimelineDay(date);
-      if (!mounted) return;
+      if (!mounted || requestToken != _dayViewRequestToken) return;
       setState(() {
         _dayViewData = data;
         _dayViewLoading = false;
@@ -1452,7 +1465,7 @@ class _MapPageState extends ConsumerState<MapPage>
     } catch (error, stackTrace) {
       debugPrint('[DAY_VIEW] loadDayView failed date=$date error=$error');
       debugPrintStack(stackTrace: stackTrace);
-      if (!mounted) return;
+      if (!mounted || requestToken != _dayViewRequestToken) return;
       setState(() {
         _dayViewLoading = false;
         _dayViewError = error.toString().replaceFirst('Exception: ', '');
@@ -1468,16 +1481,13 @@ class _MapPageState extends ConsumerState<MapPage>
     ];
     points.addAll(data.walkPoints.map((p) => LatLng(p.lat, p.lon)));
     for (final run in data.runs) {
-      if (run.summaryPolyline.isEmpty) continue;
-      try {
-        points.addAll(
-          decodePolyline(
-            run.summaryPolyline,
-          ).map((p) => LatLng(p[0].toDouble(), p[1].toDouble())),
-        );
-      } catch (_) {}
+      points.addAll(_decodePolylinePoints(run.id, run.summaryPolyline));
     }
-    if (points.length < 2) return;
+    if (points.isEmpty) return;
+    if (points.length == 1) {
+      _flyToPoint(points.first);
+      return;
+    }
     final bounds = LatLngBounds.fromPoints(points);
     _mapController.fitCamera(
       CameraFit.bounds(
@@ -1511,10 +1521,28 @@ class _MapPageState extends ConsumerState<MapPage>
   }
 
   void _onDaySliderChanged(double value) {
+    if (_dayViewDates.isEmpty) return;
     final idx = value.round().clamp(0, _dayViewDates.length - 1);
     if (idx == _dayViewDateIndex) return;
     setState(() => _dayViewDateIndex = idx);
     _loadDayView(_dayViewDates[idx]);
+  }
+
+  List<LatLng> _decodePolylinePoints(String id, String polyline) {
+    if (polyline.isEmpty) return const <LatLng>[];
+    final cacheKey = '$id|$polyline';
+    final cached = _decodedPolylineCache[cacheKey];
+    if (cached != null) return cached;
+    try {
+      final decoded = decodePolyline(
+        polyline,
+      ).map((pair) => LatLng(pair[0].toDouble(), pair[1].toDouble())).toList();
+      _decodedPolylineCache[cacheKey] = decoded;
+      return decoded;
+    } catch (_) {
+      _decodedPolylineCache[cacheKey] = const <LatLng>[];
+      return const <LatLng>[];
+    }
   }
 
   Future<void> _onDateTapped() async {
@@ -2043,6 +2071,8 @@ class _DayBottomSheet extends StatelessWidget {
     required this.runColors,
     required this.onRunTapped,
     required this.onImageTapped,
+    required this.isLoading,
+    required this.errorText,
     this.sheetController,
     this.selectedVisitPlaceId,
     this.selectedRunId,
@@ -2063,6 +2093,8 @@ class _DayBottomSheet extends StatelessWidget {
   final void Function(TimelineImageLocation img) onImageTapped;
   final String? selectedVisitPlaceId;
   final String? selectedRunId;
+  final bool isLoading;
+  final String errorText;
   final DraggableScrollableController? sheetController;
   final Map<String, String> authHeaders;
   final String Function(String url) authenticateUrl;
@@ -2079,8 +2111,12 @@ class _DayBottomSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (dates.isEmpty) {
+      return const SizedBox.shrink();
+    }
     final screenHeight = MediaQuery.of(context).size.height;
     final minFraction = (_collapsedHeight / screenHeight).clamp(0.08, 0.25);
+    final safeIndex = currentIndex.clamp(0, dates.length - 1);
     final rawSegments = data?.segments ?? const [];
     final images = data?.imageLocations ?? const [];
     final runs = data?.runs ?? const [];
@@ -2170,18 +2206,35 @@ class _DayBottomSheet extends StatelessWidget {
 
     // --- Build unified timeline: segments + runs, sorted by time ---
     final entries =
-        <({TimelineSegment? seg, TimelineRun? run, TimelineCalendarEvent? calendar, DateTime time})>[];
+        <
+          ({
+            TimelineSegment? seg,
+            TimelineRun? run,
+            TimelineCalendarEvent? calendar,
+            DateTime time,
+          })
+        >[];
     for (final seg in segments) {
       entries.add((seg: seg, run: null, calendar: null, time: seg.startTime));
     }
     for (final run in runs) {
       if (run.startTime != null) {
-        entries.add((seg: null, run: run, calendar: null, time: run.startTime!));
+        entries.add((
+          seg: null,
+          run: run,
+          calendar: null,
+          time: run.startTime!,
+        ));
       }
     }
     for (final event in calendarEvents) {
       if (event.start != null) {
-        entries.add((seg: null, run: null, calendar: event, time: event.start!));
+        entries.add((
+          seg: null,
+          run: null,
+          calendar: event,
+          time: event.start!,
+        ));
       }
     }
     entries.sort((a, b) => a.time.compareTo(b.time));
@@ -2222,6 +2275,8 @@ class _DayBottomSheet extends StatelessWidget {
       unassignedImages: unassignedImages,
       runById: runById,
       hasTimeline: hasTimeline,
+      isLoading: isLoading,
+      errorText: errorText,
     );
 
     if (isWideLayout) {
@@ -2234,7 +2289,7 @@ class _DayBottomSheet extends StatelessWidget {
           padding: EdgeInsets.zero,
           children: [
             const SizedBox(height: 12),
-            _buildSlider(context),
+            _buildSlider(context, safeIndex),
             ...timelineChildren,
             SizedBox(height: MediaQuery.of(context).padding.bottom + 16),
           ],
@@ -2271,7 +2326,7 @@ class _DayBottomSheet extends StatelessWidget {
                   ),
                 ),
               ),
-              _buildSlider(context),
+              _buildSlider(context, safeIndex),
               ...timelineChildren,
               SizedBox(height: MediaQuery.of(context).padding.bottom + 16),
             ],
@@ -2296,6 +2351,8 @@ class _DayBottomSheet extends StatelessWidget {
     required List<TimelineImageLocation> unassignedImages,
     required Map<String, TimelineRun> runById,
     required bool hasTimeline,
+    required bool isLoading,
+    required String errorText,
   }) {
     return [
       if (hasTimeline)
@@ -2378,7 +2435,29 @@ class _DayBottomSheet extends StatelessWidget {
         ),
         _buildImageStrip(context, unassignedImages),
       ],
-      if (!hasTimeline)
+      if (isLoading)
+        const Padding(
+          padding: EdgeInsets.all(24),
+          child: Center(
+            child: SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ),
+        )
+      else if (errorText.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.all(24),
+          child: Center(
+            child: Text(
+              errorText,
+              style: const TextStyle(color: Colors.white54, fontSize: 13),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        )
+      else if (!hasTimeline)
         const Padding(
           padding: EdgeInsets.all(24),
           child: Center(
@@ -2409,8 +2488,8 @@ class _DayBottomSheet extends StatelessWidget {
     return hours > 0 ? '${hours}h ${mins}m' : '${mins}m';
   }
 
-  Widget _buildSlider(BuildContext context) {
-    final date = dates[currentIndex];
+  Widget _buildSlider(BuildContext context, int safeIndex) {
+    final date = dates[safeIndex];
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
       child: Column(
@@ -2443,7 +2522,7 @@ class _DayBottomSheet extends StatelessWidget {
           ),
           if (dates.length > 1)
             Slider(
-              value: currentIndex.toDouble(),
+              value: safeIndex.toDouble(),
               min: 0,
               max: (dates.length - 1).toDouble(),
               divisions: dates.length - 1,
@@ -3005,7 +3084,10 @@ class _DayBottomSheet extends StatelessWidget {
               decoration: BoxDecoration(
                 color: color.withValues(alpha: 0.18),
                 shape: BoxShape.circle,
-                border: Border.all(color: color.withValues(alpha: 0.8), width: 1.5),
+                border: Border.all(
+                  color: color.withValues(alpha: 0.8),
+                  width: 1.5,
+                ),
               ),
               child: Icon(Icons.event_rounded, size: 12, color: color),
             ),
@@ -3019,7 +3101,9 @@ class _DayBottomSheet extends StatelessWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          event.summary.isNotEmpty ? event.summary : 'Calendar event',
+                          event.summary.isNotEmpty
+                              ? event.summary
+                              : 'Calendar event',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 13,
@@ -3066,11 +3150,7 @@ class _DayBottomSheet extends StatelessWidget {
                 ],
               ),
             ),
-            const Icon(
-              Icons.chevron_right,
-              size: 16,
-              color: Color(0x44FFFFFF),
-            ),
+            const Icon(Icons.chevron_right, size: 16, color: Color(0x44FFFFFF)),
           ],
         ),
       ),
