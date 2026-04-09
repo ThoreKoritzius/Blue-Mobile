@@ -641,9 +641,14 @@ class _MapPageState extends ConsumerState<MapPage>
               heroTag: 'map_day_toggle',
               tooltip: 'Day view',
               onPressed: _runs.isNotEmpty
-                  ? () => _enterDayView(
-                      _runs.last.run.startDateLocal.split('T').first,
-                    )
+                  ? () {
+                      final today = DateUtils.dateOnly(DateTime.now());
+                      final todayStr =
+                          '${today.year.toString().padLeft(4, '0')}-'
+                          '${today.month.toString().padLeft(2, '0')}-'
+                          '${today.day.toString().padLeft(2, '0')}';
+                      _enterDayView(todayStr);
+                    }
                   : null,
               child: const Icon(Icons.calendar_today),
             ),
@@ -808,7 +813,9 @@ class _MapPageState extends ConsumerState<MapPage>
     final sheetParams = (
       dates: _dayViewDates,
       currentIndex: _dayViewDateIndex,
-      onDateChanged: _onDaySliderChanged,
+      currentDate: _dayViewDate,
+      onPreviousDate: _goToPreviousDay,
+      onNextDate: _goToNextDay,
       data: data,
       onVisitTapped: _onBottomSheetVisitTapped,
       onSegmentTapped: _onSegmentTapped,
@@ -934,7 +941,9 @@ class _MapPageState extends ConsumerState<MapPage>
                 child: _DayBottomSheet(
                   dates: sheetParams.dates,
                   currentIndex: sheetParams.currentIndex,
-                  onDateChanged: sheetParams.onDateChanged,
+                  currentDate: sheetParams.currentDate,
+                  onPreviousDate: sheetParams.onPreviousDate,
+                  onNextDate: sheetParams.onNextDate,
                   data: sheetParams.data,
                   onVisitTapped: sheetParams.onVisitTapped,
                   onSegmentTapped: sheetParams.onSegmentTapped,
@@ -964,7 +973,9 @@ class _MapPageState extends ConsumerState<MapPage>
                   isWideLayout: true,
                   dates: sheetParams.dates,
                   currentIndex: sheetParams.currentIndex,
-                  onDateChanged: sheetParams.onDateChanged,
+                  currentDate: sheetParams.currentDate,
+                  onPreviousDate: sheetParams.onPreviousDate,
+                  onNextDate: sheetParams.onNextDate,
                   data: sheetParams.data,
                   onVisitTapped: sheetParams.onVisitTapped,
                   onSegmentTapped: sheetParams.onSegmentTapped,
@@ -1523,6 +1534,10 @@ class _MapPageState extends ConsumerState<MapPage>
       return;
     }
     final bounds = LatLngBounds.fromPoints(sampledPoints);
+    if (_isZeroAreaBounds(bounds)) {
+      _flyToPoint(sampledPoints.first);
+      return;
+    }
     _mapController.fitCamera(
       CameraFit.bounds(
         bounds: bounds,
@@ -1571,6 +1586,28 @@ class _MapPageState extends ConsumerState<MapPage>
     if (idx == _dayViewDateIndex) return;
     setState(() => _dayViewDateIndex = idx);
     _loadDayView(_dayViewDates[idx]);
+  }
+
+  void _goToPreviousDay() {
+    final current = DateTime.tryParse(_dayViewDate) ?? DateUtils.dateOnly(DateTime.now());
+    final previous = DateUtils.addDaysToDate(current, -1);
+    final dateStr =
+        '${previous.year.toString().padLeft(4, '0')}-'
+        '${previous.month.toString().padLeft(2, '0')}-'
+        '${previous.day.toString().padLeft(2, '0')}';
+    _enterDayView(dateStr);
+  }
+
+  void _goToNextDay() {
+    final current = DateTime.tryParse(_dayViewDate) ?? DateUtils.dateOnly(DateTime.now());
+    final today = DateUtils.dateOnly(DateTime.now());
+    if (!current.isBefore(today)) return;
+    final next = DateUtils.addDaysToDate(current, 1);
+    final dateStr =
+        '${next.year.toString().padLeft(4, '0')}-'
+        '${next.month.toString().padLeft(2, '0')}-'
+        '${next.day.toString().padLeft(2, '0')}';
+    _enterDayView(dateStr);
   }
 
   List<LatLng> _decodePolylinePoints(String id, String polyline) {
@@ -1704,6 +1741,10 @@ class _MapPageState extends ConsumerState<MapPage>
     if (pts.length < 2) return;
     try {
       final bounds = LatLngBounds.fromPoints(pts);
+      if (_isZeroAreaBounds(bounds)) {
+        _flyToPoint(pts.first);
+        return;
+      }
       _mapController.fitCamera(
         CameraFit.bounds(
           bounds: bounds,
@@ -2134,13 +2175,19 @@ class _MapPageState extends ConsumerState<MapPage>
         bounds.southEast.latitude.isFinite &&
         bounds.southEast.longitude.isFinite;
   }
+
+  bool _isZeroAreaBounds(LatLngBounds bounds) {
+    return bounds.north == bounds.south && bounds.east == bounds.west;
+  }
 }
 
 class _DayBottomSheet extends StatelessWidget {
   const _DayBottomSheet({
     required this.dates,
     required this.currentIndex,
-    required this.onDateChanged,
+    required this.currentDate,
+    required this.onPreviousDate,
+    required this.onNextDate,
     required this.data,
     required this.onVisitTapped,
     required this.onSegmentTapped,
@@ -2163,7 +2210,9 @@ class _DayBottomSheet extends StatelessWidget {
 
   final List<String> dates;
   final int currentIndex;
-  final ValueChanged<double> onDateChanged;
+  final String currentDate;
+  final VoidCallback onPreviousDate;
+  final VoidCallback onNextDate;
   final TimelineDayData? data;
   final void Function(TimelineVisit visit) onVisitTapped;
   final void Function(TimelineSegment segment) onSegmentTapped;
@@ -2373,10 +2422,7 @@ class _DayBottomSheet extends StatelessWidget {
 
     if (isWideLayout) {
       return Container(
-        decoration: const BoxDecoration(
-          color: Color(0xFF222222),
-          borderRadius: BorderRadius.horizontal(left: Radius.circular(16)),
-        ),
+        color: const Color(0xFF222222),
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
@@ -2625,77 +2671,57 @@ class _DayBottomSheet extends StatelessWidget {
   }
 
   Widget _buildSlider(BuildContext context, int safeIndex) {
-    final date = dates[safeIndex];
-    final canGoBack = safeIndex > 0;
-    final canGoForward = safeIndex < dates.length - 1;
+    final today = DateUtils.dateOnly(DateTime.now());
+    final current = DateTime.tryParse(currentDate) ?? today;
+    final canGoForward = current.isBefore(today);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+      child: Row(
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                dates.first,
-                style: const TextStyle(color: Colors.white70, fontSize: 11),
+          SizedBox(
+            width: 44,
+            height: 36,
+            child: OutlinedButton(
+              onPressed: onPreviousDate,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.white,
+                side: const BorderSide(color: Colors.white24),
+                padding: EdgeInsets.zero,
               ),
-              GestureDetector(
+              child: const Icon(Icons.chevron_left, size: 20),
+            ),
+          ),
+          Expanded(
+            child: Center(
+              child: GestureDetector(
                 onTap: onDateTapped,
                 child: Text(
-                  date,
+                  currentDate,
                   style: const TextStyle(
                     color: Colors.white,
-                    fontWeight: FontWeight.w600,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
                     decoration: TextDecoration.underline,
                     decorationColor: Colors.white38,
                   ),
                 ),
               ),
-              const Text(
-                'Today',
-                style: TextStyle(color: Colors.white70, fontSize: 11),
-              ),
-            ],
-          ),
-          if (dates.length > 1)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: canGoBack
-                          ? () => onDateChanged((safeIndex - 1).toDouble())
-                          : null,
-                      icon: const Icon(Icons.chevron_left, size: 18),
-                      label: const Text('Earlier'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.white,
-                        disabledForegroundColor: Colors.white24,
-                        side: const BorderSide(color: Colors.white24),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: canGoForward
-                          ? () => onDateChanged((safeIndex + 1).toDouble())
-                          : null,
-                      iconAlignment: IconAlignment.end,
-                      icon: const Icon(Icons.chevron_right, size: 18),
-                      label: const Text('Later'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.white,
-                        disabledForegroundColor: Colors.white24,
-                        side: const BorderSide(color: Colors.white24),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
             ),
+          ),
+          SizedBox(
+            width: 44,
+            height: 36,
+            child: OutlinedButton(
+              onPressed: canGoForward ? onNextDate : null,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.white,
+                disabledForegroundColor: Colors.white24,
+                side: const BorderSide(color: Colors.white24),
+                padding: EdgeInsets.zero,
+              ),
+              child: const Icon(Icons.chevron_right, size: 20),
+            ),
+          ),
         ],
       ),
     );

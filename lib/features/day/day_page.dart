@@ -2067,6 +2067,15 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     ];
     if (allPoints.isEmpty) return const SizedBox.shrink();
 
+    final mapViewKey = ValueKey<String>(
+      [
+        _activeDayKey ?? '',
+        '${allPoints.length}',
+        for (final point in allPoints)
+          '${point.latitude.toStringAsFixed(5)},${point.longitude.toStringAsFixed(5)}',
+      ].join('|'),
+    );
+
     final CameraFit cameraFit;
     if (allPoints.length == 1) {
       cameraFit = CameraFit.coordinates(
@@ -2138,6 +2147,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
               height: 220,
               child: AbsorbPointer(
                 child: FlutterMap(
+                  key: mapViewKey,
                   options: MapOptions(
                     initialCameraFit: cameraFit,
                     backgroundColor: mapBackground,
@@ -2586,7 +2596,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                         title: 'Steps',
                         icon: Icons.directions_walk_rounded,
                         accentColor: colorScheme.primary,
-                        value: _formatSteps(steps),
+                        value: '${_formatCount(steps)} steps',
                         explanation:
                             'Estimated number of walking and running steps recorded for this day.',
                         source: activitySource!,
@@ -2966,8 +2976,14 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     }
 
     final details = <_WeatherDetailRow>[
-      _WeatherDetailRow(label: 'Condition', value: _weatherConditionDetail(weather)),
-      _WeatherDetailRow(label: 'Temperature', value: _weatherTemperatureDetail(weather)),
+      _WeatherDetailRow(
+        label: 'Condition',
+        value: _weatherConditionDetail(weather),
+      ),
+      _WeatherDetailRow(
+        label: 'Temperature',
+        value: _weatherTemperatureDetail(weather),
+      ),
       if (weather.apparentTemperatureMaxC != null ||
           weather.apparentTemperatureMinC != null)
         _WeatherDetailRow(
@@ -3274,6 +3290,10 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
       return '${(steps / 1000.0).toStringAsFixed(1)}k';
     }
     return '$steps';
+  }
+
+  String _formatCount(int value) {
+    return NumberFormat.decimalPattern().format(value);
   }
 
   Widget _buildRunTile(BuildContext context, RunModel run) {
