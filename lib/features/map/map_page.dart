@@ -2461,16 +2461,34 @@ class _DayBottomSheet extends StatelessWidget {
           ],
         ),
       ),
-      for (var i = 0; i < entries.length; i++) ...[
-        if (entries[i].seg != null)
-          _buildSegmentTile(context, entries[i].seg!, runById)
-        else if (entries[i].calendar != null)
-          _buildCalendarEntryTile(context, entries[i].calendar!)
-        else
-          _buildRunEntryTile(context, entries[i].run!),
-        if (imagesByEntryIndex.containsKey(i))
-          _buildImageStrip(context, imagesByEntryIndex[i]!),
-      ],
+      if (entries.isNotEmpty)
+        Stack(
+          children: [
+            Positioned(
+              left: 73,
+              top: 4,
+              bottom: 4,
+              child: Container(
+                width: 1,
+                color: Colors.white.withValues(alpha: 0.08),
+              ),
+            ),
+            Column(
+              children: [
+                for (var i = 0; i < entries.length; i++) ...[
+                  if (entries[i].seg != null)
+                    _buildSegmentTile(context, entries[i].seg!, runById)
+                  else if (entries[i].calendar != null)
+                    _buildCalendarEntryTile(context, entries[i].calendar!)
+                  else
+                    _buildRunEntryTile(context, entries[i].run!),
+                  if (imagesByEntryIndex.containsKey(i))
+                    _buildImageStrip(context, imagesByEntryIndex[i]!),
+                ],
+              ],
+            ),
+          ],
+        ),
       if (unassignedImages.isNotEmpty) ...[
         const Padding(
           padding: EdgeInsets.fromLTRB(16, 14, 16, 6),
