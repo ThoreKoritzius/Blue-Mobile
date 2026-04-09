@@ -215,7 +215,26 @@ query SearchImages($input: SearchInput!, $first: Int!) {
   static const calendarEvents = r'''
 query CalendarEvents($date: String) {
   calendar {
-    events(date: $date)
+    events(date: $date) {
+      items {
+        id
+        summary
+        description
+        location
+        status
+        start
+        end
+        isAllDay
+        htmlLink
+        source
+        sourceName
+        sourceId
+      }
+      calendarId
+      fetchedAt
+      available
+      detail
+    }
   }
 }
 ''';
@@ -235,6 +254,27 @@ mutation CalendarSyncNow {
   calendar {
     syncNow {
       message
+    }
+  }
+}
+''';
+
+  static const calendarImportTakeout = r'''
+mutation CalendarImportTakeout($files: [Upload!]!) {
+  calendar {
+    importTakeout(files: $files) {
+      message
+      zipFilename
+      fileCount
+      calendarCount
+      inserted
+      updated
+      skipped
+      calendars
+      errors {
+        fileName
+        message
+      }
     }
   }
 }
@@ -447,6 +487,9 @@ query TimelineDay($date: String!) {
     }
     segments(date: $date) {
       id segmentType startTime endTime durationMinutes placeId placeName placeAddress placeLat placeLon activityType startLat startLon endLat endLon distanceMeters source
+    }
+    calendar(date: $date) {
+      id summary description location status start end isAllDay htmlLink source sourceName sourceId
     }
   }
 }

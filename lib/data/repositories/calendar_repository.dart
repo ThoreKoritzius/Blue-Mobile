@@ -35,13 +35,19 @@ class GraphqlCalendarRepository implements CalendarRepository {
       variables: {'date': date},
     );
 
-    final payload = ((response['calendar'] as Map<String, dynamic>)['events']);
-    final items = payload is Map<String, dynamic>
-        ? (payload['items'] as List<dynamic>? ?? const [])
-        : const [];
+    final calendarRoot = response['calendar'];
+    final calendarMap = calendarRoot is Map
+        ? Map<String, dynamic>.from(calendarRoot)
+        : const <String, dynamic>{};
+    final payload = calendarMap['events'];
+    final payloadMap = payload is Map
+        ? Map<String, dynamic>.from(payload)
+        : const <String, dynamic>{};
+    final items = payloadMap['items'] as List<dynamic>? ?? const <dynamic>[];
 
     return items
-        .whereType<Map<String, dynamic>>()
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
         .map(CalendarEventModel.fromJson)
         .toList();
   }

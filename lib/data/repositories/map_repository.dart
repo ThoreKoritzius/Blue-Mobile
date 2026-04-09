@@ -58,6 +58,36 @@ class TimelineRun {
   final int? movingTimeSeconds;
 }
 
+class TimelineCalendarEvent {
+  const TimelineCalendarEvent({
+    required this.id,
+    required this.summary,
+    this.description,
+    this.location,
+    this.status,
+    this.start,
+    this.end,
+    this.isAllDay = false,
+    this.htmlLink,
+    this.source,
+    this.sourceName,
+    this.sourceId,
+  });
+
+  final String id;
+  final String summary;
+  final String? description;
+  final String? location;
+  final String? status;
+  final DateTime? start;
+  final DateTime? end;
+  final bool isAllDay;
+  final String? htmlLink;
+  final String? source;
+  final String? sourceName;
+  final String? sourceId;
+}
+
 class TimelineWalkPoint {
   const TimelineWalkPoint({required this.lat, required this.lon});
 
@@ -144,6 +174,7 @@ class TimelineDayData {
     required this.walkPoints,
     required this.runs,
     required this.imageLocations,
+    this.calendarEvents = const [],
     this.visits = const [],
     this.segments = const [],
   });
@@ -152,11 +183,15 @@ class TimelineDayData {
   final List<TimelineWalkPoint> walkPoints;
   final List<TimelineRun> runs;
   final List<TimelineImageLocation> imageLocations;
+  final List<TimelineCalendarEvent> calendarEvents;
   final List<TimelineVisit> visits;
   final List<TimelineSegment> segments;
 
   bool get hasData =>
-      visits.isNotEmpty || runs.isNotEmpty || imageLocations.isNotEmpty;
+      visits.isNotEmpty ||
+      runs.isNotEmpty ||
+      imageLocations.isNotEmpty ||
+      calendarEvents.isNotEmpty;
 }
 
 class WhenWasINearResult {
@@ -364,6 +399,7 @@ class MapRepository {
 
       final visits = <TimelineVisit>[];
       final segments = <TimelineSegment>[];
+      final calendarEvents = <TimelineCalendarEvent>[];
       final rawSegs = timeline['segments'];
       final segList = rawSegs is List
           ? rawSegs
@@ -457,8 +493,40 @@ class MapRepository {
         }
       }
       segments.sort((a, b) => a.startTime.compareTo(b.startTime));
+      final rawCalendar = timeline['calendar'];
+      final calendarList = rawCalendar is List
+          ? rawCalendar
+          : (rawCalendar is String ? [] : (rawCalendar as List<dynamic>? ?? []));
+      for (final raw in calendarList) {
+        final item = raw as Map<String, dynamic>;
+        final id = (item['id'] ?? '').toString();
+        if (id.isEmpty) continue;
+        final start = DateTime.tryParse((item['start'] ?? '').toString());
+        final end = DateTime.tryParse((item['end'] ?? '').toString());
+        calendarEvents.add(
+          TimelineCalendarEvent(
+            id: id,
+            summary: (item['summary'] ?? '').toString(),
+            description: (item['description'] as String?)?.trim(),
+            location: (item['location'] as String?)?.trim(),
+            status: (item['status'] as String?)?.trim(),
+            start: start,
+            end: end,
+            isAllDay: item['isAllDay'] == true,
+            htmlLink: (item['htmlLink'] as String?)?.trim(),
+            source: (item['source'] as String?)?.trim(),
+            sourceName: (item['sourceName'] as String?)?.trim(),
+            sourceId: (item['sourceId'] as String?)?.trim(),
+          ),
+        );
+      }
+      calendarEvents.sort((a, b) {
+        final aTime = a.start ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final bTime = b.start ?? DateTime.fromMillisecondsSinceEpoch(0);
+        return aTime.compareTo(bTime);
+      });
       debugPrint(
-        '[TIMELINE] parsed ${visits.length} visits, ${segments.length} segments',
+        '[TIMELINE] parsed ${visits.length} visits, ${segments.length} segments, ${calendarEvents.length} calendar events',
       );
 
       return TimelineDayData(
@@ -466,6 +534,7 @@ class MapRepository {
         walkPoints: walkPoints,
         runs: runs,
         imageLocations: imageLocations,
+        calendarEvents: calendarEvents,
         visits: visits,
         segments: segments,
       );

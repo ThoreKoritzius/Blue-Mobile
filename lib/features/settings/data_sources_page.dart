@@ -21,9 +21,11 @@ class _DataSourcesPageState extends ConsumerState<DataSourcesPage> {
   bool _timelineImporting = false;
   bool _takeoutImporting = false;
   bool _calendarLoading = false;
+  bool _calendarImporting = false;
   String? _timelineImportResult;
   String? _takeoutImportResult;
   String? _calendarResult;
+  String? _calendarImportResult;
 
   @override
   void initState() {
@@ -199,6 +201,68 @@ class _DataSourcesPageState extends ConsumerState<DataSourcesPage> {
     );
   }
 
+  Future<void> _importCalendarTakeout() async {
+    final picked = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['zip', 'ics'],
+      withData: true,
+    );
+    if (picked == null || picked.files.isEmpty) return;
+    final file = picked.files.first;
+    final bytes = file.bytes;
+    if (bytes == null) return;
+
+    setState(() {
+      _calendarImporting = true;
+      _calendarImportResult = null;
+    });
+    try {
+      final data = await ref.read(graphqlServiceProvider).mutateMultipartWithProgress(
+        GqlDocuments.calendarImportTakeout,
+        files: [
+          MultipartUploadFile(
+            filename: file.name.isNotEmpty ? file.name : 'google-calendar.ics',
+            bytes: bytes,
+          ),
+        ],
+        onProgress: (_, __) {},
+        timeout: const Duration(minutes: 5),
+      );
+      final payload =
+          (data['calendar'] as Map?)?['importTakeout'] as Map<String, dynamic>?;
+      final resultMessage = (payload?['message'] as String?) ?? 'Import complete';
+      setState(() {
+        _calendarImportResult = resultMessage;
+      });
+      await _refreshSources();
+      if (!mounted) return;
+      await _showImportDialog(
+        title: 'Google Calendar Imported',
+        intro: 'The Google Calendar file was indexed into local storage.',
+        message: resultMessage,
+        details: _calendarImportLines(payload),
+        isError: false,
+      );
+    } catch (e) {
+      final errorMessage = e.toString().replaceFirst('Exception: ', '');
+      setState(() {
+        _calendarImportResult = 'Error: $errorMessage';
+      });
+      if (!mounted) return;
+      await _showImportDialog(
+        title: 'Calendar Import Failed',
+        intro: 'The Google Calendar ZIP or ICS file could not be processed.',
+        message: errorMessage,
+        details: _errorLines(errorMessage),
+        isError: true,
+      );
+    } finally {
+      setState(() {
+        _calendarImporting = false;
+      });
+    }
+  }
+
   Future<void> _runCalendarMutation({
     required String document,
     required String title,
@@ -251,13 +315,16 @@ class _DataSourcesPageState extends ConsumerState<DataSourcesPage> {
     required String intro,
     required String message,
     required bool isError,
+    List<String>? details,
   }) {
     final colorScheme = Theme.of(context).colorScheme;
-    final lines = message
-        .split(',')
-        .map((line) => line.trim())
-        .where((line) => line.isNotEmpty)
-        .toList();
+    final lines =
+        details ??
+        message
+            .split(',')
+            .map((line) => line.trim())
+            .where((line) => line.isNotEmpty)
+            .toList();
 
     return showDialog<void>(
       context: context,
@@ -324,12 +391,53 @@ class _DataSourcesPageState extends ConsumerState<DataSourcesPage> {
     return DateFormat('MMM d, y · HH:mm').format(value.toLocal());
   }
 
+  List<String> _calendarImportLines(Map<String, dynamic>? payload) {
+    if (payload == null) {
+      return const ['Import complete'];
+    }
+    final calendars =
+        (payload['calendars'] as List<dynamic>? ?? const [])
+            .map((value) => value.toString())
+            .where((value) => value.trim().isNotEmpty)
+            .toList();
+    final errors =
+        (payload['errors'] as List<dynamic>? ?? const [])
+            .whereType<Map<String, dynamic>>()
+            .map(
+              (error) =>
+                  '${error['fileName'] ?? 'File'}: ${error['message'] ?? 'Import failed'}',
+            )
+            .toList();
+    return [
+      if ((payload['zipFilename'] ?? '').toString().isNotEmpty)
+        'File: ${payload['zipFilename']}',
+      '${payload['calendarCount'] ?? 0} calendars indexed from ${payload['fileCount'] ?? 0} ICS files',
+      '${payload['inserted'] ?? 0} inserted',
+      '${payload['updated'] ?? 0} updated',
+      '${payload['skipped'] ?? 0} unchanged',
+      if (calendars.isNotEmpty) 'Calendars: ${calendars.join(', ')}',
+      ...errors,
+    ];
+  }
+
+  List<String> _errorLines(String message) {
+    final normalized = message.replaceAll(';', ',');
+    final lines = normalized
+        .split(',')
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .toList();
+    return lines.isEmpty ? <String>[message] : lines;
+  }
+
   String _sectionTitle(List<DataSourceStatusModel> sources) {
     final hasAutomated = sources.any((source) => source.automated);
     final hasLiveData = sources.any((source) => source.lastSyncAt != null);
     final hasManualUpload = sources.any(
       (source) =>
-          source.key == 'google_timeline' || source.key == 'google_takeout',
+          source.key == 'google_timeline' ||
+          source.key == 'google_takeout' ||
+          source.key == 'google_calendar_import',
     );
     if (hasAutomated) return 'Automated';
     if (hasManualUpload) return 'Manual';
@@ -363,7 +471,8 @@ class _DataSourcesPageState extends ConsumerState<DataSourcesPage> {
                           !source.automated &&
                           (source.lastSyncAt != null ||
                               source.key == 'google_timeline' ||
-                              source.key == 'google_takeout'),
+                              source.key == 'google_takeout' ||
+                              source.key == 'google_calendar_import'),
                     )
                     .toList(),
                 sources
@@ -371,7 +480,8 @@ class _DataSourcesPageState extends ConsumerState<DataSourcesPage> {
                       (source) =>
                           !source.automated &&
                           source.lastSyncAt == null &&
-                          source.key != 'google_timeline',
+                          source.key != 'google_timeline' &&
+                          source.key != 'google_calendar_import',
                     )
                     .toList(),
               ].where((group) => group.isNotEmpty).toList();
@@ -432,12 +542,16 @@ class _DataSourcesPageState extends ConsumerState<DataSourcesPage> {
                                         'google_takeout' =>
                                           _takeoutImportResult,
                                         'google_calendar' => _calendarResult,
+                                        'google_calendar_import' =>
+                                          _calendarImportResult,
                                         _ => null,
                                       },
                                       importing: switch (source.key) {
                                         'google_timeline' => _timelineImporting,
                                         'google_takeout' => _takeoutImporting,
                                         'google_calendar' => _calendarLoading,
+                                        'google_calendar_import' =>
+                                          _calendarImporting,
                                         _ => false,
                                       },
                                       onImport: switch (source.key) {
@@ -449,6 +563,8 @@ class _DataSourcesPageState extends ConsumerState<DataSourcesPage> {
                                               )
                                               ? _calendarConnect
                                               : _calendarSyncNow,
+                                        'google_calendar_import' =>
+                                          _importCalendarTakeout,
                                         _ => null,
                                       },
                                       formatTimestamp: _formatTimestamp,
@@ -757,6 +873,7 @@ class _DataSourceCard extends StatelessWidget {
       case 'google_takeout':
         return Icons.folder_zip_rounded;
       case 'google_calendar':
+      case 'google_calendar_import':
         return Icons.calendar_month_rounded;
       default:
         return Icons.storage_rounded;
@@ -790,6 +907,8 @@ class _DataSourceCard extends StatelessWidget {
         return source.status.toLowerCase().contains('needs connection')
             ? 'Connect Google Calendar'
             : 'Sync Google Calendar';
+      case 'google_calendar_import':
+        return 'Upload Calendar ZIP or ICS';
       default:
         return 'Upload';
     }
@@ -804,6 +923,8 @@ class _DataSourceCard extends StatelessWidget {
         return source.status.toLowerCase().contains('needs connection')
             ? Icons.link_rounded
             : Icons.sync_rounded;
+      case 'google_calendar_import':
+        return Icons.upload_file_rounded;
       default:
         return Icons.play_arrow_rounded;
     }
@@ -819,6 +940,8 @@ class _DataSourceCard extends StatelessWidget {
         return source.status.toLowerCase().contains('needs connection')
             ? 'Connecting Google Calendar'
             : 'Syncing Google Calendar';
+      case 'google_calendar_import':
+        return 'Uploading Calendar File';
       default:
         return 'Uploading';
     }

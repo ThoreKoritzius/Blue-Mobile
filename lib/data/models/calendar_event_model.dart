@@ -16,15 +16,19 @@ class CalendarEventModel {
   final bool allDay;
 
   factory CalendarEventModel.fromJson(Map<String, dynamic> json) {
-    final startData = json['start'] as Map<String, dynamic>?;
-    final endData = json['end'] as Map<String, dynamic>?;
+    final rawStart = json['start'];
+    final rawEnd = json['end'];
+    final startData = rawStart is Map
+        ? Map<String, dynamic>.from(rawStart)
+        : null;
+    final endData = rawEnd is Map ? Map<String, dynamic>.from(rawEnd) : null;
     return CalendarEventModel(
       id: (json['id'] ?? '').toString(),
       summary: (json['summary'] ?? '').toString(),
       start:
-          (startData?['dateTime'] ?? startData?['date'] ?? json['start'] ?? '')
+          (startData?['dateTime'] ?? startData?['date'] ?? rawStart ?? '')
               .toString(),
-      end: (endData?['dateTime'] ?? endData?['date'] ?? json['end'] ?? '')
+      end: (endData?['dateTime'] ?? endData?['date'] ?? rawEnd ?? '')
           .toString(),
       location: (json['location'] ?? '').toString(),
       allDay: json['isAllDay'] == true || startData?['date'] != null,

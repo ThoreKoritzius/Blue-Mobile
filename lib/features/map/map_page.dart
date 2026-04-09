@@ -786,6 +786,7 @@ class _MapPageState extends ConsumerState<MapPage>
       data: data,
       onVisitTapped: _onBottomSheetVisitTapped,
       onSegmentTapped: _onSegmentTapped,
+      onCalendarEventTapped: _onCalendarEventTapped,
       onRunTapped: _onRunTapped,
       onImageTapped: (TimelineImageLocation img) =>
           _showDayImageSheet(img, _dayViewDate),
@@ -909,6 +910,7 @@ class _MapPageState extends ConsumerState<MapPage>
                   data: sheetParams.data,
                   onVisitTapped: sheetParams.onVisitTapped,
                   onSegmentTapped: sheetParams.onSegmentTapped,
+                  onCalendarEventTapped: sheetParams.onCalendarEventTapped,
                   onRunTapped: sheetParams.onRunTapped,
                   onImageTapped: sheetParams.onImageTapped,
                   selectedVisitPlaceId: sheetParams.selectedVisitPlaceId,
@@ -936,6 +938,7 @@ class _MapPageState extends ConsumerState<MapPage>
                   data: sheetParams.data,
                   onVisitTapped: sheetParams.onVisitTapped,
                   onSegmentTapped: sheetParams.onSegmentTapped,
+                  onCalendarEventTapped: sheetParams.onCalendarEventTapped,
                   onRunTapped: sheetParams.onRunTapped,
                   onImageTapped: sheetParams.onImageTapped,
                   selectedVisitPlaceId: sheetParams.selectedVisitPlaceId,
@@ -1647,6 +1650,123 @@ class _MapPageState extends ConsumerState<MapPage>
     }
   }
 
+  void _onCalendarEventTapped(TimelineCalendarEvent event) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: const Color(0xFF1F1F1F),
+      builder: (context) {
+        final theme = Theme.of(context);
+        final colorScheme = theme.colorScheme;
+        final timeLabel = _formatCalendarEventTime(event);
+        final sourceLabel = _formatCalendarSourceLabel(event);
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: colorScheme.primary.withValues(alpha: 0.18),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Icon(
+                        Icons.calendar_month_rounded,
+                        color: colorScheme.primary,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        event.summary.isEmpty ? 'Calendar event' : event.summary,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                _DetailRow(
+                  icon: Icons.schedule_rounded,
+                  label: 'Time',
+                  value: timeLabel,
+                ),
+                if ((event.location ?? '').isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  _DetailRow(
+                    icon: Icons.place_rounded,
+                    label: 'Location',
+                    value: event.location!,
+                  ),
+                ],
+                if (sourceLabel.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  _DetailRow(
+                    icon: Icons.storage_rounded,
+                    label: 'Source',
+                    value: sourceLabel,
+                  ),
+                ],
+                if ((event.description ?? '').isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  Text(
+                    'Description',
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      color: Colors.white70,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    event.description!,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: Colors.white,
+                      height: 1.45,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  String _formatCalendarEventTime(TimelineCalendarEvent event) {
+    if (event.isAllDay) return 'All day';
+    final start = event.start;
+    final end = event.end;
+    if (start == null) return 'Time unavailable';
+    final startLabel =
+        '${start.hour.toString().padLeft(2, '0')}:${start.minute.toString().padLeft(2, '0')}';
+    if (end == null) return startLabel;
+    final endLabel =
+        '${end.hour.toString().padLeft(2, '0')}:${end.minute.toString().padLeft(2, '0')}';
+    return '$startLabel – $endLabel';
+  }
+
+  String _formatCalendarSourceLabel(TimelineCalendarEvent event) {
+    final sourceName = event.sourceName?.trim() ?? '';
+    final source = event.source?.trim() ?? '';
+    if (sourceName.isNotEmpty && source == 'google_calendar_manual') {
+      return '$sourceName (manual import)';
+    }
+    if (sourceName.isNotEmpty) return sourceName;
+    if (source == 'google_calendar_manual') return 'Manual calendar import';
+    if (source == 'google_calendar') return 'Connected Google Calendar';
+    return source;
+  }
+
   static const _activityOptions = <(String, String, IconData)>[
     ('FLYING', 'Flight', Icons.flight_outlined),
     ('IN_VEHICLE', 'Driving', Icons.directions_car_outlined),
@@ -1989,6 +2109,52 @@ class _MapPageState extends ConsumerState<MapPage>
   }
 }
 
+class _DetailRow extends StatelessWidget {
+  const _DetailRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: Colors.white54),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: Colors.white54,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                value,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: Colors.white,
+                  height: 1.35,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _DayBottomSheet extends StatelessWidget {
   const _DayBottomSheet({
     required this.dates,
@@ -1997,6 +2163,7 @@ class _DayBottomSheet extends StatelessWidget {
     required this.data,
     required this.onVisitTapped,
     required this.onSegmentTapped,
+    required this.onCalendarEventTapped,
     required this.authHeaders,
     required this.authenticateUrl,
     required this.runColors,
@@ -2017,6 +2184,7 @@ class _DayBottomSheet extends StatelessWidget {
   final TimelineDayData? data;
   final void Function(TimelineVisit visit) onVisitTapped;
   final void Function(TimelineSegment segment) onSegmentTapped;
+  final void Function(TimelineCalendarEvent event) onCalendarEventTapped;
   final void Function(TimelineRun run) onRunTapped;
   final void Function(TimelineImageLocation img) onImageTapped;
   final String? selectedVisitPlaceId;
@@ -2042,6 +2210,7 @@ class _DayBottomSheet extends StatelessWidget {
     final rawSegments = data?.segments ?? const [];
     final images = data?.imageLocations ?? const [];
     final runs = data?.runs ?? const [];
+    final calendarEvents = data?.calendarEvents ?? const [];
 
     // Build run lookup by ID.
     final runById = <String, TimelineRun>{};
@@ -2127,13 +2296,18 @@ class _DayBottomSheet extends StatelessWidget {
 
     // --- Build unified timeline: segments + runs, sorted by time ---
     final entries =
-        <({TimelineSegment? seg, TimelineRun? run, DateTime time})>[];
+        <({TimelineSegment? seg, TimelineRun? run, TimelineCalendarEvent? calendar, DateTime time})>[];
     for (final seg in segments) {
-      entries.add((seg: seg, run: null, time: seg.startTime));
+      entries.add((seg: seg, run: null, calendar: null, time: seg.startTime));
     }
     for (final run in runs) {
       if (run.startTime != null) {
-        entries.add((seg: null, run: run, time: run.startTime!));
+        entries.add((seg: null, run: run, calendar: null, time: run.startTime!));
+      }
+    }
+    for (final event in calendarEvents) {
+      if (event.start != null) {
+        entries.add((seg: null, run: null, calendar: event, time: event.start!));
       }
     }
     entries.sort((a, b) => a.time.compareTo(b.time));
@@ -2235,7 +2409,14 @@ class _DayBottomSheet extends StatelessWidget {
 
   List<Widget> _buildTimelineContent(
     BuildContext context, {
-    required List<({TimelineSegment? seg, TimelineRun? run, DateTime time})>
+    required List<
+      ({
+        TimelineSegment? seg,
+        TimelineRun? run,
+        TimelineCalendarEvent? calendar,
+        DateTime time,
+      })
+    >
     entries,
     required Map<int, List<TimelineImageLocation>> imagesByEntryIndex,
     required List<TimelineImageLocation> unassignedImages,
@@ -2283,6 +2464,8 @@ class _DayBottomSheet extends StatelessWidget {
       for (var i = 0; i < entries.length; i++) ...[
         if (entries[i].seg != null)
           _buildSegmentTile(context, entries[i].seg!, runById)
+        else if (entries[i].calendar != null)
+          _buildCalendarEntryTile(context, entries[i].calendar!)
         else
           _buildRunEntryTile(context, entries[i].run!),
         if (imagesByEntryIndex.containsKey(i))
@@ -2880,6 +3063,133 @@ class _DayBottomSheet extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Widget _buildCalendarEntryTile(
+    BuildContext context,
+    TimelineCalendarEvent event,
+  ) {
+    const color = Color(0xFFA7F3D0);
+    final timeLabel = event.start != null ? _formatTime(event.start!) : '';
+    final subtitleParts = <String>[];
+    if (event.isAllDay) {
+      subtitleParts.add('All day');
+    } else {
+      final end = event.end;
+      if (end != null && event.start != null) {
+        subtitleParts.add('${_formatTime(event.start!)} – ${_formatTime(end)}');
+      }
+    }
+    final location = event.location?.trim();
+    if (location != null && location.isNotEmpty) {
+      subtitleParts.add(location);
+    }
+    final sourceBadge = _calendarSourceBadge(event);
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => onCalendarEventTapped(event),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 42,
+              child: Text(
+                timeLabel.isNotEmpty ? timeLabel : 'All',
+                style: const TextStyle(
+                  color: Colors.white54,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ),
+            Container(
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.18),
+                shape: BoxShape.circle,
+                border: Border.all(color: color.withValues(alpha: 0.8), width: 1.5),
+              ),
+              child: Icon(Icons.event_rounded, size: 12, color: color),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          event.summary.isNotEmpty ? event.summary : 'Calendar event',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (sourceBadge != null) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            sourceBadge,
+                            style: const TextStyle(
+                              color: Colors.white60,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  if (subtitleParts.isNotEmpty) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitleParts.join('  ·  '),
+                      style: const TextStyle(
+                        color: Colors.white38,
+                        fontSize: 11,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 2,
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const Icon(
+              Icons.chevron_right,
+              size: 16,
+              color: Color(0x44FFFFFF),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String? _calendarSourceBadge(TimelineCalendarEvent event) {
+    final source = event.source?.trim();
+    if (source == 'google_calendar_manual') return 'Imported';
+    if (source == 'google_calendar') return 'Synced';
+    return null;
   }
 
   Widget _buildImageStrip(
