@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,6 +8,7 @@ import 'package:intl/intl.dart';
 import '../../core/config/app_config.dart';
 import '../../core/utils/breakpoints.dart';
 import '../../core/utils/date_format.dart';
+import '../../core/widgets/protected_network_image.dart';
 import '../../data/models/story_day_model.dart';
 import '../../providers.dart';
 
@@ -291,6 +291,9 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
   }
 
   Map<String, String> _authHeaders() {
+    if (kIsWeb) {
+      return const {};
+    }
     final token = _authToken();
     return {
       if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
@@ -299,11 +302,7 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
   }
 
   String _authenticatedUrl(String url) {
-    if (!kIsWeb) return url;
-    final token = _authToken();
-    if (token == null || token.isEmpty) return url;
-    final separator = url.contains('?') ? '&' : '?';
-    return '$url${separator}token=$token';
+    return url;
   }
 
   double _computeMonthItemExtent(double columnWidth) {
@@ -923,16 +922,12 @@ class _DayCell extends StatelessWidget {
             fit: StackFit.expand,
             children: [
               if (hasImage)
-                CachedNetworkImage(
+                ProtectedNetworkImage(
                   imageUrl: imageUrl,
-                  httpHeaders: headers,
+                  headers: headers,
                   fit: BoxFit.cover,
-                  filterQuality: FilterQuality.low,
-                  fadeInDuration: const Duration(milliseconds: 120),
-                  placeholder: (_, __) =>
-                      _DayFallback(date: date, story: story),
-                  errorWidget: (_, __, ___) =>
-                      _DayFallback(date: date, story: story),
+                  placeholder: _DayFallback(date: date, story: story),
+                  errorWidget: _DayFallback(date: date, story: story),
                 )
               else
                 _DayFallback(date: date, story: story),

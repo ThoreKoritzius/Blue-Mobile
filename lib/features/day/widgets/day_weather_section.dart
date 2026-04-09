@@ -312,4 +312,17 @@ class DayWeatherSection extends StatelessWidget {
     if (max != null) return '${max.toStringAsFixed(0)}° high';
     return '${min!.toStringAsFixed(0)}° low';
   }
+
+  String formatClock(DateTime value, String? timezoneName) {
+    final hour = value.hour.toString().padLeft(2, '0');
+    final minute = value.minute.toString().padLeft(2, '0');
+    final tz = (timezoneName ?? '').trim();
+    if (tz.isNotEmpty) {
+      return '$hour:$minute';
+    }
+    final local = value.toLocal();
+    final localHour = local.hour.toString().padLeft(2, '0');
+    final localMinute = local.minute.toString().padLeft(2, '0');
+    return '$localHour:$localMinute';
+  }
 }

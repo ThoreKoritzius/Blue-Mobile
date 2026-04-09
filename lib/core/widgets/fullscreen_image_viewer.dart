@@ -1,6 +1,5 @@
 import 'dart:io';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -12,6 +11,7 @@ import 'package:share_plus/share_plus.dart';
 
 import '../config/app_config.dart';
 import '../../data/repositories/files_repository.dart';
+import 'protected_network_image.dart';
 
 class ImageViewerItem {
   const ImageViewerItem({
@@ -141,8 +141,12 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer> {
     if (_sharing) return;
     setState(() => _sharing = true);
     try {
+      final resolvedUrl = await resolveProtectedMediaUrl(
+        _current.fullUrl,
+        headers: widget.httpHeaders,
+      );
       final response = await http.get(
-        Uri.parse(_current.fullUrl),
+        Uri.parse(resolvedUrl),
         headers: widget.httpHeaders,
       );
       if (response.statusCode != 200) {
@@ -172,8 +176,12 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer> {
     if (_downloading) return;
     setState(() => _downloading = true);
     try {
+      final resolvedUrl = await resolveProtectedMediaUrl(
+        _current.fullUrl,
+        headers: widget.httpHeaders,
+      );
       final response = await http.get(
-        Uri.parse(_current.fullUrl),
+        Uri.parse(resolvedUrl),
         headers: widget.httpHeaders,
       );
       if (response.statusCode != 200) {
@@ -313,21 +321,22 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer> {
                   minScale: 1.0,
                   maxScale: 5.0,
                   child: Center(
-                    child: CachedNetworkImage(
+                    child: ProtectedNetworkImage(
                       imageUrl: image.fullUrl,
-                      httpHeaders: widget.httpHeaders,
+                      headers: widget.httpHeaders,
                       fit: BoxFit.contain,
-                      fadeInDuration: const Duration(milliseconds: 200),
-                      placeholder: (_, __) => CachedNetworkImage(
+                      placeholder: ProtectedNetworkImage(
                         imageUrl: image.thumbnailUrl,
-                        httpHeaders: widget.httpHeaders,
+                        headers: widget.httpHeaders,
                         fit: BoxFit.contain,
-                        fadeInDuration: Duration.zero,
-                        errorWidget: (_, __, ___) => const Center(
+                        placeholder: const Center(
+                          child: CircularProgressIndicator(color: Colors.white),
+                        ),
+                        errorWidget: const Center(
                           child: CircularProgressIndicator(color: Colors.white),
                         ),
                       ),
-                      errorWidget: (_, __, ___) => const Icon(
+                      errorWidget: const Icon(
                         Icons.broken_image_outlined,
                         color: Colors.white54,
                         size: 48,

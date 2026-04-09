@@ -1,6 +1,7 @@
 class DailyWeatherModel {
   const DailyWeatherModel({
     required this.date,
+    this.timezoneName,
     this.weatherCode,
     this.temperatureMaxC,
     this.temperatureMinC,
@@ -19,6 +20,7 @@ class DailyWeatherModel {
   });
 
   final String date;
+  final String? timezoneName;
   final int? weatherCode;
   final double? temperatureMaxC;
   final double? temperatureMinC;
@@ -38,6 +40,7 @@ class DailyWeatherModel {
   factory DailyWeatherModel.fromJson(Map<String, dynamic> json) {
     return DailyWeatherModel(
       date: (json['date'] ?? '').toString(),
+      timezoneName: json['timezoneName']?.toString(),
       weatherCode: (json['weatherCode'] as num?)?.toInt(),
       temperatureMaxC: (json['temperatureMaxC'] as num?)?.toDouble(),
       temperatureMinC: (json['temperatureMinC'] as num?)?.toDouble(),

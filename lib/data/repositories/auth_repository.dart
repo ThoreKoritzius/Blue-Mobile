@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 
 import '../../core/config/app_config.dart';
 import '../../core/network/auth_token_store.dart';
@@ -41,10 +42,71 @@ class GraphqlAuthRepository implements AuthRepository {
 
   final GraphqlService _gql;
   final AuthTokenStore _tokenStore;
+  String? _csrfToken;
 
   @override
   Future<AuthSession> login(String username, String password) async {
+    if (kIsWeb) {
+      return _loginBrowser(username, password);
+    }
     return _loginMobile(username, password);
+  }
+
+  Future<AuthSession> _loginBrowser(String username, String password) async {
+    final client = createGraphqlHttpClient();
+    try {
+      final basic = base64Encode(utf8.encode('$username:$password'));
+      final response = await client
+          .post(
+            Uri.parse('${AppConfig.backendUrl}/api/auth/login'),
+            headers: {
+              'Accept': 'application/json',
+              'Authorization': 'Basic $basic',
+            },
+          )
+          .timeout(const Duration(seconds: 12));
+      final body = jsonDecode(response.body);
+      if (response.statusCode != 200) {
+        throw Exception(_extractError(body));
+      }
+      final payload = body as Map<String, dynamic>;
+      final user = ((payload['user'] ?? const {}) as Map<String, dynamic>)['username']
+          .toString();
+      await _tokenStore.clear();
+      if (user.isNotEmpty) {
+        await _tokenStore.writeUsername(user);
+      }
+      await _fetchCsrfToken(client, forceRefresh: true);
+      return AuthSession(username: user, accessToken: '');
+    } finally {
+      client.close();
+    }
+  }
+
+  Future<String?> _fetchCsrfToken(
+    http.Client client, {
+    bool forceRefresh = false,
+  }) async {
+    if (!kIsWeb) return null;
+    if (!forceRefresh && _csrfToken != null && _csrfToken!.isNotEmpty) {
+      return _csrfToken;
+    }
+    final response = await client
+        .get(
+          Uri.parse('${AppConfig.backendUrl}/api/auth/csrf'),
+          headers: const {'Accept': 'application/json'},
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return null;
+    }
+    final body = jsonDecode(response.body);
+    if (body is! Map<String, dynamic>) {
+      return null;
+    }
+    final token = (body['csrfToken'] ?? '').toString();
+    _csrfToken = token.isEmpty ? null : token;
+    return _csrfToken;
   }
 
   Future<AuthSession> _loginMobile(String username, String password) async {
@@ -98,10 +160,12 @@ class GraphqlAuthRepository implements AuthRepository {
     final client = createGraphqlHttpClient();
     try {
       final headers = <String, String>{'Accept': 'application/json'};
-      final token = await _tokenStore.readToken();
-      headers['X-Blue-Client'] = 'mobile';
-      if (token != null && token.isNotEmpty) {
-        headers['Authorization'] = 'Bearer $token';
+      if (!kIsWeb) {
+        final token = await _tokenStore.readToken();
+        headers['X-Blue-Client'] = 'mobile';
+        if (token != null && token.isNotEmpty) {
+          headers['Authorization'] = 'Bearer $token';
+        }
       }
       final response = await client
           .get(
@@ -216,14 +280,21 @@ class GraphqlAuthRepository implements AuthRepository {
     final client = createGraphqlHttpClient();
     try {
       final headers = <String, String>{'Accept': 'application/json'};
-      final token = await _tokenStore.readToken();
-      headers['X-Blue-Client'] = 'mobile';
-      if (token != null && token.isNotEmpty) {
-        headers['Authorization'] = 'Bearer $token';
+      if (!kIsWeb) {
+        final token = await _tokenStore.readToken();
+        headers['X-Blue-Client'] = 'mobile';
+        if (token != null && token.isNotEmpty) {
+          headers['Authorization'] = 'Bearer $token';
+        }
       }
       await client.post(
         Uri.parse('${AppConfig.backendUrl}/api/auth/logout'),
-        headers: headers,
+        headers: {
+          ...headers,
+          if (kIsWeb)
+            'X-CSRF-Token':
+                (await _fetchCsrfToken(client)) ?? '',
+        },
       );
     } catch (_) {
       // Best effort.
@@ -238,14 +309,18 @@ class GraphqlAuthRepository implements AuthRepository {
     final client = createGraphqlHttpClient();
     try {
       final token = await _tokenStore.readToken();
+      final csrfToken = await _fetchCsrfToken(client);
       final response = await client
           .post(
             Uri.parse('${AppConfig.backendUrl}/api/auth/change-password'),
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
-              'X-Blue-Client': 'mobile',
-              if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+              if (kIsWeb && csrfToken != null && csrfToken.isNotEmpty)
+                'X-CSRF-Token': csrfToken,
+              if (!kIsWeb) 'X-Blue-Client': 'mobile',
+              if (!kIsWeb && token != null && token.isNotEmpty)
+                'Authorization': 'Bearer $token',
             },
             body: jsonEncode({
               'current_password': currentPassword,

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/config/app_config.dart';
@@ -10,16 +11,14 @@ String? chatAuthToken(WidgetRef ref) {
       tokenStore.peekToken();
 }
 
-/// Appends `?token=X` to the URL for authenticated image requests.
 String authenticatedUrl(String url, WidgetRef ref) {
-  final token = chatAuthToken(ref);
-  if (token == null || token.isEmpty) return url;
-  final separator = url.contains('?') ? '&' : '?';
-  return '$url${separator}token=$token';
+  return url;
 }
 
-/// Standard auth headers for image requests (used on native platforms).
 Map<String, String> chatAuthHeaders(WidgetRef ref) {
+  if (kIsWeb) {
+    return const {};
+  }
   final token = chatAuthToken(ref);
   return {
     if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',

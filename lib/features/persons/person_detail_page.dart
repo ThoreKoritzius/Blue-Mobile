@@ -1,6 +1,5 @@
 import 'dart:typed_data';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:crop_your_image/crop_your_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -11,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/config/app_config.dart';
 import '../../core/utils/breakpoints.dart';
 import '../../core/widgets/fullscreen_image_viewer.dart';
+import '../../core/widgets/protected_network_image.dart';
 import '../../core/widgets/section_card.dart';
 import '../../data/models/day_media_model.dart';
 import '../../data/models/person_detail_payload_model.dart';
@@ -384,6 +384,9 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
   }
 
   Map<String, String> _authHeaders() {
+    if (kIsWeb) {
+      return const {};
+    }
     final tokenStore = ref.read(authTokenStoreProvider);
     final token =
         ref.read(authControllerProvider).value?.accessToken ??
@@ -1282,18 +1285,11 @@ class _AuthenticatedImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (kIsWeb) {
-      return Image(
-        image: NetworkImage(imageUrl, headers: headers),
-        fit: fit,
-        errorBuilder: (_, __, ___) => errorWidget,
-      );
-    }
-
-    return Image(
-      image: CachedNetworkImageProvider(imageUrl, headers: headers),
+    return ProtectedNetworkImage(
+      imageUrl: imageUrl,
+      headers: headers,
       fit: fit,
-      errorBuilder: (_, __, ___) => errorWidget,
+      errorWidget: errorWidget,
     );
   }
 }

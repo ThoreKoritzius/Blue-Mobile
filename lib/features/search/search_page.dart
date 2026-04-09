@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/config/app_config.dart';
 import '../../core/utils/breakpoints.dart';
 import '../../core/utils/date_format.dart';
+import '../../core/widgets/protected_network_image.dart';
 import '../../data/models/memory_search_result_model.dart';
 import '../../data/models/person_model.dart';
 import '../../data/models/story_day_model.dart';
@@ -1077,14 +1077,13 @@ class _SearchPageState extends ConsumerState<SearchPage>
   }
 
   String _authenticatedUrl(String url) {
-    if (!kIsWeb) return url;
-    final token = _authToken();
-    if (token == null || token.isEmpty) return url;
-    final separator = url.contains('?') ? '&' : '?';
-    return '$url${separator}token=$token';
+    return url;
   }
 
   Map<String, String> _authHeaders() {
+    if (kIsWeb) {
+      return const {};
+    }
     final token = _authToken();
     return {
       if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
@@ -1431,16 +1430,14 @@ class _SearchResultCard extends StatelessWidget {
               if (preview.isNotEmpty)
                 ClipRRect(
                   borderRadius: BorderRadius.circular(10),
-                  child: CachedNetworkImage(
+                  child: ProtectedNetworkImage(
                     imageUrl: authenticateUrl(AppConfig.imageUrlFromPath(
                       preview,
                       date: item.date,
                     )),
-                    httpHeaders: authHeaders,
-                    width: 78,
-                    height: 78,
+                    headers: authHeaders,
                     fit: BoxFit.cover,
-                    errorWidget: (_, __, ___) => Container(
+                    errorWidget: Container(
                       width: 78,
                       height: 78,
                       color: colorScheme.surfaceContainerHighest,
@@ -1543,14 +1540,14 @@ class _ImageSearchTile extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  CachedNetworkImage(
+                  ProtectedNetworkImage(
                     imageUrl: authenticateUrl(AppConfig.imageUrlFromPath(
                       preview,
                       date: item.date,
                     )),
-                    httpHeaders: authHeaders,
+                    headers: authHeaders,
                     fit: BoxFit.cover,
-                    errorWidget: (_, __, ___) => Container(
+                    errorWidget: Container(
                       color: theme.colorScheme.surfaceContainerHighest,
                       child: const Icon(Icons.image_not_supported_outlined),
                     ),

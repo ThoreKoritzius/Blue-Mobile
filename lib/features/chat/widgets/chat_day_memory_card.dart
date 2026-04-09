@@ -1,5 +1,6 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+
+import '../../../core/widgets/protected_network_image.dart';
 
 import '../../../data/models/story_day_model.dart';
 
@@ -51,11 +52,11 @@ class ChatDayMemoryCard extends StatelessWidget {
                 fit: StackFit.expand,
                 children: [
                   if (previewUrl != null && previewUrl!.isNotEmpty)
-                    CachedNetworkImage(
+                    ProtectedNetworkImage(
                       imageUrl: previewUrl!,
+                      headers: headers,
                       fit: BoxFit.cover,
-                      httpHeaders: headers,
-                      errorWidget: (_, __, ___) => _fallback(context),
+                      errorWidget: _fallback(context),
                     )
                   else
                     _fallback(context),

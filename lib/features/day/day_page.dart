@@ -20,6 +20,7 @@ import '../../core/utils/breakpoints.dart';
 import '../../core/utils/date_format.dart';
 import '../../data/graphql/documents.dart';
 import '../../core/widgets/fullscreen_image_viewer.dart';
+import '../../core/widgets/protected_network_image.dart';
 import '../../core/widgets/calendar_event_detail_sheet.dart';
 import '../../core/widgets/section_card.dart';
 import '../../data/models/calendar_event_model.dart';
@@ -571,10 +572,11 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
   Future<void> _safePrecache(String url) async {
     if (!mounted || url.isEmpty) return;
     try {
-      await precacheImage(
-        CachedNetworkImageProvider(url, headers: _authHeaders()),
-        context,
+      final provider = await loadProtectedImageProvider(
+        url,
+        headers: _authHeaders(),
       );
+      await precacheImage(provider, context);
     } catch (_) {}
   }
 
@@ -1291,8 +1293,12 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     }
 
     try {
+      final provider = await loadProtectedImageProvider(
+        normalized,
+        headers: _authHeaders(),
+      );
       final palette = await PaletteGenerator.fromImageProvider(
-        CachedNetworkImageProvider(normalized, headers: _authHeaders()),
+        provider,
         size: const Size(96, 96),
         maximumColorCount: 12,
       );
@@ -2391,9 +2397,6 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
           avatar: CircleAvatar(
             radius: 14,
             backgroundColor: colorScheme.primary.withValues(alpha: 0.15),
-            backgroundImage: photoUrl != null
-                ? NetworkImage(photoUrl, headers: _authHeaders())
-                : null,
             child: photoUrl == null
                 ? Text(
                     initial,
@@ -2403,7 +2406,23 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                       color: colorScheme.primary,
                     ),
                   )
-                : null,
+                : ClipOval(
+                    child: ProtectedNetworkImage(
+                      imageUrl: photoUrl,
+                      headers: _authHeaders(),
+                      width: 28,
+                      height: 28,
+                      fit: BoxFit.cover,
+                      errorWidget: Text(
+                        initial,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          color: colorScheme.primary,
+                        ),
+                      ),
+                    ),
+                  ),
           ),
           backgroundColor: colorScheme.surfaceContainer,
           labelStyle: TextStyle(
@@ -3009,12 +3028,12 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
       if (weather.sunriseAt != null)
         _WeatherDetailRow(
           label: 'Sunrise',
-          value: DateFormat('HH:mm').format(weather.sunriseAt!.toLocal()),
+          value: _weatherClockLabel(weather.sunriseAt!, weather.timezoneName),
         ),
       if (weather.sunsetAt != null)
         _WeatherDetailRow(
           label: 'Sunset',
-          value: DateFormat('HH:mm').format(weather.sunsetAt!.toLocal()),
+          value: _weatherClockLabel(weather.sunsetAt!, weather.timezoneName),
         ),
       if (weather.locationLabel?.trim().isNotEmpty == true)
         _WeatherDetailRow(
@@ -3283,6 +3302,14 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     if (max != null) return '${max.toStringAsFixed(0)}° high';
     if (min != null) return '${min.toStringAsFixed(0)}° low';
     return 'Unavailable';
+  }
+
+  String _weatherClockLabel(DateTime value, String? timezoneName) {
+    final tz = (timezoneName ?? '').trim();
+    if (tz.isNotEmpty) {
+      return DateFormat('HH:mm').format(value);
+    }
+    return DateFormat('HH:mm').format(value.toLocal());
   }
 
   String _formatSteps(int steps) {
@@ -3644,13 +3671,11 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        CachedNetworkImage(
+                        ProtectedNetworkImage(
                           imageUrl: url,
+                          headers: _authHeaders(),
                           fit: BoxFit.cover,
-                          httpHeaders: _authHeaders(),
-                          memCacheWidth: 300,
-                          fadeInDuration: const Duration(milliseconds: 200),
-                          placeholder: (_, __) => ColoredBox(
+                          placeholder: ColoredBox(
                             color: colorScheme.surfaceContainerHighest,
                             child: const Center(
                               child: SizedBox(
@@ -3662,9 +3687,8 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                               ),
                             ),
                           ),
-                          errorWidget: (_, url, __) => GestureDetector(
+                          errorWidget: GestureDetector(
                             onTap: () {
-                              CachedNetworkImage.evictFromCache(url);
                               setState(() {});
                             },
                             child: ColoredBox(
@@ -3863,14 +3887,13 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
   }
 
   String _authenticatedUrl(String url) {
-    if (!kIsWeb) return url;
-    final token = _authToken();
-    if (token == null || token.isEmpty) return url;
-    final separator = url.contains('?') ? '&' : '?';
-    return '$url${separator}token=$token';
+    return url;
   }
 
   Map<String, String> _authHeaders() {
+    if (kIsWeb) {
+      return const {};
+    }
     final token = _authToken();
     return {
       if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
@@ -4788,8 +4811,12 @@ class _ProgressiveHeroImageState extends State<_ProgressiveHeroImage> {
     });
 
     try {
+      final provider = await loadProtectedImageProvider(
+        asset.fullUrl,
+        headers: widget.headers,
+      );
       await precacheImage(
-        CachedNetworkImageProvider(asset.fullUrl, headers: widget.headers),
+        provider,
         context,
       );
       if (!mounted || _fullReadyUrl != asset.fullUrl) return;
@@ -4824,12 +4851,11 @@ class _ProgressiveHeroImageState extends State<_ProgressiveHeroImage> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        CachedNetworkImage(
+        ProtectedNetworkImage(
           imageUrl: asset.previewUrl,
+          headers: widget.headers,
           fit: BoxFit.cover,
-          httpHeaders: widget.headers,
-          fadeInDuration: const Duration(milliseconds: 160),
-          placeholder: (_, __) => Container(
+          placeholder: Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
@@ -4850,7 +4876,7 @@ class _ProgressiveHeroImageState extends State<_ProgressiveHeroImage> {
               ),
             ),
           ),
-          errorWidget: (_, __, ___) => Container(
+          errorWidget: Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
@@ -4877,13 +4903,21 @@ class _ProgressiveHeroImageState extends State<_ProgressiveHeroImage> {
             duration: const Duration(milliseconds: 360),
             curve: Curves.easeOutCubic,
             opacity: _fullReady ? 1 : 0,
-            child: Image(
-              image: CachedNetworkImageProvider(
+            child: FutureBuilder<ImageProvider<Object>>(
+              future: loadProtectedImageProvider(
                 asset.fullUrl,
                 headers: widget.headers,
               ),
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) {
+                  return const SizedBox.shrink();
+                }
+                return Image(
+                  image: snapshot.data!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                );
+              },
             ),
           ),
       ],

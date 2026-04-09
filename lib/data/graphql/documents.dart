@@ -337,7 +337,7 @@ query DayBundle($day: String!, $filesFirst: Int!, $runsFirst: Int!) {
     dailyWeather(dateFrom: $day, dateTo: $day, first: 1) {
       edges {
         node {
-          date weatherCode temperatureMaxC temperatureMinC apparentTemperatureMaxC apparentTemperatureMinC precipitationSumMm precipitationHours windSpeedMaxKmh daylightDurationSeconds sunshineDurationSeconds sunriseAt sunsetAt locationLabel source sourceLabel
+          date timezoneName weatherCode temperatureMaxC temperatureMinC apparentTemperatureMaxC apparentTemperatureMinC precipitationSumMm precipitationHours windSpeedMaxKmh daylightDurationSeconds sunshineDurationSeconds sunriseAt sunsetAt locationLabel source sourceLabel
         }
       }
     }

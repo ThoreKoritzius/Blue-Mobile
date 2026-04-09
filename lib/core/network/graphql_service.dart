@@ -23,17 +23,44 @@ class GraphqlService {
 
   bool _refreshing = false;
   Completer<bool>? _refreshCompleter;
+  String? _csrfToken;
 
   void _log(String message) {
     debugPrint('[AUTH] $message');
   }
 
   Map<String, String> buildAuthHeaders() {
+    if (kIsWeb) {
+      return const {};
+    }
     final token = _tokenStore.peekToken();
     return {
       if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
       'X-Blue-Client': 'mobile',
     };
+  }
+
+  Future<String?> _getCsrfToken({bool forceRefresh = false}) async {
+    if (!kIsWeb) return null;
+    if (!forceRefresh && _csrfToken != null && _csrfToken!.isNotEmpty) {
+      return _csrfToken;
+    }
+    final response = await _httpClient
+        .get(
+          Uri.parse('${AppConfig.backendUrl}/api/auth/csrf'),
+          headers: const {'Accept': 'application/json'},
+        )
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return null;
+    }
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      return null;
+    }
+    final token = (decoded['csrfToken'] ?? '').toString();
+    _csrfToken = token.isEmpty ? null : token;
+    return _csrfToken;
   }
 
   GraphQLClient _buildMultipartClient() {
@@ -192,12 +219,16 @@ class GraphqlService {
     Duration? timeout,
     bool isRetry = false,
   }) async {
+    final csrfToken = await _getCsrfToken();
     final request = _ProgressMultipartRequest(
       'POST',
       Uri.parse(AppConfig.graphqlHttpUrl),
       onProgress: onProgress,
     );
     request.headers.addAll(buildAuthHeaders());
+    if (csrfToken != null && csrfToken.isNotEmpty) {
+      request.headers['X-CSRF-Token'] = csrfToken;
+    }
 
     final operationsVariables = <String, dynamic>{
       ...variables,
@@ -243,6 +274,19 @@ class GraphqlService {
       throw Exception('Session expired. Please sign in again.');
     }
 
+    if (response.statusCode == 403 && kIsWeb && !isRetry) {
+      _csrfToken = null;
+      await _getCsrfToken(forceRefresh: true);
+      return _doMultipartWithProgress(
+        document,
+        variables: variables,
+        files: files,
+        onProgress: onProgress,
+        timeout: timeout,
+        isRetry: true,
+      );
+    }
+
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final errors = decoded['errors'];
       if (errors is List && errors.isNotEmpty) {
@@ -264,12 +308,15 @@ class GraphqlService {
     http.Client? client,
     bool isRetry = false,
   }) async {
+    final csrfToken = await _getCsrfToken();
     final response = await (client ?? _httpClient)
         .post(
           Uri.parse(AppConfig.graphqlHttpUrl),
           headers: {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
+            if (csrfToken != null && csrfToken.isNotEmpty)
+              'X-CSRF-Token': csrfToken,
             ...buildAuthHeaders(),
           },
           body: jsonEncode({'query': document, 'variables': variables}),
@@ -292,6 +339,17 @@ class GraphqlService {
         );
       }
       throw Exception('Session expired. Please sign in again.');
+    }
+
+    if (response.statusCode == 403 && kIsWeb && !isRetry) {
+      _csrfToken = null;
+      await _getCsrfToken(forceRefresh: true);
+      return _postJsonGraphql(
+        document,
+        variables: variables,
+        client: client,
+        isRetry: true,
+      );
     }
 
     if (response.statusCode < 200 || response.statusCode >= 300) {

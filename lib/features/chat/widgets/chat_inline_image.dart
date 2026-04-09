@@ -1,5 +1,6 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+
+import '../../../core/widgets/protected_network_image.dart';
 
 class ChatInlineImage extends StatelessWidget {
   const ChatInlineImage({
@@ -25,19 +26,19 @@ class ChatInlineImage extends StatelessWidget {
             borderRadius: BorderRadius.circular(16),
             color: Theme.of(context).colorScheme.surfaceContainerHighest,
           ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(16),
-            child: CachedNetworkImage(
-              imageUrl: imageUrl,
-              fit: BoxFit.cover,
-              httpHeaders: headers,
-              errorWidget: (_, __, ___) => Container(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                child: const Center(
-                  child: Icon(Icons.broken_image_outlined, size: 28),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: ProtectedNetworkImage(
+                imageUrl: imageUrl,
+                headers: headers,
+                fit: BoxFit.cover,
+                errorWidget: Container(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  child: const Center(
+                    child: Icon(Icons.broken_image_outlined, size: 28),
+                  ),
                 ),
               ),
-            ),
           ),
         ),
       ),

@@ -34,6 +34,20 @@ class ChatMessageContent extends ConsumerWidget {
   final void Function(String date) onOpenDay;
   final Future<StoryDayModel?> Function(String date) loadDayPreview;
 
+  static final RegExp _htmlTagPattern = RegExp(
+    r'<\s*/?\s*(script|style|iframe|object|embed|link|meta|img|svg|math|video|audio|source)[^>]*>',
+    caseSensitive: false,
+  );
+  static final RegExp _dangerousHrefPattern = RegExp(
+    r'\]\((?:\s*)(javascript:|data:)',
+    caseSensitive: false,
+  );
+
+  String _sanitizeMarkdown(String value) {
+    final withoutHtml = value.replaceAll(_htmlTagPattern, '');
+    return withoutHtml.replaceAllMapped(_dangerousHrefPattern, (match) => '](#blocked:');
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
@@ -57,48 +71,55 @@ class ChatMessageContent extends ConsumerWidget {
 
         // Markdown text — SelectionArea wraps for cross-paragraph selection
         if (message.text.isNotEmpty || isStreaming)
-          MarkdownBody(
-            data: message.text.isEmpty && isStreaming ? ' ' : message.text,
-            selectable: message.state == UiMessageState.done,
-            sizedImageBuilder: (config) => Padding(
-              padding: const EdgeInsets.only(top: 10),
-              child: SizedBox(
-                width: config.width,
-                height: config.height,
-                child: ChatInlineImage(
-                  imageUrl: authenticatedUrl(
-                    resolveChatImageUrl(config.uri.toString()),
-                    ref,
-                  ),
-                  headers: chatAuthHeaders(ref),
-                  onTap: () => _openImageViewer(
-                    context,
-                    ref,
-                    [ChatAttachmentImage(path: config.uri.toString())],
-                    0,
+          Builder(
+            builder: (context) {
+              final safeMarkdown = _sanitizeMarkdown(
+                message.text.isEmpty && isStreaming ? ' ' : message.text,
+              );
+              return MarkdownBody(
+                data: safeMarkdown,
+                selectable: message.state == UiMessageState.done,
+                sizedImageBuilder: (config) => Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: SizedBox(
+                    width: config.width,
+                    height: config.height,
+                    child: ChatInlineImage(
+                      imageUrl: authenticatedUrl(
+                        resolveChatImageUrl(config.uri.toString()),
+                        ref,
+                      ),
+                      headers: chatAuthHeaders(ref),
+                      onTap: () => _openImageViewer(
+                        context,
+                        ref,
+                        [ChatAttachmentImage(path: config.uri.toString())],
+                        0,
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
-            styleSheet: MarkdownStyleSheet(
-              p: theme.textTheme.bodyLarge?.copyWith(
-                color: colorScheme.onSurface,
-                height: 1.55,
-              ),
-              code: theme.textTheme.bodyMedium?.copyWith(
-                color: colorScheme.primary,
-                backgroundColor:
-                    colorScheme.primary.withValues(alpha: 0.10),
-              ),
-              blockquote: theme.textTheme.bodyMedium?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-              listBullet: theme.textTheme.bodyLarge?.copyWith(
-                color: colorScheme.onSurface,
-              ),
-              a: TextStyle(color: colorScheme.primary),
-            ),
-            onTapLink: (text, href, title) {},
+                styleSheet: MarkdownStyleSheet(
+                  p: theme.textTheme.bodyLarge?.copyWith(
+                    color: colorScheme.onSurface,
+                    height: 1.55,
+                  ),
+                  code: theme.textTheme.bodyMedium?.copyWith(
+                    color: colorScheme.primary,
+                    backgroundColor:
+                        colorScheme.primary.withValues(alpha: 0.10),
+                  ),
+                  blockquote: theme.textTheme.bodyMedium?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                  listBullet: theme.textTheme.bodyLarge?.copyWith(
+                    color: colorScheme.onSurface,
+                  ),
+                  a: TextStyle(color: colorScheme.primary),
+                ),
+                onTapLink: (text, href, title) {},
+              );
+            },
           ),
 
         // Typing dots (streaming, no text yet, no statuses)
