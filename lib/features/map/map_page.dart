@@ -1534,6 +1534,8 @@ class _MapPageState extends ConsumerState<MapPage>
     if (!_sheetController.isAttached) return 120;
     final extent = _sheetController.size;
     final screenHeight = MediaQuery.of(context).size.height;
+    if (!extent.isFinite || extent <= 0) return 120;
+    if (!screenHeight.isFinite || screenHeight <= 0) return 120;
     return screenHeight * extent * 0.8;
   }
 
@@ -1544,6 +1546,7 @@ class _MapPageState extends ConsumerState<MapPage>
 
   void _onDaySliderChanged(double value) {
     if (_dayViewDates.isEmpty) return;
+    if (!value.isFinite) return;
     final idx = value.round().clamp(0, _dayViewDates.length - 1);
     if (idx == _dayViewDateIndex) return;
     setState(() => _dayViewDateIndex = idx);
@@ -2154,13 +2157,24 @@ class _DayBottomSheet extends StatelessWidget {
   /// Max photos to show inline per visit. Remaining are aggregated.
   static const int _maxInlinePhotos = 4;
 
+  double _safeMinFraction(double screenHeight) {
+    if (!screenHeight.isFinite || screenHeight <= 0) {
+      return 0.18;
+    }
+    final fraction = _collapsedHeight / screenHeight;
+    if (!fraction.isFinite || fraction <= 0) {
+      return 0.18;
+    }
+    return fraction.clamp(0.08, 0.25);
+  }
+
   @override
   Widget build(BuildContext context) {
     if (dates.isEmpty) {
       return const SizedBox.shrink();
     }
     final screenHeight = MediaQuery.of(context).size.height;
-    final minFraction = (_collapsedHeight / screenHeight).clamp(0.08, 0.25);
+    final minFraction = _safeMinFraction(screenHeight);
     final safeIndex = currentIndex.clamp(0, dates.length - 1);
     final rawSegments = data?.segments ?? const [];
     final images = data?.imageLocations ?? const [];
