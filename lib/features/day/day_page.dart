@@ -35,6 +35,7 @@ import '../../data/models/upload_batch_state_model.dart';
 import '../../data/repositories/person_repository.dart';
 import '../../providers.dart';
 import 'day_draft_controller.dart';
+import 'widgets/day_weather_section.dart';
 import '../persons/person_detail_page.dart';
 import '../runs/run_detail_page.dart';
 
@@ -1478,8 +1479,9 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                                               18,
                                               18,
                                             ),
-                                            child: _buildWeatherSection(
-                                              context,
+                                            child: DayWeatherSection(
+                                              weather: _dailyWeather!,
+                                              onTap: _showWeatherDetailDialog,
                                             ),
                                           ),
                                         ],
@@ -1608,7 +1610,10 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                                   18,
                                   18,
                                 ),
-                                child: _buildWeatherSection(context),
+                                child: DayWeatherSection(
+                                  weather: _dailyWeather!,
+                                  onTap: _showWeatherDetailDialog,
+                                ),
                               ),
                             ],
                             const SizedBox(height: 12),
@@ -2647,120 +2652,6 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildWeatherSection(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final weather = _dailyWeather;
-    if (weather == null) return const SizedBox.shrink();
-
-    final condition = _weatherConditionLabel(weather.weatherCode);
-    final range = _temperatureRangeLabel(weather);
-    final source = weather.sourceLabel?.trim().isNotEmpty == true
-        ? weather.sourceLabel!.trim()
-        : 'Historical weather archive';
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(22),
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                colorScheme.primaryContainer.withValues(alpha: 0.88),
-                colorScheme.secondaryContainer.withValues(alpha: 0.78),
-              ],
-            ),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 46,
-                height: 46,
-                decoration: BoxDecoration(
-                  color: colorScheme.surface.withValues(alpha: 0.28),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Icon(
-                  _weatherIcon(weather.weatherCode),
-                  color: colorScheme.onPrimaryContainer,
-                  size: 24,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      condition,
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                        color: colorScheme.onPrimaryContainer,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      range,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: colorScheme.onPrimaryContainer.withValues(
-                          alpha: 0.86,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: [
-            if (weather.precipitationSumMm != null)
-              _WeatherStatChip(
-                icon: Icons.water_drop_rounded,
-                label:
-                    '${weather.precipitationSumMm!.toStringAsFixed(weather.precipitationSumMm! >= 10 ? 0 : 1)} mm rain',
-              ),
-            if (weather.windSpeedMaxKmh != null)
-              _WeatherStatChip(
-                icon: Icons.air_rounded,
-                label:
-                    '${weather.windSpeedMaxKmh!.toStringAsFixed(0)} km/h wind',
-              ),
-            if (weather.sunriseAt != null)
-              _WeatherStatChip(
-                icon: Icons.wb_twilight_rounded,
-                label:
-                    'Sunrise ${DateFormat('HH:mm').format(weather.sunriseAt!.toLocal())}',
-              ),
-            if (weather.sunsetAt != null)
-              _WeatherStatChip(
-                icon: Icons.nightlight_round_rounded,
-                label:
-                    'Sunset ${DateFormat('HH:mm').format(weather.sunsetAt!.toLocal())}',
-              ),
-          ],
-        ),
-        const SizedBox(height: 14),
-        Text(
-          source,
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: colorScheme.onSurfaceVariant,
-            height: 1.35,
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildRunRow(BuildContext context, RunModel run) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
@@ -3068,6 +2959,219 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _showWeatherDetailDialog() {
+    final weather = _dailyWeather;
+    if (weather == null) {
+      return Future.value();
+    }
+
+    final details = <_WeatherDetailRow>[
+      _WeatherDetailRow(label: 'Condition', value: _weatherConditionDetail(weather)),
+      _WeatherDetailRow(label: 'Temperature', value: _weatherTemperatureDetail(weather)),
+      if (weather.apparentTemperatureMaxC != null ||
+          weather.apparentTemperatureMinC != null)
+        _WeatherDetailRow(
+          label: 'Feels like',
+          value: _weatherFeelsLikeDetail(weather),
+        ),
+      if (weather.precipitationSumMm != null)
+        _WeatherDetailRow(
+          label: 'Precipitation',
+          value:
+              '${weather.precipitationSumMm!.toStringAsFixed(weather.precipitationSumMm! >= 10 ? 0 : 1)} mm',
+        ),
+      if (weather.precipitationHours != null)
+        _WeatherDetailRow(
+          label: 'Rain hours',
+          value: '${weather.precipitationHours!.toStringAsFixed(1)} h',
+        ),
+      if (weather.windSpeedMaxKmh != null)
+        _WeatherDetailRow(
+          label: 'Max wind',
+          value: '${weather.windSpeedMaxKmh!.toStringAsFixed(0)} km/h',
+        ),
+      if (weather.sunriseAt != null)
+        _WeatherDetailRow(
+          label: 'Sunrise',
+          value: DateFormat('HH:mm').format(weather.sunriseAt!.toLocal()),
+        ),
+      if (weather.sunsetAt != null)
+        _WeatherDetailRow(
+          label: 'Sunset',
+          value: DateFormat('HH:mm').format(weather.sunsetAt!.toLocal()),
+        ),
+      if (weather.locationLabel?.trim().isNotEmpty == true)
+        _WeatherDetailRow(
+          label: 'Location',
+          value: weather.locationLabel!.trim(),
+        ),
+      _WeatherDetailRow(
+        label: 'Source',
+        value: weather.sourceLabel?.trim().isNotEmpty == true
+            ? weather.sourceLabel!.trim()
+            : (weather.source?.trim().isNotEmpty == true
+                  ? weather.source!.trim()
+                  : 'Historical weather archive'),
+      ),
+    ];
+
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        final theme = Theme.of(dialogContext);
+        final colorScheme = theme.colorScheme;
+        final accent = colorScheme.primary;
+        final presentation = resolveDayWeatherPresentation(
+          dialogContext,
+          weather.weatherCode,
+        );
+        return Dialog(
+          elevation: 0,
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: 24,
+          ),
+          backgroundColor: Colors.transparent,
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 460),
+            decoration: BoxDecoration(
+              color: colorScheme.surface,
+              borderRadius: BorderRadius.circular(28),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.16),
+                  blurRadius: 36,
+                  offset: const Offset(0, 18),
+                ),
+              ],
+            ),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          color: accent.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Icon(
+                          presentation.icon,
+                          color: presentation.iconColor,
+                          size: 24,
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Daily weather',
+                              style: theme.textTheme.labelLarge?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.2,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              presentation.label,
+                              style: theme.textTheme.titleLarge?.copyWith(
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        tooltip: 'Close',
+                        onPressed: () => Navigator.of(dialogContext).pop(),
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(22),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          accent.withValues(alpha: 0.16),
+                          accent.withValues(alpha: 0.06),
+                        ],
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Summary',
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          _weatherTemperatureDetail(weather),
+                          style: theme.textTheme.headlineSmall?.copyWith(
+                            fontWeight: FontWeight.w900,
+                            color: accent,
+                            letterSpacing: -0.4,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+                    decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainerLow,
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: colorScheme.outlineVariant.withValues(
+                          alpha: 0.65,
+                        ),
+                      ),
+                    ),
+                    child: Column(
+                      children: [
+                        for (var i = 0; i < details.length; i++) ...[
+                          if (i > 0)
+                            Divider(
+                              height: 20,
+                              color: colorScheme.outlineVariant.withValues(
+                                alpha: 0.55,
+                              ),
+                            ),
+                          _WeatherDetailItem(row: details[i]),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   String _activitySourceDescription(DailyActivityModel activity) {
     final label = activity.sourceLabel?.trim();
     final source = activity.source?.trim();
@@ -3080,101 +3184,89 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     return 'Imported daily activity data.';
   }
 
-  String _weatherConditionLabel(int? code) {
-    switch (code) {
+  String _weatherConditionDetail(DailyWeatherModel weather) {
+    switch (weather.weatherCode) {
       case 0:
-        return 'Clear sky';
+        return 'Sunny';
       case 1:
+        return 'Sunny';
       case 2:
         return 'Partly cloudy';
       case 3:
         return 'Overcast';
       case 45:
-      case 48:
         return 'Fog';
+      case 48:
+        return 'Freezing fog';
       case 51:
+        return 'Light drizzle';
       case 53:
-      case 55:
-      case 56:
-      case 57:
         return 'Drizzle';
+      case 55:
+        return 'Heavy drizzle';
+      case 56:
+        return 'Light freezing drizzle';
+      case 57:
+        return 'Freezing drizzle';
       case 61:
+        return 'Light rain';
       case 63:
-      case 65:
-      case 66:
-      case 67:
         return 'Rain';
+      case 65:
+        return 'Heavy rain';
+      case 66:
+        return 'Light freezing rain';
+      case 67:
+        return 'Freezing rain';
       case 71:
+        return 'Light snow';
       case 73:
-      case 75:
-      case 77:
         return 'Snow';
+      case 75:
+        return 'Heavy snow';
+      case 77:
+        return 'Snow grains';
       case 80:
+        return 'Light showers';
       case 81:
-      case 82:
         return 'Rain showers';
+      case 82:
+        return 'Heavy showers';
       case 85:
+        return 'Light snow showers';
       case 86:
         return 'Snow showers';
       case 95:
-      case 96:
-      case 99:
         return 'Thunderstorm';
+      case 96:
+        return 'Thunderstorm with hail';
+      case 99:
+        return 'Severe storm with hail';
       default:
         return 'Weather summary';
     }
   }
 
-  IconData _weatherIcon(int? code) {
-    switch (code) {
-      case 0:
-        return Icons.wb_sunny_rounded;
-      case 1:
-      case 2:
-      case 3:
-        return Icons.cloud_rounded;
-      case 45:
-      case 48:
-        return Icons.blur_on_rounded;
-      case 51:
-      case 53:
-      case 55:
-      case 56:
-      case 57:
-      case 61:
-      case 63:
-      case 65:
-      case 66:
-      case 67:
-      case 80:
-      case 81:
-      case 82:
-        return Icons.umbrella_rounded;
-      case 71:
-      case 73:
-      case 75:
-      case 77:
-      case 85:
-      case 86:
-        return Icons.ac_unit_rounded;
-      case 95:
-      case 96:
-      case 99:
-        return Icons.thunderstorm_rounded;
-      default:
-        return Icons.cloud_queue_rounded;
-    }
-  }
-
-  String _temperatureRangeLabel(DailyWeatherModel weather) {
+  String _weatherTemperatureDetail(DailyWeatherModel weather) {
     final max = weather.temperatureMaxC;
     final min = weather.temperatureMinC;
     if (max == null && min == null) return 'No temperature range available';
     if (max != null && min != null) {
-      return '${max.toStringAsFixed(0)}° / ${min.toStringAsFixed(0)}°';
+      return '${max.toStringAsFixed(0)}° high • ${min.toStringAsFixed(0)}° low';
     }
     if (max != null) return '${max.toStringAsFixed(0)}° high';
     return '${min!.toStringAsFixed(0)}° low';
+  }
+
+  String _weatherFeelsLikeDetail(DailyWeatherModel weather) {
+    final max = weather.apparentTemperatureMaxC;
+    final min = weather.apparentTemperatureMinC;
+    if (max != null && min != null) {
+      return '${max.toStringAsFixed(0)}° high • ${min.toStringAsFixed(0)}° low';
+    }
+    if (max != null) return '${max.toStringAsFixed(0)}° high';
+    if (min != null) return '${min.toStringAsFixed(0)}° low';
+    return 'Unavailable';
   }
 
   String _formatSteps(int steps) {
@@ -3967,44 +4059,6 @@ class _CalendarMetaPill extends StatelessWidget {
   }
 }
 
-class _WeatherStatChip extends StatelessWidget {
-  const _WeatherStatChip({required this.icon, required this.label});
-
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.65),
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 16, color: colorScheme.onSurfaceVariant),
-          const SizedBox(width: 7),
-          Text(
-            label,
-            style: theme.textTheme.labelMedium?.copyWith(
-              color: colorScheme.onSurface,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _CalendarEmptyState extends StatelessWidget {
   const _CalendarEmptyState({
     required this.icon,
@@ -4090,6 +4144,51 @@ class _ActivityMetricDetail {
   final String value;
   final String explanation;
   final String source;
+}
+
+class _WeatherDetailRow {
+  const _WeatherDetailRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+}
+
+class _WeatherDetailItem extends StatelessWidget {
+  const _WeatherDetailItem({required this.row});
+
+  final _WeatherDetailRow row;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 112,
+          child: Text(
+            row.label,
+            style: theme.textTheme.labelLarge?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            row.value,
+            style: theme.textTheme.bodyLarge?.copyWith(
+              color: colorScheme.onSurface,
+              height: 1.35,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _AddPersonSheet extends StatefulWidget {
