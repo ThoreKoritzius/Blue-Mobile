@@ -2586,6 +2586,8 @@ class _DayBottomSheet extends StatelessWidget {
 
   Widget _buildSlider(BuildContext context, int safeIndex) {
     final date = dates[safeIndex];
+    final canGoBack = safeIndex > 0;
+    final canGoForward = safeIndex < dates.length - 1;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
       child: Column(
@@ -2617,14 +2619,42 @@ class _DayBottomSheet extends StatelessWidget {
             ],
           ),
           if (dates.length > 1)
-            Slider(
-              value: safeIndex.toDouble(),
-              min: 0,
-              max: (dates.length - 1).toDouble(),
-              divisions: dates.length - 1,
-              onChanged: onDateChanged,
-              activeColor: Colors.white,
-              inactiveColor: Colors.white30,
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: canGoBack
+                          ? () => onDateChanged((safeIndex - 1).toDouble())
+                          : null,
+                      icon: const Icon(Icons.chevron_left, size: 18),
+                      label: const Text('Earlier'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        disabledForegroundColor: Colors.white24,
+                        side: const BorderSide(color: Colors.white24),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: canGoForward
+                          ? () => onDateChanged((safeIndex + 1).toDouble())
+                          : null,
+                      iconAlignment: IconAlignment.end,
+                      icon: const Icon(Icons.chevron_right, size: 18),
+                      label: const Text('Later'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        disabledForegroundColor: Colors.white24,
+                        side: const BorderSide(color: Colors.white24),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
         ],
       ),
