@@ -17,6 +17,7 @@ class DataSourcesPage extends ConsumerStatefulWidget {
 }
 
 class _DataSourcesPageState extends ConsumerState<DataSourcesPage> {
+  static const Duration _timelineImportTimeout = Duration(hours: 6);
   late Future<List<DataSourceStatusModel>> _sourcesFuture;
   bool _timelineImporting = false;
   bool _takeoutImporting = false;
@@ -76,7 +77,7 @@ class _DataSourcesPageState extends ConsumerState<DataSourcesPage> {
           ),
         ],
         onProgress: (_, __) {},
-        timeout: const Duration(minutes: 5),
+        timeout: _timelineImportTimeout,
       );
       final message =
           (data['timeline'] as Map?)?['importTakeout']?['message'] as String?;
@@ -84,7 +85,12 @@ class _DataSourcesPageState extends ConsumerState<DataSourcesPage> {
       setState(() {
         _timelineImportResult = resultMessage;
       });
-      await _refreshSources();
+      try {
+        await _refreshSources();
+      } catch (_) {
+        // Do not turn a successful import into a failure dialog just because
+        // the follow-up status refresh failed.
+      }
       if (!mounted) return;
       await _showImportDialog(
         title: 'Google Timeline Imported',
@@ -217,20 +223,25 @@ class _DataSourcesPageState extends ConsumerState<DataSourcesPage> {
       _calendarImportResult = null;
     });
     try {
-      final data = await ref.read(graphqlServiceProvider).mutateMultipartWithProgress(
-        GqlDocuments.calendarImportTakeout,
-        files: [
-          MultipartUploadFile(
-            filename: file.name.isNotEmpty ? file.name : 'google-calendar.ics',
-            bytes: bytes,
-          ),
-        ],
-        onProgress: (_, __) {},
-        timeout: const Duration(minutes: 5),
-      );
+      final data = await ref
+          .read(graphqlServiceProvider)
+          .mutateMultipartWithProgress(
+            GqlDocuments.calendarImportTakeout,
+            files: [
+              MultipartUploadFile(
+                filename: file.name.isNotEmpty
+                    ? file.name
+                    : 'google-calendar.ics',
+                bytes: bytes,
+              ),
+            ],
+            onProgress: (_, __) {},
+            timeout: const Duration(minutes: 5),
+          );
       final payload =
           (data['calendar'] as Map?)?['importTakeout'] as Map<String, dynamic>?;
-      final resultMessage = (payload?['message'] as String?) ?? 'Import complete';
+      final resultMessage =
+          (payload?['message'] as String?) ?? 'Import complete';
       setState(() {
         _calendarImportResult = resultMessage;
       });
@@ -395,19 +406,17 @@ class _DataSourcesPageState extends ConsumerState<DataSourcesPage> {
     if (payload == null) {
       return const ['Import complete'];
     }
-    final calendars =
-        (payload['calendars'] as List<dynamic>? ?? const [])
-            .map((value) => value.toString())
-            .where((value) => value.trim().isNotEmpty)
-            .toList();
-    final errors =
-        (payload['errors'] as List<dynamic>? ?? const [])
-            .whereType<Map<String, dynamic>>()
-            .map(
-              (error) =>
-                  '${error['fileName'] ?? 'File'}: ${error['message'] ?? 'Import failed'}',
-            )
-            .toList();
+    final calendars = (payload['calendars'] as List<dynamic>? ?? const [])
+        .map((value) => value.toString())
+        .where((value) => value.trim().isNotEmpty)
+        .toList();
+    final errors = (payload['errors'] as List<dynamic>? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .map(
+          (error) =>
+              '${error['fileName'] ?? 'File'}: ${error['message'] ?? 'Import failed'}',
+        )
+        .toList();
     return [
       if ((payload['zipFilename'] ?? '').toString().isNotEmpty)
         'File: ${payload['zipFilename']}',

@@ -57,6 +57,9 @@ class _MapPageState extends ConsumerState<MapPage>
   static const Duration _viewportDebounce = Duration(milliseconds: 350);
   static const Duration _pageDelay = Duration(milliseconds: 650);
   static const Duration _dayViewLoadTimeout = Duration(seconds: 24);
+  static const Duration _daySwitchMapTransitionDuration = Duration(
+    milliseconds: 560,
+  );
   static const double _viewportPadFactor = 0.2;
   static const double _minViewportLatPad = 0.01;
   static const double _minViewportLonPad = 0.01;
@@ -116,6 +119,7 @@ class _MapPageState extends ConsumerState<MapPage>
       <String, List<LatLng>>{};
   final DraggableScrollableController _sheetController =
       DraggableScrollableController();
+  AnimationController? _daySwitchMapAnimation;
 
   @override
   void initState() {
@@ -173,6 +177,7 @@ class _MapPageState extends ConsumerState<MapPage>
 
   @override
   void dispose() {
+    _daySwitchMapAnimation?.dispose();
     _viewportDebounceTimer?.cancel();
     _nextImagePageTimer?.cancel();
     _selectedTabSubscription.close();
@@ -1031,7 +1036,9 @@ class _MapPageState extends ConsumerState<MapPage>
                   ClipRRect(
                     borderRadius: BorderRadius.circular(16),
                     child: ProtectedNetworkImage(
-                      imageUrl: _authenticatedUrl(AppConfig.runImageUrl(run.id)),
+                      imageUrl: _authenticatedUrl(
+                        AppConfig.runImageUrl(run.id),
+                      ),
                       headers: _authHeaders(),
                       height: 200,
                       fit: BoxFit.cover,
@@ -1343,7 +1350,9 @@ class _MapPageState extends ConsumerState<MapPage>
                   ClipRRect(
                     borderRadius: BorderRadius.circular(16),
                     child: ProtectedNetworkImage(
-                      imageUrl: _authenticatedUrl(AppConfig.runImageUrl(run.id)),
+                      imageUrl: _authenticatedUrl(
+                        AppConfig.runImageUrl(run.id),
+                      ),
                       headers: _authHeaders(),
                       height: 200,
                       fit: BoxFit.cover,
@@ -1497,8 +1506,8 @@ class _MapPageState extends ConsumerState<MapPage>
         _dayViewData = data;
         _dayViewLoading = false;
       });
-      // Fit map to the day's content.
-      _fitDayViewBounds(data);
+      // Animate the camera when switching days so the map doesn't snap.
+      _fitDayViewBounds(data, animated: true);
     } catch (error, stackTrace) {
       debugPrint('[DAY_VIEW] loadDayView failed date=$date error=$error');
       debugPrintStack(stackTrace: stackTrace);
@@ -1513,7 +1522,7 @@ class _MapPageState extends ConsumerState<MapPage>
     }
   }
 
-  void _fitDayViewBounds(TimelineDayData data) {
+  void _fitDayViewBounds(TimelineDayData data, {bool animated = false}) {
     final points = <LatLng>[
       for (final img in data.imageLocations) LatLng(img.lat, img.lon),
       for (final v in data.visits)
@@ -1525,26 +1534,130 @@ class _MapPageState extends ConsumerState<MapPage>
     }
     final sampledPoints = _sampleLatLngs(points, _maxDayFitPoints);
     if (sampledPoints.isEmpty) return;
-    if (sampledPoints.length == 1) {
-      _flyToPoint(sampledPoints.first);
+    final target = _dayViewCameraTarget(sampledPoints);
+    if (target == null) return;
+    if (animated) {
+      _animateMapTo(center: target.center, zoom: target.zoom);
       return;
     }
-    final bounds = LatLngBounds.fromPoints(sampledPoints);
-    if (_isZeroAreaBounds(bounds)) {
-      _flyToPoint(sampledPoints.first);
-      return;
-    }
-    _mapController.fitCamera(
-      CameraFit.bounds(
-        bounds: bounds,
-        padding: EdgeInsets.fromLTRB(
-          30,
-          30,
-          30 + _panelRightPadding(),
-          30 + _sheetBottomPadding(),
+    _stopDaySwitchMapAnimation();
+    _mapController.move(target.center, target.zoom);
+  }
+
+  ({LatLng center, double zoom})? _dayViewCameraTarget(List<LatLng> points) {
+    if (points.isEmpty) return null;
+    final cameraFit = _cameraFitForDayViewPoints(points);
+    final fittedCamera = cameraFit.fit(_mapController.camera);
+    return (center: fittedCamera.center, zoom: fittedCamera.zoom);
+  }
+
+  CameraFit _cameraFitForDayViewPoints(List<LatLng> points) {
+    if (points.length == 1) {
+      const offset = 0.001;
+      final target = points.first;
+      return CameraFit.bounds(
+        bounds: LatLngBounds(
+          LatLng(target.latitude - offset, target.longitude - offset),
+          LatLng(target.latitude + offset, target.longitude + offset),
         ),
+        maxZoom: 16,
+        padding: EdgeInsets.fromLTRB(
+          40,
+          40,
+          40 + _panelRightPadding(),
+          20 + _sheetBottomPadding(),
+        ),
+      );
+    }
+
+    final bounds = LatLngBounds.fromPoints(points);
+    if (_isZeroAreaBounds(bounds)) {
+      final target = points.first;
+      return CameraFit.bounds(
+        bounds: LatLngBounds(
+          LatLng(target.latitude - 0.001, target.longitude - 0.001),
+          LatLng(target.latitude + 0.001, target.longitude + 0.001),
+        ),
+        maxZoom: 16,
+        padding: EdgeInsets.fromLTRB(
+          40,
+          40,
+          40 + _panelRightPadding(),
+          20 + _sheetBottomPadding(),
+        ),
+      );
+    }
+
+    return CameraFit.bounds(
+      bounds: bounds,
+      padding: EdgeInsets.fromLTRB(
+        30,
+        30,
+        30 + _panelRightPadding(),
+        30 + _sheetBottomPadding(),
       ),
     );
+  }
+
+  void _animateMapTo({required LatLng center, required double zoom}) {
+    final startCamera = _mapController.camera;
+    final startCenter = startCamera.center;
+    final startZoom = startCamera.zoom;
+
+    if ((startCenter.latitude - center.latitude).abs() < 0.000001 &&
+        (startCenter.longitude - center.longitude).abs() < 0.000001 &&
+        (startZoom - zoom).abs() < 0.001) {
+      return;
+    }
+
+    _stopDaySwitchMapAnimation();
+
+    final centerLatTween = Tween<double>(
+      begin: startCenter.latitude,
+      end: center.latitude,
+    );
+    final centerLonTween = Tween<double>(
+      begin: startCenter.longitude,
+      end: center.longitude,
+    );
+    final zoomTween = Tween<double>(begin: startZoom, end: zoom);
+
+    final animation = AnimationController(
+      vsync: this,
+      duration: _daySwitchMapTransitionDuration,
+    );
+    _daySwitchMapAnimation = animation;
+
+    void tick() {
+      if (!mounted) return;
+      final t = Curves.easeInOutCubic.transform(animation.value);
+      _mapController.move(
+        LatLng(centerLatTween.transform(t), centerLonTween.transform(t)),
+        zoomTween.transform(t),
+      );
+    }
+
+    animation.addListener(tick);
+    animation.addStatusListener((status) {
+      if (status != AnimationStatus.completed &&
+          status != AnimationStatus.dismissed) {
+        return;
+      }
+      animation.removeListener(tick);
+      if (identical(_daySwitchMapAnimation, animation)) {
+        _daySwitchMapAnimation = null;
+      }
+      animation.dispose();
+    });
+    animation.forward();
+  }
+
+  void _stopDaySwitchMapAnimation() {
+    final animation = _daySwitchMapAnimation;
+    if (animation == null) return;
+    _daySwitchMapAnimation = null;
+    animation.stop();
+    animation.dispose();
   }
 
   bool get _useWideLayout =>
@@ -1669,24 +1782,9 @@ class _MapPageState extends ConsumerState<MapPage>
 
   /// Fly to a single point, keeping it visible above the sheet.
   void _flyToPoint(LatLng target) {
-    // Create a tiny bounds around the point so fitCamera can handle padding.
-    const offset = 0.001; // ~100m
-    final bounds = LatLngBounds(
-      LatLng(target.latitude - offset, target.longitude - offset),
-      LatLng(target.latitude + offset, target.longitude + offset),
-    );
-    _mapController.fitCamera(
-      CameraFit.bounds(
-        bounds: bounds,
-        maxZoom: 16,
-        padding: EdgeInsets.fromLTRB(
-          40,
-          40,
-          40 + _panelRightPadding(),
-          20 + _sheetBottomPadding(),
-        ),
-      ),
-    );
+    final targetCamera = _dayViewCameraTarget([target]);
+    if (targetCamera == null) return;
+    _animateMapTo(center: targetCamera.center, zoom: targetCamera.zoom);
   }
 
   void _onVisitMarkerTapped(TimelineVisit visit) {
@@ -1709,7 +1807,7 @@ class _MapPageState extends ConsumerState<MapPage>
       _selectedRunId = null;
     });
     final data = _dayViewData;
-    if (data != null) _fitDayViewBounds(data);
+    if (data != null) _fitDayViewBounds(data, animated: true);
   }
 
   void _onBottomSheetVisitTapped(TimelineVisit visit) {
@@ -1738,22 +1836,9 @@ class _MapPageState extends ConsumerState<MapPage>
     final pts = _decodePolylinePoints(run.id, run.summaryPolyline);
     if (pts.length < 2) return;
     try {
-      final bounds = LatLngBounds.fromPoints(pts);
-      if (_isZeroAreaBounds(bounds)) {
-        _flyToPoint(pts.first);
-        return;
-      }
-      _mapController.fitCamera(
-        CameraFit.bounds(
-          bounds: bounds,
-          padding: EdgeInsets.fromLTRB(
-            30,
-            30,
-            30 + _panelRightPadding(),
-            30 + _sheetBottomPadding(),
-          ),
-        ),
-      );
+      final targetCamera = _dayViewCameraTarget(pts);
+      if (targetCamera == null) return;
+      _animateMapTo(center: targetCamera.center, zoom: targetCamera.zoom);
     } catch (_) {}
   }
 
@@ -2419,7 +2504,7 @@ class _DayBottomSheet extends StatelessWidget {
 
     if (isWideLayout) {
       return Container(
-        color: const Color(0xFF222222),
+        color: _timelinePanelColor(context),
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
@@ -2441,8 +2526,8 @@ class _DayBottomSheet extends StatelessWidget {
         alignment: Alignment.bottomCenter,
         child: Container(
           height: panelHeight,
-          decoration: const BoxDecoration(
-            color: Color(0xFF222222),
+          decoration: BoxDecoration(
+            color: _timelinePanelColor(context),
             borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
           ),
           child: ListView(
@@ -2454,7 +2539,9 @@ class _DayBottomSheet extends StatelessWidget {
                   width: 36,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: Colors.white38,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -2477,8 +2564,8 @@ class _DayBottomSheet extends StatelessWidget {
       snapSizes: [minFraction, 0.65],
       builder: (context, scrollController) {
         return Container(
-          decoration: const BoxDecoration(
-            color: Color(0xFF222222),
+          decoration: BoxDecoration(
+            color: _timelinePanelColor(context),
             borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
           ),
           child: ListView(
@@ -2492,7 +2579,9 @@ class _DayBottomSheet extends StatelessWidget {
                   width: 36,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: Colors.white38,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
                     borderRadius: BorderRadius.circular(2),
                   ),
                 ),
@@ -2525,10 +2614,11 @@ class _DayBottomSheet extends StatelessWidget {
     required bool isLoading,
     required String errorText,
   }) {
+    final colorScheme = Theme.of(context).colorScheme;
     return [
       if (hasTimeline)
-        const Divider(
-          color: Colors.white12,
+        Divider(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.45),
           height: 1,
           indent: 16,
           endIndent: 16,
@@ -2537,11 +2627,11 @@ class _DayBottomSheet extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(16, 14, 12, 8),
         child: Row(
           children: [
-            const Expanded(
+            Expanded(
               child: Text(
                 'TIMELINE',
                 style: TextStyle(
-                  color: Colors.white60,
+                  color: colorScheme.onSurfaceVariant,
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 1.1,
@@ -2555,7 +2645,7 @@ class _DayBottomSheet extends StatelessWidget {
                 child: IconButton(
                   padding: EdgeInsets.zero,
                   iconSize: 18,
-                  icon: const Icon(Icons.add, color: Colors.white70),
+                  icon: Icon(Icons.add, color: colorScheme.onSurfaceVariant),
                   tooltip: 'Add location',
                   onPressed: onAddVisit,
                 ),
@@ -2575,12 +2665,12 @@ class _DayBottomSheet extends StatelessWidget {
         Stack(
           children: [
             Positioned(
-              left: 82,
+              left: 84,
               top: 8,
               bottom: 8,
               child: Container(
                 width: 1,
-                color: Colors.white.withValues(alpha: 0.05),
+                color: colorScheme.outlineVariant.withValues(alpha: 0.45),
               ),
             ),
             Column(
@@ -2600,12 +2690,12 @@ class _DayBottomSheet extends StatelessWidget {
           ],
         ),
       if (unassignedImages.isNotEmpty) ...[
-        const Padding(
+        Padding(
           padding: EdgeInsets.fromLTRB(16, 18, 16, 8),
           child: Text(
             'PHOTOS',
             style: TextStyle(
-              color: Colors.white60,
+              color: colorScheme.onSurfaceVariant,
               fontSize: 12,
               fontWeight: FontWeight.w700,
               letterSpacing: 1.1,
@@ -2631,18 +2721,24 @@ class _DayBottomSheet extends StatelessWidget {
           child: Center(
             child: Text(
               errorText,
-              style: const TextStyle(color: Colors.white54, fontSize: 13),
+              style: TextStyle(
+                color: colorScheme.onSurfaceVariant,
+                fontSize: 13,
+              ),
               textAlign: TextAlign.center,
             ),
           ),
         )
       else if (!hasTimeline)
-        const Padding(
+        Padding(
           padding: EdgeInsets.all(24),
           child: Center(
             child: Text(
               'No location details for this day',
-              style: TextStyle(color: Colors.white38, fontSize: 13),
+              style: TextStyle(
+                color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
+                fontSize: 13,
+              ),
             ),
           ),
         ),
@@ -2658,20 +2754,27 @@ class _DayBottomSheet extends StatelessWidget {
   static const double _timelineTimeWidth = 48;
   static const double _timelineMarkerSize = 28;
 
+  Color _timelinePanelColor(BuildContext context) {
+    return Theme.of(context).colorScheme.surfaceContainerLow;
+  }
+
   BoxDecoration _timelineTileDecoration(
     BuildContext context, {
     bool selected = false,
   }) {
     final colorScheme = Theme.of(context).colorScheme;
+    final isDark = colorScheme.brightness == Brightness.dark;
     return BoxDecoration(
       color: selected
-          ? colorScheme.primary.withValues(alpha: 0.14)
-          : Colors.white.withValues(alpha: 0.035),
+          ? colorScheme.primaryContainer.withValues(alpha: isDark ? 0.38 : 0.9)
+          : colorScheme.surfaceContainerHighest.withValues(
+              alpha: isDark ? 0.3 : 0.8,
+            ),
       borderRadius: BorderRadius.circular(16),
       border: Border.all(
         color: selected
             ? colorScheme.primary.withValues(alpha: 0.45)
-            : Colors.white.withValues(alpha: 0.055),
+            : colorScheme.outlineVariant.withValues(alpha: isDark ? 0.3 : 0.55),
       ),
     );
   }
@@ -2679,22 +2782,91 @@ class _DayBottomSheet extends StatelessWidget {
   TextStyle _timelineTimeStyle(BuildContext context, {bool selected = false}) {
     final colorScheme = Theme.of(context).colorScheme;
     return TextStyle(
-      color: selected ? colorScheme.primary : Colors.white54,
+      color: selected ? colorScheme.primary : colorScheme.onSurfaceVariant,
       fontSize: 12,
       fontWeight: FontWeight.w600,
       fontFeatures: const [FontFeature.tabularFigures()],
     );
   }
 
-  TextStyle get _timelineTitleStyle => const TextStyle(
-    color: Colors.white,
+  TextStyle _timelineTitleStyle(BuildContext context) => TextStyle(
+    color: Theme.of(context).colorScheme.onSurface,
     fontSize: 14,
     fontWeight: FontWeight.w600,
     height: 1.2,
   );
 
-  TextStyle get _timelineMetaStyle =>
-      const TextStyle(color: Colors.white54, fontSize: 12, height: 1.3);
+  TextStyle _timelineMetaStyle(BuildContext context) => TextStyle(
+    color: Theme.of(context).colorScheme.onSurfaceVariant,
+    fontSize: 12,
+    height: 1.3,
+  );
+
+  Color _timelineResolvedAccent(BuildContext context, Color accent) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = colorScheme.brightness == Brightness.dark;
+    final luminance = accent.computeLuminance();
+
+    if (!isDark && luminance > 0.55) {
+      return Color.alphaBlend(
+        colorScheme.onSurface.withValues(alpha: 0.34),
+        accent,
+      );
+    }
+    if (isDark && luminance < 0.22) {
+      return Color.alphaBlend(Colors.white.withValues(alpha: 0.18), accent);
+    }
+    return accent;
+  }
+
+  BoxDecoration _timelineMarkerDecoration(
+    BuildContext context, {
+    required Color accent,
+    bool selected = false,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = colorScheme.brightness == Brightness.dark;
+    final resolvedAccent = _timelineResolvedAccent(context, accent);
+    final fill = selected
+        ? resolvedAccent
+        : Color.alphaBlend(
+            resolvedAccent.withValues(alpha: isDark ? 0.22 : 0.14),
+            colorScheme.surfaceContainerHighest,
+          );
+    return BoxDecoration(
+      color: fill,
+      shape: BoxShape.circle,
+      border: Border.all(
+        color: selected
+            ? resolvedAccent
+            : resolvedAccent.withValues(alpha: isDark ? 0.72 : 0.52),
+        width: 1.5,
+      ),
+    );
+  }
+
+  Color _timelineMarkerIconColor(
+    BuildContext context, {
+    required Color accent,
+    bool selected = false,
+  }) {
+    final resolvedAccent = _timelineResolvedAccent(context, accent);
+    if (!selected) return resolvedAccent;
+    return ThemeData.estimateBrightnessForColor(resolvedAccent) ==
+            Brightness.dark
+        ? Colors.white
+        : Colors.black;
+  }
+
+  Color _timelineChevronColor(
+    BuildContext context, {
+    bool highlighted = false,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return highlighted
+        ? colorScheme.primary
+        : colorScheme.onSurfaceVariant.withValues(alpha: 0.72);
+  }
 
   String _formatTime(DateTime dt) {
     final h = dt.hour.toString().padLeft(2, '0');
@@ -2708,59 +2880,115 @@ class _DayBottomSheet extends StatelessWidget {
     return hours > 0 ? '${hours}h ${mins}m' : '${mins}m';
   }
 
+  String _timelineWeekdayLabel(DateTime date) {
+    const labels = <String>['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    return labels[date.weekday - 1];
+  }
+
+  String _timelineDateLabel(DateTime date) {
+    const months = <String>[
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return '${months[date.month - 1]} ${date.day}, ${date.year}';
+  }
+
   Widget _buildSlider(BuildContext context, int safeIndex) {
+    final colorScheme = Theme.of(context).colorScheme;
     final today = DateUtils.dateOnly(DateTime.now());
     final current = DateTime.tryParse(currentDate) ?? today;
     final canGoForward = current.isBefore(today);
+    final weekdayLabel = _timelineWeekdayLabel(current);
+    final dateLabel = _timelineDateLabel(current);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 44,
-            height: 36,
-            child: OutlinedButton(
-              onPressed: onPreviousDate,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.white,
-                side: const BorderSide(color: Colors.white24),
-                padding: EdgeInsets.zero,
-              ),
-              child: const Icon(Icons.chevron_left, size: 20),
-            ),
+      child: Container(
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHigh.withValues(alpha: 0.92),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.55),
           ),
-          Expanded(
-            child: Center(
-              child: GestureDetector(
-                onTap: onDateTapped,
-                child: Text(
-                  currentDate,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    decoration: TextDecoration.underline,
-                    decorationColor: Colors.white38,
+        ),
+        child: Row(
+          children: [
+            IconButton(
+              onPressed: onPreviousDate,
+              icon: const Icon(Icons.chevron_left, size: 22),
+              color: colorScheme.onSurface,
+              splashRadius: 20,
+              tooltip: 'Previous day',
+            ),
+            Expanded(
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: onDateTapped,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 10,
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          weekdayLabel,
+                          style: TextStyle(
+                            color: colorScheme.onSurfaceVariant,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 0.2,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              dateLabel,
+                              style: TextStyle(
+                                color: colorScheme.onSurface,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(
+                              Icons.expand_more,
+                              size: 18,
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-          SizedBox(
-            width: 44,
-            height: 36,
-            child: OutlinedButton(
+            IconButton(
               onPressed: canGoForward ? onNextDate : null,
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Colors.white,
-                disabledForegroundColor: Colors.white24,
-                side: const BorderSide(color: Colors.white24),
-                padding: EdgeInsets.zero,
-              ),
-              child: const Icon(Icons.chevron_right, size: 20),
+              icon: const Icon(Icons.chevron_right, size: 22),
+              color: colorScheme.onSurface,
+              disabledColor: colorScheme.onSurface.withValues(alpha: 0.28),
+              splashRadius: 20,
+              tooltip: 'Next day',
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -2778,11 +3006,16 @@ class _DayBottomSheet extends StatelessWidget {
   }
 
   Widget _buildVisitSegmentTile(BuildContext context, TimelineSegment seg) {
+    final colorScheme = Theme.of(context).colorScheme;
     final isSelected = seg.placeId == selectedVisitPlaceId;
     final hasLocation = seg.placeLat != null && seg.placeLon != null;
     final displayName = seg.placeName ?? seg.placeId ?? 'Unknown';
     final timeLabel = _formatTime(seg.startTime);
     final durationLabel = _formatDuration(seg.durationMinutes);
+    final markerAccent = hasLocation
+        ? colorScheme.primary
+        : colorScheme.outlineVariant;
+    final resolvedMarkerAccent = _timelineResolvedAccent(context, markerAccent);
 
     return GestureDetector(
       onTap: () => onSegmentTapped(seg),
@@ -2804,44 +3037,19 @@ class _DayBottomSheet extends StatelessWidget {
             Container(
               width: _timelineMarkerSize,
               height: _timelineMarkerSize,
-              decoration: BoxDecoration(
-                color: isSelected
-                    ? Theme.of(
-                        context,
-                      ).colorScheme.primary.withValues(alpha: 0.25)
-                    : hasLocation
-                    ? Theme.of(context).colorScheme.primary
-                          .withValues(alpha: 0.8)
-                          .withValues(alpha: 0.25)
-                    : Theme.of(
-                        context,
-                      ).colorScheme.primary.withValues(alpha: 0.2),
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: isSelected
-                      ? Theme.of(context).colorScheme.primary
-                      : hasLocation
-                      ? Theme.of(
-                          context,
-                        ).colorScheme.primary.withValues(alpha: 0.8)
-                      : Theme.of(
-                          context,
-                        ).colorScheme.primary.withValues(alpha: 0.33),
-                  width: 1.5,
-                ),
+              decoration: _timelineMarkerDecoration(
+                context,
+                accent: markerAccent,
+                selected: isSelected,
               ),
               child: Icon(
                 Icons.location_on,
                 size: 15,
-                color: isSelected
-                    ? Theme.of(context).colorScheme.primary
-                    : hasLocation
-                    ? Theme.of(
-                        context,
-                      ).colorScheme.primary.withValues(alpha: 0.8)
-                    : Theme.of(
-                        context,
-                      ).colorScheme.primary.withValues(alpha: 0.33),
+                color: _timelineMarkerIconColor(
+                  context,
+                  accent: markerAccent,
+                  selected: isSelected,
+                ),
               ),
             ),
             const SizedBox(width: 12),
@@ -2851,8 +3059,10 @@ class _DayBottomSheet extends StatelessWidget {
                 children: [
                   Text(
                     displayName,
-                    style: _timelineTitleStyle.copyWith(
-                      color: hasLocation ? Colors.white : Colors.white70,
+                    style: _timelineTitleStyle(context).copyWith(
+                      color: hasLocation
+                          ? resolvedMarkerAccent
+                          : colorScheme.onSurfaceVariant,
                     ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
@@ -2864,16 +3074,19 @@ class _DayBottomSheet extends StatelessWidget {
                         Flexible(
                           child: Text(
                             seg.placeAddress!,
-                            style: _timelineMetaStyle,
+                            style: _timelineMetaStyle(context),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        const Text(
+                        Text(
                           '  ·  ',
-                          style: TextStyle(color: Colors.white24, fontSize: 11),
+                          style: TextStyle(
+                            color: colorScheme.outlineVariant,
+                            fontSize: 11,
+                          ),
                         ),
                       ],
-                      Text(durationLabel, style: _timelineMetaStyle),
+                      Text(durationLabel, style: _timelineMetaStyle(context)),
                     ],
                   ),
                 ],
@@ -2886,7 +3099,10 @@ class _DayBottomSheet extends StatelessWidget {
                 child: IconButton(
                   padding: EdgeInsets.zero,
                   iconSize: 18,
-                  icon: const Icon(Icons.close, color: Colors.white38),
+                  icon: Icon(
+                    Icons.close,
+                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
+                  ),
                   tooltip: 'Delete',
                   onPressed: () => onDeleteSegment!(seg.id!),
                 ),
@@ -2895,9 +3111,7 @@ class _DayBottomSheet extends StatelessWidget {
               Icon(
                 Icons.chevron_right,
                 size: 16,
-                color: isSelected
-                    ? Theme.of(context).colorScheme.primary
-                    : const Color(0x44FFFFFF),
+                color: _timelineChevronColor(context, highlighted: isSelected),
               ),
           ],
         ),
@@ -3036,11 +3250,18 @@ class _DayBottomSheet extends StatelessWidget {
     TimelineSegment seg,
     Map<String, TimelineRun> runById,
   ) {
+    final colorScheme = Theme.of(context).colorScheme;
     final run = seg.matchedRunId != null ? runById[seg.matchedRunId] : null;
     final timeLabel = _formatTime(seg.startTime);
     final hasLocation = seg.startLat != null && seg.startLon != null;
     final isRunning = seg.activityType == 'RUNNING';
-    final activityColor = isRunning ? const Color(0xCCFF9800) : Colors.grey;
+    final activityColor = isRunning
+        ? const Color(0xCCFF9800)
+        : colorScheme.secondary;
+    final resolvedActivityColor = _timelineResolvedAccent(
+      context,
+      activityColor,
+    );
     final activityIcon = _activityTypeIcon(seg.activityType);
     // For running: prefer the Strava run name if matched.
     final typeLabel = isRunning && run != null && run.name.isNotEmpty
@@ -3076,12 +3297,18 @@ class _DayBottomSheet extends StatelessWidget {
             Container(
               width: _timelineMarkerSize,
               height: _timelineMarkerSize,
-              decoration: BoxDecoration(
-                color: activityColor.withValues(alpha: 0.25),
-                shape: BoxShape.circle,
-                border: Border.all(color: activityColor, width: 1.5),
+              decoration: _timelineMarkerDecoration(
+                context,
+                accent: resolvedActivityColor,
               ),
-              child: Icon(activityIcon, size: 15, color: activityColor),
+              child: Icon(
+                activityIcon,
+                size: 15,
+                color: _timelineMarkerIconColor(
+                  context,
+                  accent: resolvedActivityColor,
+                ),
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -3090,7 +3317,9 @@ class _DayBottomSheet extends StatelessWidget {
                 children: [
                   Text(
                     typeLabel,
-                    style: _timelineTitleStyle.copyWith(color: activityColor),
+                    style: _timelineTitleStyle(
+                      context,
+                    ).copyWith(color: resolvedActivityColor),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -3098,7 +3327,7 @@ class _DayBottomSheet extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       subtitleParts.join('  ·  '),
-                      style: _timelineMetaStyle,
+                      style: _timelineMetaStyle(context),
                     ),
                   ],
                 ],
@@ -3111,16 +3340,19 @@ class _DayBottomSheet extends StatelessWidget {
                 child: IconButton(
                   padding: EdgeInsets.zero,
                   iconSize: 16,
-                  icon: const Icon(Icons.close, color: Colors.white30),
+                  icon: Icon(
+                    Icons.close,
+                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                  ),
                   tooltip: 'Delete',
                   onPressed: () => onDeleteSegment!(seg.id!),
                 ),
               )
             else if (hasLocation)
-              const Icon(
+              Icon(
                 Icons.chevron_right,
                 size: 16,
-                color: Color(0x44FFFFFF),
+                color: _timelineChevronColor(context),
               ),
           ],
         ),
@@ -3130,6 +3362,7 @@ class _DayBottomSheet extends StatelessWidget {
 
   Widget _buildRunEntryTile(BuildContext context, TimelineRun run) {
     const color = Color(0xCCF79C70);
+    final resolvedRunColor = _timelineResolvedAccent(context, color);
     final timeLabel = run.startTime != null ? _formatTime(run.startTime!) : '';
     final isSelected = run.id == selectedRunId;
 
@@ -3166,12 +3399,20 @@ class _DayBottomSheet extends StatelessWidget {
             Container(
               width: _timelineMarkerSize,
               height: _timelineMarkerSize,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.25),
-                shape: BoxShape.circle,
-                border: Border.all(color: color, width: 1.5),
+              decoration: _timelineMarkerDecoration(
+                context,
+                accent: resolvedRunColor,
+                selected: isSelected,
               ),
-              child: Icon(Icons.directions_run, size: 15, color: color),
+              child: Icon(
+                Icons.directions_run,
+                size: 15,
+                color: _timelineMarkerIconColor(
+                  context,
+                  accent: resolvedRunColor,
+                  selected: isSelected,
+                ),
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -3180,7 +3421,9 @@ class _DayBottomSheet extends StatelessWidget {
                 children: [
                   Text(
                     run.name.isNotEmpty ? run.name : 'Run',
-                    style: _timelineTitleStyle.copyWith(color: color),
+                    style: _timelineTitleStyle(
+                      context,
+                    ).copyWith(color: resolvedRunColor),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -3188,7 +3431,7 @@ class _DayBottomSheet extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       subtitleParts.join('  ·  '),
-                      style: _timelineMetaStyle,
+                      style: _timelineMetaStyle(context),
                     ),
                   ],
                 ],
@@ -3198,7 +3441,9 @@ class _DayBottomSheet extends StatelessWidget {
               Icon(
                 Icons.chevron_right,
                 size: 16,
-                color: color.withValues(alpha: 0.5),
+                color: isSelected
+                    ? resolvedRunColor
+                    : _timelineChevronColor(context),
               ),
           ],
         ),
@@ -3210,7 +3455,9 @@ class _DayBottomSheet extends StatelessWidget {
     BuildContext context,
     TimelineCalendarEvent event,
   ) {
+    final colorScheme = Theme.of(context).colorScheme;
     const color = Color(0xFFA7F3D0);
+    final resolvedEventColor = _timelineResolvedAccent(context, color);
     final timeLabel = event.start != null ? _formatTime(event.start!) : '';
     final subtitleParts = <String>[];
     if (event.isAllDay) {
@@ -3247,15 +3494,18 @@ class _DayBottomSheet extends StatelessWidget {
             Container(
               width: _timelineMarkerSize,
               height: _timelineMarkerSize,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.18),
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: color.withValues(alpha: 0.8),
-                  width: 1.5,
+              decoration: _timelineMarkerDecoration(
+                context,
+                accent: resolvedEventColor,
+              ),
+              child: Icon(
+                Icons.event_rounded,
+                size: 15,
+                color: _timelineMarkerIconColor(
+                  context,
+                  accent: resolvedEventColor,
                 ),
               ),
-              child: Icon(Icons.event_rounded, size: 15, color: color),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -3270,7 +3520,9 @@ class _DayBottomSheet extends StatelessWidget {
                           event.summary.isNotEmpty
                               ? event.summary
                               : 'Calendar event',
-                          style: _timelineTitleStyle,
+                          style: _timelineTitleStyle(
+                            context,
+                          ).copyWith(color: resolvedEventColor),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -3283,13 +3535,14 @@ class _DayBottomSheet extends StatelessWidget {
                             vertical: 3,
                           ),
                           decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.08),
+                            color: colorScheme.surfaceContainerHighest
+                                .withValues(alpha: 0.85),
                             borderRadius: BorderRadius.circular(999),
                           ),
                           child: Text(
                             sourceBadge,
-                            style: const TextStyle(
-                              color: Colors.white60,
+                            style: TextStyle(
+                              color: colorScheme.onSurfaceVariant,
                               fontSize: 10,
                               fontWeight: FontWeight.w700,
                             ),
@@ -3302,7 +3555,7 @@ class _DayBottomSheet extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       subtitleParts.join('  ·  '),
-                      style: _timelineMetaStyle,
+                      style: _timelineMetaStyle(context),
                       overflow: TextOverflow.ellipsis,
                       maxLines: 2,
                     ),
@@ -3310,7 +3563,11 @@ class _DayBottomSheet extends StatelessWidget {
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right, size: 16, color: Color(0x44FFFFFF)),
+            Icon(
+              Icons.chevron_right,
+              size: 16,
+              color: _timelineChevronColor(context),
+            ),
           ],
         ),
       ),

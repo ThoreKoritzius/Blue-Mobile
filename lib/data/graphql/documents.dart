@@ -32,7 +32,7 @@ query StoriesDay($day: String!) {
   stories {
     day(day: $day) {
       story {
-        date place names description food sport highlightImage keywords country latitude longitude
+        date place names description highlightImage keywords country latitude longitude
       }
       run {
         id name type distance movingTime elapsedTime averageSpeed maxSpeed totalElevationGain startDateLocal startTime source sourceLabel
@@ -53,7 +53,7 @@ query StoriesList($first: Int!, $after: String) {
       }
       edges {
         node {
-          date place names description food sport highlightImage keywords country latitude longitude
+          date place names description highlightImage keywords country latitude longitude
         }
       }
     }
@@ -200,13 +200,147 @@ query RunDetail($runId: String!) {
 ''';
 
   static const searchImages = r'''
-query SearchImages($input: SearchInput!, $first: Int!) {
+query SearchImages($input: UnifiedSearchInput!, $first: Int!, $after: String) {
   search {
-    query(input: $input, first: $first) {
+    unified(input: $input, first: $first, after: $after) {
       edges {
         node
       }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
       totalCount
+    }
+  }
+}
+''';
+
+  static const searchUnified = r'''
+query SearchUnified($input: UnifiedSearchInput!, $first: Int!, $after: String) {
+  search {
+    unified(input: $input, first: $first, after: $after) {
+      totalCount
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      edges {
+        cursor
+        node {
+          type
+          id
+          date
+          title
+          subtitle
+          score
+          matchKinds
+          locationLabel
+          personLabel
+          story {
+            date
+            place
+            names
+            description
+            highlightImage
+            keywords
+            country
+            latitude
+            longitude
+          }
+          run {
+            id
+            name
+            type
+            distance
+            movingTime
+            averageSpeed
+            startDateLocal
+            summaryPolyline
+            startTime
+            source
+            sourceLabel
+          }
+          file {
+            path
+            date
+            favorite
+            imageTags
+            type
+            size
+            gps
+          }
+          timeline {
+            id
+            segmentType
+            startTime
+            endTime
+            durationMinutes
+            placeName
+            placeAddress
+            placeLat
+            placeLon
+            activityType
+            startLat
+            startLon
+            endLat
+            endLon
+            distanceMeters
+            source
+          }
+          calendarEvent {
+            id
+            summary
+            description
+            location
+            status
+            start
+            end
+            isAllDay
+            htmlLink
+            source
+            sourceName
+            sourceId
+          }
+          weather {
+            date
+            locationLabel
+            weatherCode
+            temperatureMaxC
+            temperatureMinC
+            source
+            sourceLabel
+          }
+          activity {
+            date
+            moveMinutes
+            distanceM
+            stepCount
+            cyclingDurationMs
+            walkingDurationMs
+            runningDurationMs
+            source
+            sourceLabel
+          }
+          personRecord {
+            id
+            firstName
+            lastName
+            birthDate
+            deathDate
+            relation
+            profession
+            studyProgram
+            languages
+            email
+            phone
+            address
+            notes
+            biography
+            photoPath
+          }
+        }
+      }
     }
   }
 }
@@ -301,7 +435,7 @@ query DayBundle($day: String!, $filesFirst: Int!, $runsFirst: Int!) {
   stories {
     day(day: $day) {
       story {
-        date place names description food sport highlightImage keywords country latitude longitude
+        date place names description highlightImage keywords country latitude longitude
       }
       run {
         id name type distance movingTime elapsedTime averageSpeed maxSpeed totalElevationGain startDateLocal startTime

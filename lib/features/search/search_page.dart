@@ -5,14 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/config/app_config.dart';
-import '../../core/utils/breakpoints.dart';
 import '../../core/utils/date_format.dart';
 import '../../core/widgets/protected_network_image.dart';
 import '../../data/models/memory_search_result_model.dart';
-import '../../data/models/person_model.dart';
-import '../../data/models/story_day_model.dart';
-import '../../data/repositories/map_repository.dart';
-import '../../data/repositories/search_repository.dart';
 import '../../providers.dart';
 import '../persons/person_detail_page.dart';
 
@@ -23,13 +18,12 @@ class SearchPage extends ConsumerStatefulWidget {
   ConsumerState<SearchPage> createState() => _SearchPageState();
 }
 
-class _TabSearchState {
-  const _TabSearchState({
-    required this.page,
-    required this.pageSize,
-    required this.total,
-    required this.totalPages,
+class _SearchState {
+  const _SearchState({
     required this.items,
+    required this.totalCount,
+    required this.hasNextPage,
+    required this.endCursor,
     required this.loading,
     required this.loadingMore,
     required this.error,
@@ -38,11 +32,10 @@ class _TabSearchState {
     required this.offlineMessage,
   });
 
-  final int page;
-  final int pageSize;
-  final int total;
-  final int totalPages;
   final List<MemorySearchResultModel> items;
+  final int totalCount;
+  final bool hasNextPage;
+  final String? endCursor;
   final bool loading;
   final bool loadingMore;
   final String error;
@@ -50,13 +43,12 @@ class _TabSearchState {
   final bool isOfflineFallback;
   final String? offlineMessage;
 
-  factory _TabSearchState.empty({required int pageSize}) {
-    return _TabSearchState(
-      page: 1,
-      pageSize: pageSize,
-      total: 0,
-      totalPages: 1,
-      items: const [],
+  factory _SearchState.empty() {
+    return const _SearchState(
+      items: <MemorySearchResultModel>[],
+      totalCount: 0,
+      hasNextPage: false,
+      endCursor: null,
       loading: false,
       loadingMore: false,
       error: '',
@@ -66,12 +58,11 @@ class _TabSearchState {
     );
   }
 
-  _TabSearchState copyWith({
-    int? page,
-    int? pageSize,
-    int? total,
-    int? totalPages,
+  _SearchState copyWith({
     List<MemorySearchResultModel>? items,
+    int? totalCount,
+    bool? hasNextPage,
+    String? endCursor,
     bool? loading,
     bool? loadingMore,
     String? error,
@@ -79,12 +70,11 @@ class _TabSearchState {
     bool? isOfflineFallback,
     String? offlineMessage,
   }) {
-    return _TabSearchState(
-      page: page ?? this.page,
-      pageSize: pageSize ?? this.pageSize,
-      total: total ?? this.total,
-      totalPages: totalPages ?? this.totalPages,
+    return _SearchState(
       items: items ?? this.items,
+      totalCount: totalCount ?? this.totalCount,
+      hasNextPage: hasNextPage ?? this.hasNextPage,
+      endCursor: endCursor ?? this.endCursor,
       loading: loading ?? this.loading,
       loadingMore: loadingMore ?? this.loadingMore,
       error: error ?? this.error,
@@ -95,283 +85,140 @@ class _TabSearchState {
   }
 }
 
-enum _SearchFacet { place, people, tags, text }
+enum _SearchFilterPreset {
+  all,
+  places,
+  days,
+  images,
+  runs,
+  people,
+  timeline,
+  calendar,
+}
 
-class _SearchPageState extends ConsumerState<SearchPage>
-    with SingleTickerProviderStateMixin {
-  static const _daysPageSize = 24;
-  static const _imagesPageSize = 36;
+class _SearchPageState extends ConsumerState<SearchPage> {
+  static const int _pageSize = 16;
 
   final _controller = TextEditingController();
-  final _daysScrollController = ScrollController();
-  final _imagesScrollController = ScrollController();
-
-  late final TabController _tabController;
+  final _scrollController = ScrollController();
 
   Timer? _debounce;
   int _queryGeneration = 0;
   String _activeQuery = '';
-  bool _peopleLoading = false;
-  List<PersonModel> _peopleHits = const [];
-  Set<_SearchFacet> _selectedFacets = {
-    _SearchFacet.place,
-    _SearchFacet.people,
-    _SearchFacet.tags,
-    _SearchFacet.text,
-  };
-  late Map<MemorySearchMode, _TabSearchState> _tabStates;
-
-  // Near tab
-  bool _nearLoading = false;
-  String _nearError = '';
-  WhenWasINearResult? _nearResult;
-  Map<String, StoryDayModel> _nearDayCache = {};
+  _SearchFilterPreset _activePreset = _SearchFilterPreset.all;
+  _SearchState _state = _SearchState.empty();
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
-    _tabStates = {
-      MemorySearchMode.days: _TabSearchState.empty(pageSize: _daysPageSize),
-      MemorySearchMode.images: _TabSearchState.empty(pageSize: _imagesPageSize),
-    };
-    _daysScrollController.addListener(
-      () => _handleScroll(MemorySearchMode.days),
-    );
-    _imagesScrollController.addListener(
-      () => _handleScroll(MemorySearchMode.images),
-    );
-    _tabController.addListener(_handleTabChanged);
+    _scrollController.addListener(_handleScroll);
   }
 
   @override
   void dispose() {
     _debounce?.cancel();
-    _tabController
-      ..removeListener(_handleTabChanged)
-      ..dispose();
     _controller.dispose();
-    _daysScrollController.dispose();
-    _imagesScrollController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
-  MemorySearchMode get _activeMode => _tabController.index == 0
-      ? MemorySearchMode.days
-      : MemorySearchMode.images;
+  Set<MemorySearchResultType> get _selectedTypes => switch (_activePreset) {
+    _SearchFilterPreset.all => const <MemorySearchResultType>{
+      MemorySearchResultType.story,
+      MemorySearchResultType.run,
+      MemorySearchResultType.timeline,
+      MemorySearchResultType.calendar,
+      MemorySearchResultType.weather,
+      MemorySearchResultType.activity,
+      MemorySearchResultType.person,
+    },
+    _SearchFilterPreset.places => const <MemorySearchResultType>{
+      MemorySearchResultType.story,
+      MemorySearchResultType.timeline,
+      MemorySearchResultType.calendar,
+      MemorySearchResultType.weather,
+    },
+    _SearchFilterPreset.days => const <MemorySearchResultType>{
+      MemorySearchResultType.story,
+      MemorySearchResultType.activity,
+      MemorySearchResultType.weather,
+    },
+    _SearchFilterPreset.images => const <MemorySearchResultType>{
+      MemorySearchResultType.file,
+    },
+    _SearchFilterPreset.runs => const <MemorySearchResultType>{
+      MemorySearchResultType.run,
+    },
+    _SearchFilterPreset.people => const <MemorySearchResultType>{
+      MemorySearchResultType.person,
+      MemorySearchResultType.file,
+    },
+    _SearchFilterPreset.timeline => const <MemorySearchResultType>{
+      MemorySearchResultType.timeline,
+    },
+    _SearchFilterPreset.calendar => const <MemorySearchResultType>{
+      MemorySearchResultType.calendar,
+    },
+  };
 
-  bool get _isNearTab => _tabController.index == 2;
-
-  void _handleTabChanged() {
-    if (_tabController.indexIsChanging || !mounted) return;
-    if (_isNearTab) {
-      if (_activeQuery.isNotEmpty && _nearResult == null && !_nearLoading) {
-        _runNearSearch(_activeQuery, generation: _queryGeneration);
-      }
-      setState(() {});
-      return;
-    }
-    final state = _tabStates[_activeMode]!;
-    if (_activeQuery.isEmpty || state.hasRequested) {
-      setState(() {});
-      return;
-    }
-    _runSearch(_activeQuery, mode: _activeMode, reset: true);
-  }
+  bool get _includeContext =>
+      _activePreset == _SearchFilterPreset.days ||
+      _activePreset == _SearchFilterPreset.places;
 
   void _onChanged(String value) {
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 450), () {
+    _debounce = Timer(const Duration(milliseconds: 400), () {
       _runNewQuery(value.trim());
     });
     setState(() {});
   }
 
+  void _setPreset(_SearchFilterPreset preset) {
+    if (_activePreset == preset) return;
+    setState(() {
+      _activePreset = preset;
+      _state = _SearchState.empty();
+    });
+    if (_activeQuery.isNotEmpty) {
+      _queryGeneration += 1;
+      _runSearch(_activeQuery, reset: true, generation: _queryGeneration);
+    }
+  }
+
   void _runNewQuery(String query) {
     _queryGeneration += 1;
-
     if (query.isEmpty) {
       setState(() {
         _activeQuery = '';
-        _peopleHits = const [];
-        _peopleLoading = false;
-        _tabStates = {
-          MemorySearchMode.days: _TabSearchState.empty(pageSize: _daysPageSize),
-          MemorySearchMode.images: _TabSearchState.empty(
-            pageSize: _imagesPageSize,
-          ),
-        };
+        _state = _SearchState.empty();
       });
       return;
     }
-
     setState(() {
       _activeQuery = query;
-      _peopleHits = const [];
-      _peopleLoading = query.length >= 2;
-      _nearResult = null;
-      _nearError = '';
-      _nearLoading = false;
-      _tabStates = {
-        MemorySearchMode.days: _TabSearchState.empty(pageSize: _daysPageSize),
-        MemorySearchMode.images: _TabSearchState.empty(
-          pageSize: _imagesPageSize,
-        ),
-      };
+      _state = _SearchState.empty();
     });
-
-    if (_isNearTab) {
-      _runNearSearch(query, generation: _queryGeneration);
-    } else {
-      _runSearch(
-        query,
-        mode: _activeMode,
-        reset: true,
-        generation: _queryGeneration,
-      );
-    }
-    _runPeopleSearch(query, generation: _queryGeneration);
-  }
-
-  Future<void> _runPeopleSearch(String query, {required int generation}) async {
-    if (query.length < 2) {
-      if (!mounted || generation != _queryGeneration) return;
-      setState(() {
-        _peopleHits = const [];
-        _peopleLoading = false;
-      });
-      return;
-    }
-    try {
-      final people = await ref
-          .read(personRepositoryProvider)
-          .search(query, first: 8);
-      if (!mounted || generation != _queryGeneration || query != _activeQuery) {
-        return;
-      }
-      setState(() {
-        _peopleHits = people;
-        _peopleLoading = false;
-      });
-    } catch (_) {
-      if (!mounted || generation != _queryGeneration || query != _activeQuery) {
-        return;
-      }
-      setState(() {
-        _peopleHits = const [];
-        _peopleLoading = false;
-      });
-    }
-  }
-
-  Future<void> _runNearSearch(String query, {required int generation}) async {
-    if (query.isEmpty) return;
-    setState(() {
-      _nearLoading = true;
-      _nearError = '';
-      _nearResult = null;
-      _nearDayCache = {};
-    });
-    try {
-      final result = await ref.read(mapRepositoryProvider).whenWasINear(query);
-      if (!mounted || generation != _queryGeneration) return;
-
-      // Populate cache from locally stored stories — no extra network calls.
-      final cachedDays = await ref
-          .read(storiesRepositoryProvider)
-          .getCachedRecentDays(limit: 9999);
-      if (!mounted || generation != _queryGeneration) return;
-
-      final cache = <String, StoryDayModel>{};
-      for (final day in cachedDays) {
-        cache[day.date] = day;
-      }
-
-      setState(() {
-        _nearResult = result;
-        _nearDayCache = cache;
-        _nearLoading = false;
-      });
-    } catch (error) {
-      if (!mounted || generation != _queryGeneration) return;
-      setState(() {
-        _nearError = error.toString().replaceFirst('Exception: ', '');
-        _nearLoading = false;
-      });
-    }
-  }
-
-  List<String> get _selectedColumns {
-    final columns = <String>['date'];
-    if (_selectedFacets.contains(_SearchFacet.place)) {
-      columns.addAll(['place', 'country']);
-    }
-    if (_selectedFacets.contains(_SearchFacet.people)) {
-      columns.add('names');
-    }
-    if (_selectedFacets.contains(_SearchFacet.tags)) {
-      columns.addAll(['keywords', 'image_tags']);
-    }
-    if (_selectedFacets.contains(_SearchFacet.text)) {
-      columns.addAll(['description', 'food', 'sport', 'path']);
-    }
-    return columns.toSet().toList();
-  }
-
-  void _toggleFacet(_SearchFacet facet) {
-    final next = {..._selectedFacets};
-    if (next.contains(facet)) {
-      if (next.length == 1) return;
-      next.remove(facet);
-    } else {
-      next.add(facet);
-    }
-    setState(() {
-      _selectedFacets = next;
-    });
-    if (_activeQuery.isEmpty) return;
-    _queryGeneration += 1;
-    setState(() {
-      _tabStates = {
-        MemorySearchMode.days: _TabSearchState.empty(pageSize: _daysPageSize),
-        MemorySearchMode.images: _TabSearchState.empty(
-          pageSize: _imagesPageSize,
-        ),
-      };
-    });
-    _runSearch(
-      _activeQuery,
-      mode: _activeMode,
-      reset: true,
-      generation: _queryGeneration,
-    );
+    _runSearch(query, reset: true, generation: _queryGeneration);
   }
 
   Future<void> _runSearch(
     String query, {
-    required MemorySearchMode mode,
     required bool reset,
     int? generation,
   }) async {
     if (query.isEmpty) return;
-    final currentState = _tabStates[mode]!;
-    if (currentState.loading || currentState.loadingMore) return;
+    if (_state.loading || _state.loadingMore) return;
 
     final requestGeneration = generation ?? _queryGeneration;
-    final nextPage = reset ? 1 : (currentState.page + 1);
-
     setState(() {
-      _tabStates = {
-        ..._tabStates,
-        mode: currentState.copyWith(
-          loading: reset,
-          loadingMore: !reset,
-          error: '',
-          hasRequested: true,
-          isOfflineFallback: false,
-          offlineMessage: null,
-        ),
-      };
+      _state = _state.copyWith(
+        loading: reset,
+        loadingMore: !reset,
+        error: '',
+        hasRequested: true,
+        isOfflineFallback: false,
+        offlineMessage: null,
+      );
     });
 
     try {
@@ -379,35 +226,29 @@ class _SearchPageState extends ConsumerState<SearchPage>
           .read(searchRepositoryProvider)
           .searchMemories(
             query,
-            mode: mode,
-            page: nextPage,
-            pageSize: currentState.pageSize,
-            columns: _selectedColumns,
+            types: _selectedTypes,
+            after: reset ? null : _state.endCursor,
+            first: _pageSize,
+            includeContext: _includeContext,
           );
       if (!mounted ||
           requestGeneration != _queryGeneration ||
           query != _activeQuery) {
         return;
       }
-
-      final existing = _tabStates[mode]!;
       setState(() {
-        _tabStates = {
-          ..._tabStates,
-          mode: existing.copyWith(
-            page: page.page,
-            pageSize: page.pageSize,
-            total: page.total,
-            totalPages: page.totalPages,
-            items: reset ? page.items : [...existing.items, ...page.items],
-            loading: false,
-            loadingMore: false,
-            error: '',
-            hasRequested: true,
-            isOfflineFallback: page.isOfflineFallback,
-            offlineMessage: page.offlineMessage,
-          ),
-        };
+        _state = _state.copyWith(
+          items: reset ? page.items : [..._state.items, ...page.items],
+          totalCount: page.totalCount,
+          hasNextPage: page.hasNextPage,
+          endCursor: page.endCursor,
+          loading: false,
+          loadingMore: false,
+          error: '',
+          hasRequested: true,
+          isOfflineFallback: page.isOfflineFallback,
+          offlineMessage: page.offlineMessage,
+        );
       });
     } catch (error) {
       if (!mounted ||
@@ -415,692 +256,366 @@ class _SearchPageState extends ConsumerState<SearchPage>
           query != _activeQuery) {
         return;
       }
-      final existing = _tabStates[mode]!;
       setState(() {
-        _tabStates = {
-          ..._tabStates,
-          mode: existing.copyWith(
-            loading: false,
-            loadingMore: false,
-            error: error.toString().replaceFirst('Exception: ', ''),
-            hasRequested: true,
-            isOfflineFallback: false,
-            offlineMessage: null,
-          ),
-        };
+        _state = _state.copyWith(
+          loading: false,
+          loadingMore: false,
+          error: error.toString().replaceFirst('Exception: ', ''),
+          hasRequested: true,
+        );
       });
     }
   }
 
-  void _handleScroll(MemorySearchMode mode) {
-    if (_activeMode != mode || _activeQuery.isEmpty) return;
-    final controller = _scrollControllerForMode(mode);
-    final state = _tabStates[mode]!;
-    if (state.loading || state.loadingMore || state.page >= state.totalPages) {
+  void _handleScroll() {
+    if (_activeQuery.isEmpty ||
+        _state.loading ||
+        _state.loadingMore ||
+        !_state.hasNextPage) {
       return;
     }
-    if (!controller.hasClients) return;
-    final remaining = controller.position.extentAfter;
-    final threshold = controller.position.viewportDimension * 1.25;
+    if (!_scrollController.hasClients) return;
+    final remaining = _scrollController.position.extentAfter;
+    final threshold = _scrollController.position.viewportDimension * 1.25;
     if (remaining < threshold) {
-      _runSearch(_activeQuery, mode: mode, reset: false);
+      _runSearch(_activeQuery, reset: false);
     }
-  }
-
-  ScrollController _scrollControllerForMode(MemorySearchMode mode) {
-    return mode == MemorySearchMode.days
-        ? _daysScrollController
-        : _imagesScrollController;
   }
 
   void _openResult(MemorySearchResultModel item) {
-    if (item.date.isNotEmpty) {
-      ref.read(selectedDateProvider.notifier).state = parseYmd(item.date);
+    if (item.type == MemorySearchResultType.person &&
+        item.personRecord != null) {
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => PersonDetailPage(person: item.personRecord!),
+        ),
+      );
+      return;
     }
+    final date = item.effectiveDate;
+    if (date.isEmpty) return;
+    ref.read(selectedDateProvider.notifier).state = parseYmd(date);
     ref.read(selectedTabProvider.notifier).state = 0;
     Navigator.of(context).pop();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final authHeaders = _authHeaders();
-    final activeState = _tabStates[_activeMode]!;
-    final screenWidth = MediaQuery.sizeOf(context).width;
-    final isWide = screenWidth >= Breakpoints.compact;
-
-    return Scaffold(
-      appBar: AppBar(
-        toolbarHeight: isWide ? 72 : 88,
-        titleSpacing: 0,
-        title: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 720),
-            child: Padding(
-              padding: const EdgeInsets.only(right: 12, top: 8, bottom: 8),
-              child: TextField(
-                controller: _controller,
-                autofocus: true,
-                onChanged: _onChanged,
-                textInputAction: TextInputAction.search,
-                onSubmitted: (value) => _runNewQuery(value.trim()),
-                decoration: InputDecoration(
-                  hintText: 'Search memories',
-                  prefixIcon: const Icon(Icons.search),
-                  suffixIcon: _controller.text.isEmpty
-                      ? null
-                      : IconButton(
-                          onPressed: () {
-                            _controller.clear();
-                            _runNewQuery('');
-                          },
-                          icon: const Icon(Icons.close),
-                        ),
-                ),
-              ),
-            ),
-          ),
-        ),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(48),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 720),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: TabBar(
-                    controller: _tabController,
-                    indicator: BoxDecoration(
-                      color: colorScheme.surface,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    indicatorSize: TabBarIndicatorSize.tab,
-                    labelColor: colorScheme.onSurface,
-                    unselectedLabelColor: colorScheme.onSurfaceVariant,
-                    dividerColor: Colors.transparent,
-                    tabs: [
-                      Tab(
-                        text:
-                            'Days (${_tabStates[MemorySearchMode.days]!.total})',
-                      ),
-                      Tab(
-                        text:
-                            'Images (${_tabStates[MemorySearchMode.images]!.total})',
-                      ),
-                      Tab(
-                        text: _nearResult != null
-                            ? 'Near (${_nearResult!.dates.length})'
-                            : 'Near',
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 960),
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: SizedBox(
-                        height: 34,
-                        child: ListView(
-                          scrollDirection: Axis.horizontal,
-                          children: [
-                            _buildFacetChip(theme, 'Places', _SearchFacet.place),
-                            const SizedBox(width: 8),
-                            _buildFacetChip(
-                                theme, 'People', _SearchFacet.people),
-                            const SizedBox(width: 8),
-                            _buildFacetChip(theme, 'Tags', _SearchFacet.tags),
-                            const SizedBox(width: 8),
-                            _buildFacetChip(theme, 'Text', _SearchFacet.text),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      _activeQuery.isEmpty ? '' : '${activeState.total}',
-                      style: theme.textTheme.labelLarge?.copyWith(
-                        color: colorScheme.onSurfaceVariant,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    if (activeState.loading) ...[
-                      const SizedBox(width: 8),
-                      SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: colorScheme.primary,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              if (_activeQuery.isNotEmpty) _buildPeopleHitsSection(theme),
-              if (activeState.isOfflineFallback &&
-                  (activeState.offlineMessage?.isNotEmpty ?? false))
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: colorScheme.secondaryContainer,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.offline_bolt_rounded,
-                            size: 16,
-                            color: colorScheme.onSecondaryContainer,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              activeState.offlineMessage!,
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: colorScheme.onSecondaryContainer,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              Expanded(
-                child: TabBarView(
-                  controller: _tabController,
-                  children: [
-                    _buildTabBody(
-                      mode: MemorySearchMode.days,
-                      state: _tabStates[MemorySearchMode.days]!,
-                      authHeaders: authHeaders,
-                    ),
-                    _buildTabBody(
-                      mode: MemorySearchMode.images,
-                      state: _tabStates[MemorySearchMode.images]!,
-                      authHeaders: authHeaders,
-                    ),
-                    _buildNearBody(),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+  void _openResultOnMap(MemorySearchResultModel item) {
+    final date = item.effectiveDate;
+    if (date.isEmpty) return;
+    ref.read(selectedDateProvider.notifier).state = parseYmd(date);
+    ref.read(selectedTabProvider.notifier).state = 4;
+    Navigator.of(context).pop();
   }
 
-  Widget _buildFacetChip(ThemeData theme, String label, _SearchFacet facet) {
-    final selected = _selectedFacets.contains(facet);
-    return FilterChip(
-      label: Text(label),
-      selected: selected,
-      showCheckmark: false,
-      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
-      selectedColor: theme.colorScheme.secondaryContainer,
-      backgroundColor: theme.colorScheme.surfaceContainerHighest,
-      labelStyle: TextStyle(
-        color: selected
-            ? theme.colorScheme.onSecondaryContainer
-            : theme.colorScheme.onSurfaceVariant,
-        fontWeight: FontWeight.w500,
-      ),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
-      onSelected: (_) => _toggleFacet(facet),
-    );
-  }
-
-  Widget _buildPeopleHitsSection(ThemeData theme) {
-    if (_peopleLoading) {
-      return Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-        child: LinearProgressIndicator(
-          minHeight: 2,
-          color: theme.colorScheme.primary,
-          backgroundColor: theme.colorScheme.surfaceContainerHighest,
-        ),
-      );
+  String _resultSummary() {
+    if (_state.loading && _state.items.isEmpty) {
+      return 'Searching...';
     }
-    if (_peopleHits.isEmpty) {
-      return const SizedBox.shrink();
+    if (_state.items.isEmpty) {
+      return 'No results';
     }
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      child: SizedBox(
-        height: 42,
-        child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          itemCount: _peopleHits.length,
-          separatorBuilder: (_, __) => const SizedBox(width: 8),
-          itemBuilder: (context, index) {
-            final person = _peopleHits[index];
-            final initials = [
-              if (person.firstName.trim().isNotEmpty)
-                person.firstName.trim()[0].toUpperCase(),
-              if (person.lastName.trim().isNotEmpty)
-                person.lastName.trim()[0].toUpperCase(),
-            ].join();
-            return ActionChip(
-              avatar: CircleAvatar(
-                radius: 12,
-                backgroundColor: theme.colorScheme.primary,
-                child: Text(
-                  initials.isEmpty ? '?' : initials,
-                  style: TextStyle(
-                    color: theme.colorScheme.onPrimary,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              label: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 140),
-                child: Text(
-                  person.displayName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              backgroundColor: theme.colorScheme.surfaceContainerHighest,
-              side: BorderSide(color: theme.colorScheme.outlineVariant),
-              labelStyle: TextStyle(
-                color: theme.colorScheme.onSurface,
-                fontWeight: FontWeight.w500,
-              ),
-              onPressed: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => PersonDetailPage(person: person),
-                  ),
-                );
-              },
-            );
-          },
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTabBody({
-    required MemorySearchMode mode,
-    required _TabSearchState state,
-    required Map<String, String> authHeaders,
-  }) {
-    if (_activeQuery.isEmpty) {
-      return _SearchBlankState(mode: mode);
+    if (_state.hasNextPage) {
+      return 'Showing ${_state.items.length} top results';
     }
-
-    if (state.error.isNotEmpty) {
-      return _SearchErrorState(
-        message: state.error,
-        onRetry: () => _runSearch(_activeQuery, mode: mode, reset: true),
-      );
-    }
-
-    if (state.loading && state.items.isEmpty) {
-      return mode == MemorySearchMode.days
-          ? const _DaysSkeletonList()
-          : const _ImagesSkeletonGrid();
-    }
-
-    if (state.hasRequested && state.items.isEmpty) {
-      return _SearchEmptyState(query: _activeQuery, mode: mode);
-    }
-
-    if (mode == MemorySearchMode.days) {
-      return ListView.builder(
-        controller: _scrollControllerForMode(mode),
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
-        itemCount: state.items.length + (state.loadingMore ? 1 : 0),
-        itemBuilder: (context, index) {
-          if (index >= state.items.length) {
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 18),
-              child: Center(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.2,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
-                  ),
-                ),
-              ),
-            );
-          }
-          return _SearchResultCard(
-            item: state.items[index],
-            authHeaders: authHeaders,
-            authenticateUrl: _authenticatedUrl,
-            onTap: () => _openResult(state.items[index]),
-          );
-        },
-      );
-    }
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        final crossAxisCount = width >= Breakpoints.medium
-            ? 4
-            : width >= Breakpoints.compact
-                ? 3
-                : 2;
-
-        return GridView.builder(
-          controller: _scrollControllerForMode(mode),
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: crossAxisCount,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            childAspectRatio: 0.82,
-          ),
-          itemCount: state.items.length + (state.loadingMore ? crossAxisCount : 0),
-          itemBuilder: (context, index) {
-            if (index >= state.items.length) {
-              return DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Center(
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.2,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
-                  ),
-                ),
-              );
-            }
-            return _ImageSearchTile(
-              item: state.items[index],
-              authHeaders: authHeaders,
-              authenticateUrl: _authenticatedUrl,
-              onTap: () => _openResult(state.items[index]),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Widget _buildNearBody() {
-    final authHeaders = _authHeaders();
-    final theme = Theme.of(context);
-
-    if (_activeQuery.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 88,
-                height: 88,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    colors: [
-                      theme.colorScheme.surfaceContainerHighest,
-                      theme.colorScheme.surfaceContainer,
-                    ],
-                  ),
-                ),
-                child: Icon(
-                  Icons.location_searching_rounded,
-                  size: 42,
-                  color: theme.colorScheme.primary,
-                ),
-              ),
-              const SizedBox(height: 18),
-              Text(
-                'Search nearby',
-                style: theme.textTheme.headlineSmall
-                    ?.copyWith(fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Enter a place name to find all days you were near it.',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodyLarge?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    if (_nearLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
-    if (_nearError.isNotEmpty) {
-      return _SearchErrorState(
-        message: _nearError,
-        onRetry: () =>
-            _runNearSearch(_activeQuery, generation: _queryGeneration),
-      );
-    }
-
-    if (_nearResult == null) return const SizedBox.shrink();
-
-    final result = _nearResult!;
-
-    if (result.dates.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 90,
-                height: 90,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(28),
-                  color: theme.colorScheme.surfaceContainerHighest,
-                ),
-                child: Icon(
-                  Icons.location_off_outlined,
-                  size: 42,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 18),
-              Text(
-                'No visits found',
-                style: theme.textTheme.headlineSmall
-                    ?.copyWith(fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'No days found near "${result.location}".',
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodyLarge?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-      itemCount: result.dates.length + 1, // +1 for location header
-      itemBuilder: (context, index) {
-        // Location header card — tapping opens map day-view
-        if (index == 0) {
-          return Card(
-            margin: const EdgeInsets.only(bottom: 16),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(12),
-              onTap: () {
-                // Navigate to map tab and enter day-view on the first date
-                Navigator.of(context).pop();
-                ref.read(selectedTabProvider.notifier).state = 4;
-                // Store the near-result dates so the map can open them.
-                // We use selectedDateProvider to signal the first date.
-                if (result.dates.isNotEmpty) {
-                  ref.read(selectedDateProvider.notifier).state =
-                      parseYmd(result.dates.first);
-                }
-              },
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 44,
-                      height: 44,
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.primaryContainer,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        Icons.map_outlined,
-                        color: theme.colorScheme.onPrimaryContainer,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            result.location,
-                            style: theme.textTheme.titleMedium
-                                ?.copyWith(fontWeight: FontWeight.w600),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            '${result.dates.length} day${result.dates.length == 1 ? '' : 's'} visited · tap to view on map',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Icon(
-                      Icons.chevron_right,
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        }
-
-        final date = result.dates[index - 1];
-        final story = _nearDayCache[date];
-        final preview = story?.highlightImage.trim() ?? '';
-        final place = story?.place.trim() ?? '';
-        final description = story?.description.trim() ?? '';
-
-        return _SearchResultCard(
-          item: MemorySearchResultModel(
-            date: date,
-            place: place,
-            names: '',
-            description: description,
-            keywords: '',
-            country: '',
-            highlightImage: preview,
-            path: preview,
-          ),
-          authHeaders: authHeaders,
-          authenticateUrl: _authenticatedUrl,
-          onTap: () {
-            ref.read(selectedDateProvider.notifier).state = parseYmd(date);
-            ref.read(selectedTabProvider.notifier).state = 0;
-            Navigator.of(context).pop();
-          },
-        );
-      },
-    );
-  }
-
-  String? _authToken() {
-    final tokenStore = ref.read(authTokenStoreProvider);
-    return ref.read(authControllerProvider).value?.accessToken ??
-        tokenStore.peekToken();
-  }
-
-  String _authenticatedUrl(String url) {
-    return url;
+    return '${_state.items.length} result${_state.items.length == 1 ? '' : 's'}';
   }
 
   Map<String, String> _authHeaders() {
     if (kIsWeb) {
       return const {};
     }
-    final token = _authToken();
+    final tokenStore = ref.read(authTokenStoreProvider);
+    final token =
+        ref.read(authControllerProvider).value?.accessToken ??
+        tokenStore.peekToken();
     return {
       if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
       'X-Blue-Client': 'mobile',
     };
   }
-}
-
-class _SearchBlankState extends StatelessWidget {
-  const _SearchBlankState({required this.mode});
-
-  final MemorySearchMode mode;
 
   @override
   Widget build(BuildContext context) {
-    final isDays = mode == MemorySearchMode.days;
-    final colorScheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final authHeaders = _authHeaders();
+
+    return Scaffold(
+      appBar: AppBar(
+        titleSpacing: 0,
+        toolbarHeight: 88,
+        title: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+          child: TextField(
+            controller: _controller,
+            autofocus: true,
+            onChanged: _onChanged,
+            textInputAction: TextInputAction.search,
+            onSubmitted: (value) => _runNewQuery(value.trim()),
+            decoration: InputDecoration(
+              hintText: 'Search everything',
+              prefixIcon: const Icon(Icons.search),
+              suffixIcon: _controller.text.isEmpty
+                  ? null
+                  : IconButton(
+                      onPressed: () {
+                        _controller.clear();
+                        _runNewQuery('');
+                      },
+                      icon: const Icon(Icons.close),
+                    ),
+            ),
+          ),
+        ),
+      ),
+      body: Column(
+        children: [
+          _SearchFilterBar(activePreset: _activePreset, onSelected: _setPreset),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _activeQuery.isEmpty
+                        ? 'Search stories, runs, images, people, timeline, calendar, weather, and activities.'
+                        : _resultSummary(),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+                if (_state.loading)
+                  SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.2,
+                      color: theme.colorScheme.primary,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (_state.isOfflineFallback &&
+              (_state.offlineMessage?.isNotEmpty ?? false))
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.secondaryContainer,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.offline_bolt_rounded,
+                        size: 16,
+                        color: theme.colorScheme.onSecondaryContainer,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _state.offlineMessage!,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSecondaryContainer,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          Expanded(child: _buildBody(authHeaders)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBody(Map<String, String> authHeaders) {
+    if (_activeQuery.isEmpty) {
+      return const _SearchBlankState();
+    }
+    if (_state.error.isNotEmpty) {
+      return _SearchErrorState(
+        message: _state.error,
+        onRetry: () => _runSearch(_activeQuery, reset: true),
+      );
+    }
+    if (_state.loading && _state.items.isEmpty) {
+      return const _SearchSkeletonList();
+    }
+    if (_state.hasRequested && _state.items.isEmpty) {
+      return _SearchEmptyState(query: _activeQuery);
+    }
+    if (_activePreset == _SearchFilterPreset.images) {
+      return _SearchImageGrid(
+        items: _state.items,
+        authHeaders: authHeaders,
+        loadingMore: _state.loadingMore,
+        scrollController: _scrollController,
+        onTap: _openResult,
+      );
+    }
+    return ListView.builder(
+      controller: _scrollController,
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      itemCount: _state.items.length + (_state.loadingMore ? 1 : 0),
+      itemBuilder: (context, index) {
+        if (index >= _state.items.length) {
+          return const Padding(
+            padding: EdgeInsets.symmetric(vertical: 18),
+            child: Center(child: CircularProgressIndicator()),
+          );
+        }
+        final item = _state.items[index];
+        return _SearchResultCard(
+          item: item,
+          authHeaders: authHeaders,
+          onTap: () => _openResult(item),
+          onMapTap: item.place.isNotEmpty && item.effectiveDate.isNotEmpty
+              ? () => _openResultOnMap(item)
+              : null,
+        );
+      },
+    );
+  }
+}
+
+class _SearchImageGrid extends StatelessWidget {
+  const _SearchImageGrid({
+    required this.items,
+    required this.authHeaders,
+    required this.loadingMore,
+    required this.scrollController,
+    required this.onTap,
+  });
+
+  final List<MemorySearchResultModel> items;
+  final Map<String, String> authHeaders;
+  final bool loadingMore;
+  final ScrollController scrollController;
+  final ValueChanged<MemorySearchResultModel> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final gridItems = items
+        .where((item) => item.type == MemorySearchResultType.file)
+        .toList();
+    return GridView.builder(
+      controller: scrollController,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        mainAxisSpacing: 6,
+        crossAxisSpacing: 6,
+        childAspectRatio: 0.84,
+      ),
+      itemCount: gridItems.length + (loadingMore ? 1 : 0),
+      itemBuilder: (context, index) {
+        if (index >= gridItems.length) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final item = gridItems[index];
+        return _SearchImageTile(
+          item: item,
+          authHeaders: authHeaders,
+          onTap: () => onTap(item),
+        );
+      },
+    );
+  }
+}
+
+class _SearchFilterBar extends StatelessWidget {
+  const _SearchFilterBar({
+    required this.activePreset,
+    required this.onSelected,
+  });
+
+  final _SearchFilterPreset activePreset;
+  final ValueChanged<_SearchFilterPreset> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+      child: SizedBox(
+        height: 38,
+        child: ListView(
+          scrollDirection: Axis.horizontal,
+          children: [
+            for (final preset in _SearchFilterPreset.values) ...[
+              _FilterChipButton(
+                label: switch (preset) {
+                  _SearchFilterPreset.all => 'All',
+                  _SearchFilterPreset.places => 'Places',
+                  _SearchFilterPreset.days => 'Days',
+                  _SearchFilterPreset.images => 'Images',
+                  _SearchFilterPreset.runs => 'Runs',
+                  _SearchFilterPreset.people => 'People',
+                  _SearchFilterPreset.timeline => 'Timeline',
+                  _SearchFilterPreset.calendar => 'Calendar',
+                },
+                selected: activePreset == preset,
+                onTap: () => onSelected(preset),
+              ),
+              const SizedBox(width: 8),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FilterChipButton extends StatelessWidget {
+  const _FilterChipButton({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return FilterChip(
+      label: Text(label),
+      selected: selected,
+      showCheckmark: false,
+      onSelected: (_) => onTap(),
+      selectedColor: theme.colorScheme.secondaryContainer,
+      backgroundColor: theme.colorScheme.surfaceContainerHighest,
+      labelStyle: TextStyle(
+        color: selected
+            ? theme.colorScheme.onSecondaryContainer
+            : theme.colorScheme.onSurfaceVariant,
+        fontWeight: FontWeight.w600,
+      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
+    );
+  }
+}
+
+class _SearchBlankState extends StatelessWidget {
+  const _SearchBlankState();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 28),
@@ -1114,36 +629,31 @@ class _SearchBlankState extends StatelessWidget {
                 shape: BoxShape.circle,
                 gradient: LinearGradient(
                   colors: [
-                    colorScheme.surfaceContainerHighest,
-                    colorScheme.surfaceContainer,
+                    theme.colorScheme.surfaceContainerHighest,
+                    theme.colorScheme.surfaceContainer,
                   ],
                 ),
               ),
               child: Icon(
-                isDays
-                    ? Icons.auto_stories_rounded
-                    : Icons.photo_library_rounded,
+                Icons.travel_explore_rounded,
                 size: 42,
-                color: colorScheme.primary,
+                color: theme.colorScheme.primary,
               ),
             ),
             const SizedBox(height: 18),
             Text(
-              isDays ? 'Search days' : 'Search images',
-              style: Theme.of(context)
-                  .textTheme
-                  .headlineSmall
-                  ?.copyWith(fontWeight: FontWeight.w600),
+              'Unified search',
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const SizedBox(height: 8),
             Text(
-              isDays
-                  ? 'Find diary entries by date, place, people, tags, or text.'
-                  : 'Find matching images and jump straight to the related day.',
+              'Search days, images, runs, people, places, calendar events, weather, and activities in one place.',
               textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
+              style: theme.textTheme.bodyLarge?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
           ],
         ),
@@ -1153,15 +663,13 @@ class _SearchBlankState extends StatelessWidget {
 }
 
 class _SearchEmptyState extends StatelessWidget {
-  const _SearchEmptyState({required this.query, required this.mode});
+  const _SearchEmptyState({required this.query});
 
   final String query;
-  final MemorySearchMode mode;
 
   @override
   Widget build(BuildContext context) {
-    final isDays = mode == MemorySearchMode.days;
-    final colorScheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 28),
@@ -1173,31 +681,28 @@ class _SearchEmptyState extends StatelessWidget {
               height: 90,
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(28),
-                color: colorScheme.surfaceContainerHighest,
+                color: theme.colorScheme.surfaceContainerHighest,
               ),
               child: Icon(
-                isDays
-                    ? Icons.event_busy_outlined
-                    : Icons.image_search_outlined,
+                Icons.search_off_rounded,
                 size: 42,
-                color: colorScheme.onSurfaceVariant,
+                color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
             const SizedBox(height: 18),
             Text(
-              isDays ? 'No matching days' : 'No matching images',
-              style: Theme.of(context)
-                  .textTheme
-                  .headlineSmall
-                  ?.copyWith(fontWeight: FontWeight.w600),
+              'No matching results',
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
             ),
             const SizedBox(height: 8),
             Text(
-              'Nothing matched "$query". Try a broader place, person, or tag.',
+              'Nothing matched "$query". Try a broader place, person, event, or date.',
               textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
+              style: theme.textTheme.bodyLarge?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
             ),
           ],
         ),
@@ -1224,9 +729,9 @@ class _SearchErrorState extends StatelessWidget {
               message,
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.error,
-                    fontWeight: FontWeight.w500,
-                  ),
+                color: Theme.of(context).colorScheme.error,
+                fontWeight: FontWeight.w500,
+              ),
             ),
             const SizedBox(height: 12),
             OutlinedButton(onPressed: onRetry, child: const Text('Retry')),
@@ -1237,21 +742,21 @@ class _SearchErrorState extends StatelessWidget {
   }
 }
 
-class _DaysSkeletonList extends StatelessWidget {
-  const _DaysSkeletonList();
+class _SearchSkeletonList extends StatelessWidget {
+  const _SearchSkeletonList();
 
   @override
   Widget build(BuildContext context) {
     return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
-      itemCount: 5,
-      itemBuilder: (context, index) => const _DayCardSkeleton(),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      itemCount: 6,
+      itemBuilder: (_, __) => const _SearchSkeletonCard(),
     );
   }
 }
 
-class _DayCardSkeleton extends StatelessWidget {
-  const _DayCardSkeleton();
+class _SearchSkeletonCard extends StatelessWidget {
+  const _SearchSkeletonCard();
 
   @override
   Widget build(BuildContext context) {
@@ -1260,91 +765,29 @@ class _DayCardSkeleton extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Row(
-          children: [
+          children: const [
             _SkeletonBox(
-              width: 72,
-              height: 72,
-              radius: BorderRadius.circular(10),
+              width: 76,
+              height: 76,
+              radius: BorderRadius.all(Radius.circular(10)),
             ),
-            const SizedBox(width: 12),
-            const Expanded(
+            SizedBox(width: 12),
+            Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _SkeletonBox(width: 90, height: 14),
+                  _SkeletonBox(width: 70, height: 12),
                   SizedBox(height: 8),
-                  _SkeletonBox(width: 130, height: 18),
-                  SizedBox(height: 10),
+                  _SkeletonBox(width: 180, height: 18),
+                  SizedBox(height: 8),
                   _SkeletonBox(width: double.infinity, height: 12),
                   SizedBox(height: 6),
-                  _SkeletonBox(width: 180, height: 12),
+                  _SkeletonBox(width: 160, height: 12),
                 ],
               ),
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _ImagesSkeletonGrid extends StatelessWidget {
-  const _ImagesSkeletonGrid();
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        final crossAxisCount = width >= Breakpoints.medium
-            ? 4
-            : width >= Breakpoints.compact
-                ? 3
-                : 2;
-        return GridView.builder(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: crossAxisCount,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            childAspectRatio: 0.82,
-          ),
-          itemCount: crossAxisCount * 2,
-          itemBuilder: (_, __) => const _ImageTileSkeleton(),
-        );
-      },
-    );
-  }
-}
-
-class _ImageTileSkeleton extends StatelessWidget {
-  const _ImageTileSkeleton();
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        children: [
-          const Expanded(
-            child: _SkeletonBox(
-              width: double.infinity,
-              height: double.infinity,
-              radius: BorderRadius.zero,
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: const [
-                _SkeletonBox(width: 84, height: 12),
-                SizedBox(height: 8),
-                _SkeletonBox(width: double.infinity, height: 14),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -1402,21 +845,46 @@ class _SearchResultCard extends StatelessWidget {
   const _SearchResultCard({
     required this.item,
     required this.authHeaders,
-    required this.authenticateUrl,
     required this.onTap,
+    this.onMapTap,
   });
 
   final MemorySearchResultModel item;
   final Map<String, String> authHeaders;
-  final String Function(String) authenticateUrl;
   final VoidCallback onTap;
+  final VoidCallback? onMapTap;
+
+  IconData _iconForType() {
+    return switch (item.type) {
+      MemorySearchResultType.story => Icons.auto_stories_rounded,
+      MemorySearchResultType.run => Icons.directions_run_rounded,
+      MemorySearchResultType.file => Icons.photo_library_rounded,
+      MemorySearchResultType.timeline => Icons.timeline_rounded,
+      MemorySearchResultType.calendar => Icons.event_note_rounded,
+      MemorySearchResultType.weather => Icons.wb_cloudy_rounded,
+      MemorySearchResultType.activity => Icons.monitor_heart_rounded,
+      MemorySearchResultType.person => Icons.person_rounded,
+    };
+  }
+
+  String? _imageUrl() {
+    if (item.type == MemorySearchResultType.person &&
+        item.personRecord != null &&
+        item.personRecord!.photoPath.trim().isNotEmpty) {
+      return '${AppConfig.backendUrl}/api/person/${item.personRecord!.photoPath.trim()}';
+    }
+    final previewPath = item.previewImagePath;
+    final previewDate = item.effectiveDate;
+    if (previewPath.isEmpty) return null;
+    return AppConfig.imageUrlFromPath(previewPath, date: previewDate);
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final preview = item.previewImagePath.trim();
-    final meta = [...item.people.take(3), ...item.tags.take(3)];
+    final imageUrl = _imageUrl();
+
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: InkWell(
@@ -1427,59 +895,79 @@ class _SearchResultCard extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (preview.isNotEmpty)
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: ProtectedNetworkImage(
-                    imageUrl: authenticateUrl(AppConfig.imageUrlFromPath(
-                      preview,
-                      date: item.date,
-                    )),
-                    headers: authHeaders,
-                    fit: BoxFit.cover,
-                    errorWidget: Container(
-                      width: 78,
-                      height: 78,
-                      color: colorScheme.surfaceContainerHighest,
-                      child: const Icon(Icons.image_not_supported_outlined),
-                    ),
-                  ),
-                ),
-              if (preview.isNotEmpty) const SizedBox(width: 12),
+              _SearchPreview(
+                imageUrl: imageUrl,
+                icon: _iconForType(),
+                authHeaders: authHeaders,
+              ),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Row(
+                      children: [
+                        _TypeBadge(label: item.type.label),
+                        const SizedBox(width: 8),
+                        if (item.effectiveDate.isNotEmpty)
+                          Expanded(
+                            child: Text(
+                              item.effectiveDate,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.labelLarge?.copyWith(
+                                color: colorScheme.primary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
                     Text(
-                      item.date.isEmpty ? 'Unknown date' : item.date,
-                      style: theme.textTheme.labelLarge?.copyWith(
-                        color: colorScheme.primary,
-                        fontWeight: FontWeight.w600,
+                      item.displayTitle,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                    if (item.place.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        item.place,
-                        style: theme.textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w600),
-                      ),
-                    ],
-                    if (item.description.isNotEmpty) ...[
+                    if (item.displaySubtitle.isNotEmpty) ...[
                       const SizedBox(height: 6),
                       Text(
-                        item.description,
+                        item.displaySubtitle,
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.bodyMedium,
                       ),
                     ],
-                    if (meta.isNotEmpty) ...[
+                    if (item.place.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.place_outlined,
+                            size: 15,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              item.place,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                    if (item.metaChips.isNotEmpty) ...[
                       const SizedBox(height: 10),
                       Wrap(
                         spacing: 6,
                         runSpacing: 6,
-                        children: meta
+                        children: item.metaChips
                             .map(
                               (entry) => Container(
                                 padding: const EdgeInsets.symmetric(
@@ -1504,6 +992,12 @@ class _SearchResultCard extends StatelessWidget {
                   ],
                 ),
               ),
+              if (onMapTap != null)
+                IconButton(
+                  tooltip: 'Open on map',
+                  onPressed: onMapTap,
+                  icon: const Icon(Icons.map_outlined),
+                ),
             ],
           ),
         ),
@@ -1512,90 +1006,171 @@ class _SearchResultCard extends StatelessWidget {
   }
 }
 
-class _ImageSearchTile extends StatelessWidget {
-  const _ImageSearchTile({
+class _SearchImageTile extends StatelessWidget {
+  const _SearchImageTile({
     required this.item,
     required this.authHeaders,
-    required this.authenticateUrl,
     required this.onTap,
   });
 
   final MemorySearchResultModel item;
   final Map<String, String> authHeaders;
-  final String Function(String) authenticateUrl;
   final VoidCallback onTap;
+
+  String? _imageUrl() {
+    final previewPath = item.previewImagePath;
+    final previewDate = item.effectiveDate;
+    if (previewPath.isEmpty) return null;
+    return AppConfig.imageUrlFromPath(previewPath, date: previewDate);
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final preview = item.previewImagePath.trim();
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    final imageUrl = _imageUrl();
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: onTap,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: Stack(
+          fit: StackFit.expand,
           children: [
-            Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  ProtectedNetworkImage(
-                    imageUrl: authenticateUrl(AppConfig.imageUrlFromPath(
-                      preview,
-                      date: item.date,
-                    )),
-                    headers: authHeaders,
-                    fit: BoxFit.cover,
-                    errorWidget: Container(
-                      color: theme.colorScheme.surfaceContainerHighest,
-                      child: const Icon(Icons.image_not_supported_outlined),
-                    ),
+            if (imageUrl != null && imageUrl.isNotEmpty)
+              ProtectedNetworkImage(
+                imageUrl: imageUrl,
+                headers: authHeaders,
+                fit: BoxFit.cover,
+                errorWidget: Container(
+                  color: theme.colorScheme.surfaceContainerHighest,
+                  alignment: Alignment.center,
+                  child: Icon(
+                    Icons.broken_image_outlined,
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
-                  Positioned(
-                    left: 8,
-                    right: 8,
-                    bottom: 8,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: const Color(0xCC0B1422),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 6,
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              item.date.isEmpty ? 'Unknown date' : item.date,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.labelLarge?.copyWith(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                            ),
-                            if (item.place.isNotEmpty)
-                              Text(
-                                item.place,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.bodySmall
-                                    ?.copyWith(color: const Color(0xFFD9E4F5)),
-                              ),
-                          ],
+                ),
+              )
+            else
+              Container(
+                color: theme.colorScheme.surfaceContainerHighest,
+                alignment: Alignment.center,
+                child: Icon(
+                  Icons.photo_library_outlined,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: DecoratedBox(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Colors.transparent, Color(0xB3000000)],
+                  ),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 18, 8, 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        item.effectiveDate,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: Colors.white70,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
-                    ),
+                      if (item.place.isNotEmpty)
+                        Text(
+                          item.place,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SearchPreview extends StatelessWidget {
+  const _SearchPreview({
+    required this.imageUrl,
+    required this.icon,
+    required this.authHeaders,
+  });
+
+  final String? imageUrl;
+  final IconData icon;
+  final Map<String, String> authHeaders;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    if (imageUrl != null && imageUrl!.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: SizedBox(
+          width: 76,
+          height: 76,
+          child: ProtectedNetworkImage(
+            imageUrl: imageUrl!,
+            headers: authHeaders,
+            fit: BoxFit.cover,
+            errorWidget: Container(
+              color: colorScheme.surfaceContainerHighest,
+              child: Icon(icon, color: colorScheme.onSurfaceVariant),
+            ),
+          ),
+        ),
+      );
+    }
+    return Container(
+      width: 76,
+      height: 76,
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Icon(icon, color: colorScheme.onSurfaceVariant),
+    );
+  }
+}
+
+class _TypeBadge extends StatelessWidget {
+  const _TypeBadge({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+          fontWeight: FontWeight.w700,
         ),
       ),
     );

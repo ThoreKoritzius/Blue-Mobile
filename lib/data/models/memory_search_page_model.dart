@@ -3,29 +3,26 @@ import 'memory_search_result_model.dart';
 class MemorySearchPageModel {
   const MemorySearchPageModel({
     required this.items,
-    required this.page,
-    required this.pageSize,
-    required this.total,
-    required this.totalPages,
+    required this.totalCount,
+    required this.hasNextPage,
+    required this.endCursor,
     this.isOfflineFallback = false,
     this.offlineMessage,
   });
 
   final List<MemorySearchResultModel> items;
-  final int page;
-  final int pageSize;
-  final int total;
-  final int totalPages;
+  final int totalCount;
+  final bool hasNextPage;
+  final String? endCursor;
   final bool isOfflineFallback;
   final String? offlineMessage;
 
-  factory MemorySearchPageModel.empty({int pageSize = 20}) {
-    return MemorySearchPageModel(
-      items: const [],
-      page: 1,
-      pageSize: pageSize,
-      total: 0,
-      totalPages: 1,
+  factory MemorySearchPageModel.empty() {
+    return const MemorySearchPageModel(
+      items: <MemorySearchResultModel>[],
+      totalCount: 0,
+      hasNextPage: false,
+      endCursor: null,
       isOfflineFallback: false,
       offlineMessage: null,
     );

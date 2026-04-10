@@ -66,7 +66,7 @@ class GraphqlService {
   GraphQLClient _buildMultipartClient() {
     final httpLink = HttpLink(
       AppConfig.graphqlHttpUrl,
-      httpClient: _httpClient,
+      httpClient: _mutationHttpClient,
     );
 
     return GraphQLClient(
@@ -166,22 +166,11 @@ class GraphqlService {
   }) async {
     try {
       _log('graphql mutate ${AppConfig.graphqlHttpUrl}');
-      if (_containsMultipart(variables)) {
-        final result = await _multipartGraphqlClient
-            .mutate(
-              MutationOptions(
-                document: gql(document),
-                variables: variables,
-                context: Context.fromList([
-                  HttpLinkHeaders(headers: buildAuthHeaders()),
-                ]),
-              ),
-            )
-            .timeout(requestTimeout);
-        _throwIfError(result);
-        return result.data ?? <String, dynamic>{};
-      }
-      return await _postJsonGraphql(document, variables: variables, client: _mutationHttpClient);
+      return await _postJsonGraphql(
+        document,
+        variables: variables,
+        client: _mutationHttpClient,
+      );
     } on TimeoutException {
       throw Exception('Request timeout after ${requestTimeout.inSeconds}s.');
     } catch (error) {
@@ -196,16 +185,17 @@ class GraphqlService {
     required void Function(int sentBytes, int totalBytes) onProgress,
     Duration? timeout,
   }) async {
+    final effectiveTimeout = timeout ?? requestTimeout;
     try {
       return await _doMultipartWithProgress(
         document,
         variables: variables,
         files: files,
         onProgress: onProgress,
-        timeout: timeout,
+        timeout: effectiveTimeout,
       );
     } on TimeoutException {
-      throw Exception('Request timeout after ${requestTimeout.inSeconds}s.');
+      throw Exception(_formatTimeoutMessage(effectiveTimeout));
     } catch (error) {
       throw Exception(_humanizeError(error.toString()));
     }
@@ -219,6 +209,15 @@ class GraphqlService {
     Duration? timeout,
     bool isRetry = false,
   }) async {
+    if (kIsWeb) {
+      return _doMultipartViaGraphqlClient(
+        document,
+        variables: variables,
+        files: files,
+        timeout: timeout,
+      );
+    }
+
     final csrfToken = await _getCsrfToken();
     final request = _ProgressMultipartRequest(
       'POST',
@@ -252,7 +251,8 @@ class GraphqlService {
       );
     }
 
-    final streamed = await request.send().timeout(timeout ?? requestTimeout);
+    final streamed =
+        await _mutationHttpClient.send(request).timeout(timeout ?? requestTimeout);
     final response = await http.Response.fromStream(streamed);
     final decoded = jsonDecode(response.body);
     if (decoded is! Map<String, dynamic>) {
@@ -300,6 +300,46 @@ class GraphqlService {
     }
     final data = decoded['data'];
     return data is Map<String, dynamic> ? data : <String, dynamic>{};
+  }
+
+  Future<Map<String, dynamic>> _doMultipartViaGraphqlClient(
+    String document, {
+    Map<String, dynamic> variables = const {},
+    required List<MultipartUploadFile> files,
+    Duration? timeout,
+  }) async {
+    final csrfToken = await _getCsrfToken();
+    final graphqlFiles = [
+      for (final file in files)
+        http.MultipartFile.fromBytes(
+          'files',
+          file.bytes,
+          filename: file.filename,
+        ),
+    ];
+
+    final result = await _multipartGraphqlClient
+        .mutate(
+          MutationOptions(
+            document: gql(document),
+            variables: {
+              ...variables,
+              'files': graphqlFiles,
+            },
+            context: Context.fromList([
+              HttpLinkHeaders(
+                headers: {
+                  ...buildAuthHeaders(),
+                  if (csrfToken != null && csrfToken.isNotEmpty)
+                    'X-CSRF-Token': csrfToken,
+                },
+              ),
+            ]),
+          ),
+        )
+        .timeout(timeout ?? requestTimeout);
+    _throwIfError(result);
+    return result.data ?? <String, dynamic>{};
   }
 
   Future<Map<String, dynamic>> _postJsonGraphql(
@@ -368,29 +408,19 @@ class GraphqlService {
     return data is Map<String, dynamic> ? data : <String, dynamic>{};
   }
 
-  bool _containsMultipart(Object? value) {
-    if (value is http.MultipartFile) return true;
-    if (value is Iterable) {
-      for (final item in value) {
-        if (_containsMultipart(item)) return true;
-      }
-      return false;
-    }
-    if (value is Map) {
-      for (final item in value.values) {
-        if (_containsMultipart(item)) return true;
-      }
-      return false;
-    }
-    return false;
-  }
-
   String _graphqlErrorsToMessage(List<dynamic> errors) {
     return errors
         .whereType<Map>()
         .map((error) => (error['message'] ?? '').toString().trim())
         .where((message) => message.isNotEmpty)
         .join('\n');
+  }
+
+  String _formatTimeoutMessage(Duration timeout) {
+    if (timeout.inMinutes >= 1) {
+      return 'Request timeout after ${timeout.inMinutes}m.';
+    }
+    return 'Request timeout after ${timeout.inSeconds}s.';
   }
 
   Stream<Map<String, dynamic>> subscribe(
@@ -425,7 +455,9 @@ class GraphqlService {
       SubscriptionOptions(
         document: gql(document),
         variables: variables,
-        context: Context.fromList([HttpLinkHeaders(headers: buildAuthHeaders())]),
+        context: Context.fromList([
+          HttpLinkHeaders(headers: buildAuthHeaders()),
+        ]),
       ),
     );
     await for (final result in stream) {
@@ -471,7 +503,8 @@ class GraphqlService {
     if (text.contains('timeout')) {
       return 'Network timeout while contacting ${AppConfig.backendUrl}.';
     }
-    if (text.contains('not authenticated') || text.contains('session expired')) {
+    if (text.contains('not authenticated') ||
+        text.contains('session expired')) {
       return 'Not authenticated. Sign in again.';
     }
     return cleaned;

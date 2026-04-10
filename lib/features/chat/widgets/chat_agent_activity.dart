@@ -34,7 +34,7 @@ class ChatAgentActivityBar extends StatelessWidget {
   Widget build(BuildContext context) {
     if (statuses.isEmpty && toolCalls.isEmpty) return const SizedBox.shrink();
 
-    final showLive = isStreaming && !hasText;
+    final showLive = isStreaming;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -85,9 +85,7 @@ class _ActivityStreamingView extends StatelessWidget {
       // Show a short snippet of the actual GraphQL query from meta
       final query = s.meta['query']?.toString() ?? '';
       if (query.isNotEmpty) {
-        final snippet = query
-            .replaceAll(RegExp(r'\s+'), ' ')
-            .trim();
+        final snippet = query.replaceAll(RegExp(r'\s+'), ' ').trim();
         return snippet.length > 80
             ? 'Query: ${snippet.substring(0, 80)}...'
             : 'Query: $snippet';
@@ -107,11 +105,7 @@ class _ActivityStreamingView extends StatelessWidget {
         if (steps.isNotEmpty && steps.last.stage == 'query') {
           steps.last.done = true;
         }
-        steps.add(_StreamingStep(
-          stage: s.stage,
-          label: s.summary,
-          done: true,
-        ));
+        steps.add(_StreamingStep(stage: s.stage, label: s.summary, done: true));
         continue;
       }
       if (s.stage == 'error') {
@@ -119,22 +113,21 @@ class _ActivityStreamingView extends StatelessWidget {
           steps.last.done = true;
           steps.last.hasError = true;
         }
-        steps.add(_StreamingStep(
-          stage: s.stage,
-          label: s.summary,
-          done: true,
-          hasError: true,
-        ));
+        steps.add(
+          _StreamingStep(
+            stage: s.stage,
+            label: s.summary,
+            done: true,
+            hasError: true,
+          ),
+        );
         continue;
       }
       final label = _labelForStatus(s);
       if (steps.isNotEmpty && steps.last.stage == s.stage && !steps.last.done) {
         steps.last.label = label;
       } else {
-        steps.add(_StreamingStep(
-          stage: s.stage,
-          label: label,
-        ));
+        steps.add(_StreamingStep(stage: s.stage, label: label));
       }
     }
 
@@ -184,8 +177,8 @@ class _ActivityStreamingView extends StatelessWidget {
             step.done && !step.hasError
                 ? Icons.check_circle_outline
                 : step.hasError
-                    ? Icons.error_outline
-                    : icon,
+                ? Icons.error_outline
+                : icon,
             size: 15,
             color: color,
           ),
@@ -346,13 +339,14 @@ class _ActivityDetailPanel extends StatelessWidget {
                   return _ActivityStepTile(
                     icon: _stageIcons['query']!,
                     label: call.displaySummary,
-                    hasError:
-                        call.errors != null && call.errors!.isNotEmpty,
+                    hasError: call.errors != null && call.errors!.isNotEmpty,
                     toolCall: call,
                     isExpanded: expandedDetailIds.contains(
-                        'tool_${call.name}_${idx}_${call.displayQuery.hashCode}'),
+                      'tool_${call.name}_${idx}_${call.displayQuery.hashCode}',
+                    ),
                     onToggle: () => onToggleDetail(
-                        'tool_${call.name}_${idx}_${call.displayQuery.hashCode}'),
+                      'tool_${call.name}_${idx}_${call.displayQuery.hashCode}',
+                    ),
                   );
                 })
               else
@@ -389,8 +383,7 @@ class _ActivityStepTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final color =
-        hasError ? colorScheme.error : colorScheme.onSurfaceVariant;
+    final color = hasError ? colorScheme.error : colorScheme.onSurfaceVariant;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -420,8 +413,7 @@ class _ActivityStepTile extends StatelessWidget {
                   Icon(
                     isExpanded ? Icons.expand_less : Icons.expand_more,
                     size: 16,
-                    color:
-                        colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
                   ),
                 ],
               ],
@@ -462,7 +454,10 @@ class _ActivityStepTile extends StatelessWidget {
             _detailBlock(context, 'Params', call.sqlParams.toString()),
           if ((call.embeddingQuery ?? '').trim().isNotEmpty)
             _detailBlock(
-                context, 'Embedding Query', call.embeddingQuery!.trim()),
+              context,
+              'Embedding Query',
+              call.embeddingQuery!.trim(),
+            ),
           if (call.errors != null && call.errors!.isNotEmpty)
             _detailBlock(context, 'Errors', call.errors!.join('\n')),
         ],
@@ -485,9 +480,7 @@ class _ActivityStepTile extends StatelessWidget {
         buffer.writeln();
         buffer.write('  ' * indent);
         buffer.write('}');
-      } else if (ch == ',' &&
-          i + 1 < trimmed.length &&
-          trimmed[i + 1] == ' ') {
+      } else if (ch == ',' && i + 1 < trimmed.length && trimmed[i + 1] == ' ') {
         buffer.writeln(',');
         buffer.write('  ' * indent);
       } else {
@@ -497,8 +490,12 @@ class _ActivityStepTile extends StatelessWidget {
     return buffer.toString().trim();
   }
 
-  Widget _detailBlock(BuildContext context, String label, String value,
-      {bool isCode = false}) {
+  Widget _detailBlock(
+    BuildContext context,
+    String label,
+    String value, {
+    bool isCode = false,
+  }) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final displayValue = isCode ? _prettyPrintQuery(value) : value;

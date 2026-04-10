@@ -223,6 +223,7 @@ class MapRepository {
 
   final RunsRepository _runsRepository;
   final GraphqlService _gql;
+  final Map<int, String?> _imageSearchCursors = <int, String?>{1: null};
   final Map<String, ({DateTime cachedAt, TimelineDayData data})>
   _timelineDayCache = <String, ({DateTime cachedAt, TimelineDayData data})>{};
   final Map<String, Future<TimelineDayData>> _timelineDayInFlight =
@@ -234,28 +235,46 @@ class MapRepository {
   }) async {
     final points = <MapPoint>[];
     try {
+      final after = _imageSearchCursors[page];
+      if (page > 1 && !_imageSearchCursors.containsKey(page)) {
+        throw Exception(
+          'Image paging state is unavailable. Restart image search.',
+        );
+      }
       final response = await _gql.query(
         GqlDocuments.searchImages,
         variables: {
           'input': {
-            'input': '',
-            'imageDays': 'images',
-            'columns': <String>[],
+            'query': '',
+            'types': <String>['FILE'],
             'limit': pageSize,
-            'page': page,
-            'pageSize': pageSize,
+            'includeContext': false,
+            'filters': {'fileKind': 'photo'},
           },
           'first': pageSize,
+          'after': after,
         },
       );
       final connection =
-          ((response['search'] as Map<String, dynamic>)['query']
+          ((response['search'] as Map<String, dynamic>)['unified']
               as Map<String, dynamic>? ??
           const {});
       final items = (connection['edges'] as List<dynamic>? ?? const [])
           .map((item) => (item as Map<String, dynamic>)['node'])
           .whereType<Map<String, dynamic>>()
+          .map((item) => item['file'] as Map<String, dynamic>? ?? item)
+          .whereType<Map<String, dynamic>>()
           .toList();
+      final pageInfo =
+          connection['pageInfo'] as Map<String, dynamic>? ?? const {};
+      final hasMore = pageInfo['hasNextPage'] == true;
+      final endCursor = (pageInfo['endCursor'] ?? '').toString();
+      if (page == 1) {
+        _imageSearchCursors.removeWhere((key, _) => key > 1);
+      }
+      if (hasMore && endCursor.isNotEmpty) {
+        _imageSearchCursors[page + 1] = endCursor;
+      }
 
       for (final item in items) {
         final gps = _parseGps((item['gps'] ?? '').toString());
@@ -275,7 +294,7 @@ class MapRepository {
       debugPrint(
         '[MAP] image page=$page raw=${items.length} usable=${points.length}',
       );
-      return MapImagePage(points: points, hasMore: items.length >= pageSize);
+      return MapImagePage(points: points, hasMore: hasMore);
     } catch (error, stackTrace) {
       debugPrint(
         '[MAP] searchImagePage error page=$page size=$pageSize: $error',

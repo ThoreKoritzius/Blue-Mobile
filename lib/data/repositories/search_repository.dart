@@ -1,17 +1,16 @@
 import '../../core/network/graphql_service.dart';
+import '../graphql/documents.dart';
 import '../models/memory_search_page_model.dart';
 import '../models/memory_search_result_model.dart';
 import 'stories_repository.dart';
 
-enum MemorySearchMode { days, images }
-
 abstract class SearchRepository {
   Future<MemorySearchPageModel> searchMemories(
     String term, {
-    required MemorySearchMode mode,
-    required int page,
-    required int pageSize,
-    List<String> columns = const [],
+    Set<MemorySearchResultType> types = const <MemorySearchResultType>{},
+    String? after,
+    int first = 16,
+    bool includeContext = false,
   });
 }
 
@@ -21,142 +20,116 @@ class MemorySearchRepository implements SearchRepository {
   final GraphqlService _gql;
   final StoriesRepository _storiesRepository;
 
-  static const List<String> _defaultColumns = [
-    'date',
-    'place',
-    'keywords',
-    'names',
-    'description',
-  ];
-
   @override
   Future<MemorySearchPageModel> searchMemories(
     String term, {
-    required MemorySearchMode mode,
-    required int page,
-    required int pageSize,
-    List<String> columns = const [],
+    Set<MemorySearchResultType> types = const <MemorySearchResultType>{},
+    String? after,
+    int first = 16,
+    bool includeContext = false,
   }) async {
-    final selectedColumns = columns.isEmpty ? _defaultColumns : columns;
     try {
       final payload = await _gql.query(
-        r'''
-        query SearchMemories($input: SearchInput!, $first: Int!) {
-          search {
-            query(input: $input, first: $first) {
-              totalCount
-              edges {
-                node
-              }
-            }
-          }
-        }
-        ''',
+        GqlDocuments.searchUnified,
         variables: {
           'input': {
-            'input': term,
-            'imageDays': mode == MemorySearchMode.days ? 'dates' : 'images',
-            'columns': selectedColumns,
-            'limit': pageSize,
-            'page': page,
-            'pageSize': pageSize,
+            'query': term,
+            'types': types.map((item) => item.graphqlName).toList(),
+            'limit': first,
+            'includeContext': includeContext,
           },
-          'first': pageSize,
+          'first': first,
+          'after': after,
         },
       );
 
       final connection = payload['search'] is Map<String, dynamic>
-          ? (payload['search'] as Map<String, dynamic>)['query']
+          ? (payload['search'] as Map<String, dynamic>)['unified']
           : null;
 
       if (connection is Map<String, dynamic>) {
-        final rawEdges = connection['edges'];
-        final items = rawEdges is List
-            ? rawEdges
-                  .whereType<Map<String, dynamic>>()
-                  .map((edge) => edge['node'])
-                  .whereType<Map<String, dynamic>>()
-                  .map(MemorySearchResultModel.fromJson)
-                  .toList()
-            : const <MemorySearchResultModel>[];
-        final total =
-            int.tryParse((connection['totalCount'] ?? '').toString()) ??
-            items.length;
-        final totalPages = total == 0
-            ? 1
-            : ((total + pageSize - 1) ~/ pageSize);
+        final rawEdges = connection['edges'] as List<dynamic>? ?? const [];
+        final items = rawEdges
+            .whereType<Map<String, dynamic>>()
+            .map((edge) => edge['node'])
+            .whereType<Map<String, dynamic>>()
+            .map(MemorySearchResultModel.fromJson)
+            .toList();
+        final pageInfo =
+            connection['pageInfo'] as Map<String, dynamic>? ?? const {};
         return MemorySearchPageModel(
           items: items,
-          page: page,
-          pageSize: pageSize,
-          total: total,
-          totalPages: totalPages,
+          totalCount:
+              int.tryParse((connection['totalCount'] ?? '').toString()) ??
+              items.length,
+          hasNextPage: pageInfo['hasNextPage'] == true,
+          endCursor: (pageInfo['endCursor'] ?? '').toString().isEmpty
+              ? null
+              : (pageInfo['endCursor'] ?? '').toString(),
         );
       }
     } catch (error) {
-      if (mode == MemorySearchMode.images) {
-        throw Exception(
-          'Image search is unavailable offline because image metadata is not cached.',
-        );
-      }
-      return _searchOffline(
-        term,
-        page: page,
-        pageSize: pageSize,
-        columns: selectedColumns,
-      );
+      return _searchOffline(term, after: after, first: first, types: types);
     }
 
-    return MemorySearchPageModel.empty(pageSize: pageSize);
+    return MemorySearchPageModel.empty();
   }
 
   Future<MemorySearchPageModel> _searchOffline(
     String term, {
-    required int page,
-    required int pageSize,
-    required List<String> columns,
+    required String? after,
+    required int first,
+    required Set<MemorySearchResultType> types,
   }) async {
-    final allStories = await _storiesRepository.getCachedRecentDays();
+    final allowsStories =
+        types.isEmpty || types.contains(MemorySearchResultType.story);
+    if (!allowsStories) {
+      return const MemorySearchPageModel(
+        items: <MemorySearchResultModel>[],
+        totalCount: 0,
+        hasNextPage: false,
+        endCursor: null,
+        isOfflineFallback: true,
+        offlineMessage:
+            'Offline search only includes cached story days right now.',
+      );
+    }
+
+    final allStories = await _storiesRepository.getCachedRecentDays(
+      limit: 9999,
+    );
     final query = term.trim().toLowerCase();
     final filtered =
         allStories
             .where((story) {
-              final haystacks =
-                  <String>[
-                        if (columns.contains('date')) story.date,
-                        if (columns.contains('place')) story.place,
-                        if (columns.contains('country')) story.country,
-                        if (columns.contains('names')) story.names,
-                        if (columns.contains('keywords')) story.keywords,
-                        if (columns.contains('description')) story.description,
-                        if (columns.contains('food')) story.food,
-                        if (columns.contains('sport')) story.sport,
-                        if (columns.contains('path')) story.highlightImage,
-                      ]
-                      .where((value) => value.trim().isNotEmpty)
-                      .join('\n')
-                      .toLowerCase();
-              return haystacks.contains(query);
+              final haystack = <String>[
+                story.date,
+                story.place,
+                story.country,
+                story.names,
+                story.keywords,
+                story.description,
+                story.highlightImage,
+              ].join('\n').toLowerCase();
+              return query.isEmpty || haystack.contains(query);
             })
-            .map((story) => MemorySearchResultModel.fromJson(story.toJson()))
+            .map(MemorySearchResultModel.storyOffline)
             .toList()
-          ..sort((a, b) => b.date.compareTo(a.date));
+          ..sort((a, b) => b.effectiveDate.compareTo(a.effectiveDate));
 
-    final total = filtered.length;
-    final start = (page - 1) * pageSize;
-    final end = (start + pageSize).clamp(0, total);
-    final items = start >= total
+    final start = int.tryParse(after ?? '') ?? 0;
+    final end = (start + first).clamp(0, filtered.length);
+    final items = start >= filtered.length
         ? const <MemorySearchResultModel>[]
         : filtered.sublist(start, end);
-    final totalPages = total == 0 ? 1 : ((total + pageSize - 1) ~/ pageSize);
     return MemorySearchPageModel(
       items: items,
-      page: page,
-      pageSize: pageSize,
-      total: total,
-      totalPages: totalPages,
+      totalCount: filtered.length,
+      hasNextPage: end < filtered.length,
+      endCursor: end < filtered.length ? '$end' : null,
       isOfflineFallback: true,
-      offlineMessage: 'Offline results from the last 10 years of cached days.',
+      offlineMessage:
+          'Offline search only includes cached story days right now.',
     );
   }
 }

@@ -27,7 +27,7 @@ class StreamingChatRepository implements ChatRepository {
   Stream<ChatEventModel> stream(List<Map<String, String>> messages) async* {
     final client = createGraphqlHttpClient();
     try {
-      final headers = await _gql.buildAuthHeaders();
+      final headers = _gql.buildAuthHeaders();
       final request = http.Request(
         'POST',
         Uri.parse('${AppConfig.backendUrl}/api/chat'),
@@ -43,6 +43,12 @@ class StreamingChatRepository implements ChatRepository {
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw Exception('Chat stream failed (${response.statusCode}).');
       }
+
+      yield const ChatEventModel(
+        type: 'status',
+        stage: 'plan',
+        summary: 'Connected',
+      );
 
       await for (final line
           in response.stream
@@ -82,7 +88,7 @@ class StreamingChatRepository implements ChatRepository {
   ) async {
     final client = createGraphqlHttpClient();
     try {
-      final headers = await _gql.buildAuthHeaders();
+      final headers = _gql.buildAuthHeaders();
       final response = await client
           .post(
             Uri.parse('${AppConfig.backendUrl}/api/chat'),

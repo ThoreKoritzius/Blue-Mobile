@@ -91,19 +91,23 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final assistantId = DateTime.now().microsecondsSinceEpoch.toString();
 
     setState(() {
-      _messages.add(UiMessage(
-        id: 'u_$assistantId',
-        role: 'user',
-        rawText: prompt,
-        text: prompt,
-      ));
-      _messages.add(UiMessage(
-        id: assistantId,
-        role: 'assistant',
-        rawText: '',
-        text: '',
-        state: UiMessageState.streaming,
-      ));
+      _messages.add(
+        UiMessage(
+          id: 'u_$assistantId',
+          role: 'user',
+          rawText: prompt,
+          text: prompt,
+        ),
+      );
+      _messages.add(
+        UiMessage(
+          id: assistantId,
+          role: 'assistant',
+          rawText: '',
+          text: '',
+          state: UiMessageState.streaming,
+        ),
+      );
       _sending = true;
       _input.clear();
       _autoScroll = true;
@@ -112,110 +116,129 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
     var buffer = '';
     var streamedAnyDelta = false;
+    var receivedFinal = false;
+    var receivedAnyEvent = false;
+
+    Future<void> recoverWithComplete() async {
+      try {
+        final fallback = await chatRepo.complete(history);
+        if (!mounted) return;
+        _applyFinalResponse(assistantId, fallback);
+      } catch (error) {
+        if (!mounted) return;
+        _updateAssistant(
+          assistantId,
+          (m) => m.copyWith(
+            state: UiMessageState.error,
+            errorText: error.toString().replaceFirst('Exception: ', ''),
+          ),
+        );
+      } finally {
+        if (mounted) setState(() => _sending = false);
+      }
+    }
 
     _streamSub?.cancel();
-    _streamSub = chatRepo.stream(history).listen(
-      (event) {
-        if (!mounted) return;
-        switch (event.type) {
-          case 'status':
-            final nextStatus = UiStatusEntry(
-              id: '${assistantId}_${event.stage ?? 'status'}_${DateTime.now().microsecondsSinceEpoch}',
-              stage: event.stage ?? 'status',
-              summary: event.summary ?? '',
-              meta: event.meta ?? const {},
-            );
-            _updateAssistant(
-              assistantId,
-              (m) => m.copyWith(
-                statuses: [
-                  ...m.statuses,
-                  if (nextStatus.summary.trim().isNotEmpty) nextStatus,
-                ],
-              ),
-            );
-            break;
-          case 'delta':
-            final delta = event.delta ?? '';
-            if (delta.isEmpty) break;
-            streamedAnyDelta = true;
-            buffer += delta;
-            final attachments = parseChatAttachments(buffer);
-            _updateAssistant(
-              assistantId,
-              (m) => m.copyWith(
-                rawText: buffer,
-                text: attachments.text,
-                dates: attachments.dates,
-                images: attachments.images,
-                state: UiMessageState.streaming,
-              ),
-            );
-            break;
-          case 'final':
-            final response = event.response;
-            if (response != null) {
-              final parsed = response.copyWithAttachments(
-                parseChatAttachments(response.text),
-              );
-              _applyFinalResponse(assistantId, parsed);
+    _streamSub = chatRepo
+        .stream(history)
+        .listen(
+          (event) {
+            if (!mounted) return;
+            receivedAnyEvent = true;
+            switch (event.type) {
+              case 'status':
+                final nextStatus = UiStatusEntry(
+                  id: '${assistantId}_${event.stage ?? 'status'}_${DateTime.now().microsecondsSinceEpoch}',
+                  stage: event.stage ?? 'status',
+                  summary: event.summary ?? '',
+                  meta: event.meta ?? const {},
+                );
+                _updateAssistant(
+                  assistantId,
+                  (m) => m.copyWith(
+                    statuses: [
+                      ...m.statuses,
+                      if (nextStatus.summary.trim().isNotEmpty) nextStatus,
+                    ],
+                  ),
+                );
+                break;
+              case 'delta':
+                final delta = event.delta ?? '';
+                if (delta.isEmpty) break;
+                streamedAnyDelta = true;
+                buffer += delta;
+                final attachments = parseChatAttachments(buffer);
+                _updateAssistant(
+                  assistantId,
+                  (m) => m.copyWith(
+                    rawText: buffer,
+                    text: attachments.text,
+                    dates: attachments.dates,
+                    images: attachments.images,
+                    state: UiMessageState.streaming,
+                  ),
+                );
+                break;
+              case 'final':
+                final response = event.response;
+                if (response != null) {
+                  receivedFinal = true;
+                  final parsed = response.copyWithAttachments(
+                    parseChatAttachments(response.text),
+                  );
+                  _applyFinalResponse(assistantId, parsed);
+                }
+                break;
+              case 'done':
+                _updateAssistant(
+                  assistantId,
+                  (m) => m.copyWith(state: UiMessageState.done),
+                );
+                setState(() => _sending = false);
+                break;
+              case 'error':
+                _updateAssistant(
+                  assistantId,
+                  (m) => m.copyWith(
+                    state: UiMessageState.error,
+                    errorText: event.message ?? 'Stream failed.',
+                  ),
+                );
+                setState(() => _sending = false);
+                break;
             }
-            break;
-          case 'done':
-            _updateAssistant(
-              assistantId,
-              (m) => m.copyWith(state: UiMessageState.done),
+            WidgetsBinding.instance.addPostFrameCallback(
+              (_) => _scrollToBottom(),
             );
-            setState(() => _sending = false);
-            break;
-          case 'error':
-            _updateAssistant(
-              assistantId,
-              (m) => m.copyWith(
-                state: UiMessageState.error,
-                errorText: event.message ?? 'Stream failed.',
-              ),
-            );
-            setState(() => _sending = false);
-            break;
-        }
-        WidgetsBinding.instance
-            .addPostFrameCallback((_) => _scrollToBottom());
-      },
-      onError: (_) async {
-        if (!mounted) return;
-        if (streamedAnyDelta) {
-          _updateAssistant(
-            assistantId,
-            (m) => m.copyWith(
-              state: UiMessageState.error,
-              errorText: 'Streaming stopped. You can retry.',
-            ),
-          );
-          setState(() => _sending = false);
-          return;
-        }
-        try {
-          final fallback = await chatRepo.complete(history);
-          if (!mounted) return;
-          _applyFinalResponse(assistantId, fallback);
-        } catch (error) {
-          if (!mounted) return;
-          _updateAssistant(
-            assistantId,
-            (m) => m.copyWith(
-              state: UiMessageState.error,
-              errorText: error.toString().replaceFirst('Exception: ', ''),
-            ),
-          );
-        } finally {
-          if (mounted) setState(() => _sending = false);
-        }
-      },
-      onDone: () {
-        if (mounted) setState(() => _sending = false);
-      },
-    );
+          },
+          onError: (_) async {
+            if (!mounted) return;
+            if (streamedAnyDelta) {
+              _updateAssistant(
+                assistantId,
+                (m) => m.copyWith(state: UiMessageState.done, clearError: true),
+              );
+              setState(() => _sending = false);
+              return;
+            }
+            await recoverWithComplete();
+          },
+          onDone: () async {
+            if (!mounted) return;
+            if (!receivedFinal) {
+              if (!receivedAnyEvent || !streamedAnyDelta) {
+                await recoverWithComplete();
+                return;
+              }
+              _updateAssistant(
+                assistantId,
+                (m) => m.copyWith(state: UiMessageState.done, clearError: true),
+              );
+            }
+            if (mounted) setState(() => _sending = false);
+          },
+        );
   }
 
   void _stopStream() {
@@ -243,6 +266,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         text: response.text,
         dates: response.dates,
         images: response.images,
+        statuses: const [],
         toolCalls: response.toolCalls,
         maps: response.maps,
         charts: response.charts,
@@ -329,8 +353,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     if (index < _messages.length) {
                       return _constrained(
                         Padding(
-                          padding:
-                              const EdgeInsets.symmetric(horizontal: 16),
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
                           child: ChatMessageTile(
                             message: _messages[index],
                             expandedDetailIds: _expandedDetailIds,
@@ -353,21 +376,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     if (_sending) return const SizedBox.shrink();
                     return _constrained(
                       Padding(
-                        padding:
-                            const EdgeInsets.only(top: 16, bottom: 8),
+                        padding: const EdgeInsets.only(top: 16, bottom: 8),
                         child: Center(
                           child: TextButton.icon(
-                            onPressed: () =>
-                                setState(() => _messages.clear()),
-                            icon: Icon(Icons.delete_outline,
-                                size: 16,
-                                color:
-                                    theme.colorScheme.onSurfaceVariant),
+                            onPressed: () => setState(() => _messages.clear()),
+                            icon: Icon(
+                              Icons.delete_outline,
+                              size: 16,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
                             label: Text(
                               'Clear chat',
                               style: theme.textTheme.bodySmall?.copyWith(
-                                  color: theme
-                                      .colorScheme.onSurfaceVariant),
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
                             ),
                           ),
                         ),
@@ -443,20 +465,21 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                       runSpacing: 8,
                       alignment: WrapAlignment.center,
                       children: suggestions
-                          .map((s) => ActionChip(
-                                label: Text(s),
-                                onPressed: () => _send(s),
-                                backgroundColor:
-                                    colorScheme.surfaceContainerLow,
-                                side: BorderSide(
-                                  color: colorScheme.outlineVariant
-                                      .withValues(alpha: 0.5),
+                          .map(
+                            (s) => ActionChip(
+                              label: Text(s),
+                              onPressed: () => _send(s),
+                              backgroundColor: colorScheme.surfaceContainerLow,
+                              side: BorderSide(
+                                color: colorScheme.outlineVariant.withValues(
+                                  alpha: 0.5,
                                 ),
-                                labelStyle:
-                                    theme.textTheme.bodyMedium?.copyWith(
-                                  color: colorScheme.onSurface,
-                                ),
-                              ))
+                              ),
+                              labelStyle: theme.textTheme.bodyMedium?.copyWith(
+                                color: colorScheme.onSurface,
+                              ),
+                            ),
+                          )
                           .toList(),
                     ),
                   ],
@@ -509,15 +532,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                       decoration: InputDecoration(
                         hintText: 'Message Blue...',
                         hintStyle: theme.textTheme.bodyLarge?.copyWith(
-                          color: colorScheme.onSurfaceVariant
-                              .withValues(alpha: 0.5),
+                          color: colorScheme.onSurfaceVariant.withValues(
+                            alpha: 0.5,
+                          ),
                         ),
                         filled: false,
                         border: InputBorder.none,
                         enabledBorder: InputBorder.none,
                         focusedBorder: InputBorder.none,
-                        contentPadding:
-                            const EdgeInsets.fromLTRB(20, 14, 8, 14),
+                        contentPadding: const EdgeInsets.fromLTRB(
+                          20,
+                          14,
+                          8,
+                          14,
+                        ),
                       ),
                     ),
                   ),
@@ -531,22 +559,25 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                         ? IconButton(
                             onPressed: _stopStream,
                             padding: EdgeInsets.zero,
-                            icon: Icon(Icons.stop_rounded,
-                                size: 20,
-                                color: colorScheme.onSurfaceVariant),
+                            icon: Icon(
+                              Icons.stop_rounded,
+                              size: 20,
+                              color: colorScheme.onSurfaceVariant,
+                            ),
                             tooltip: 'Stop generating',
                             style: IconButton.styleFrom(
-                              backgroundColor:
-                                  colorScheme.surfaceContainerHigh,
+                              backgroundColor: colorScheme.surfaceContainerHigh,
                               shape: const CircleBorder(),
                             ),
                           )
                         : IconButton(
                             onPressed: _send,
                             padding: EdgeInsets.zero,
-                            icon: Icon(Icons.arrow_upward_rounded,
-                                size: 20,
-                                color: colorScheme.onPrimary),
+                            icon: Icon(
+                              Icons.arrow_upward_rounded,
+                              size: 20,
+                              color: colorScheme.onPrimary,
+                            ),
                             tooltip: 'Send',
                             style: IconButton.styleFrom(
                               backgroundColor: colorScheme.primary,
