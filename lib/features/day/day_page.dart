@@ -2044,6 +2044,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     final data = _timelineDay!;
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final tileConfig = AppConfig.mapTileConfig(isDark ? 'dark' : 'light');
     final mapBackground = isDark
         ? const Color(0xFF111315)
         : colorScheme.surfaceContainerHighest;
@@ -2163,9 +2164,9 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                   ),
                   children: [
                     TileLayer(
-                      urlTemplate:
-                          'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-                      subdomains: const ['a', 'b', 'c'],
+                      urlTemplate: tileConfig.urlTemplate,
+                      subdomains: tileConfig.subdomains,
+                      maxZoom: tileConfig.maxZoom.toDouble(),
                       userAgentPackageName: 'com.blue.app',
                       tileDisplay: isDark
                           ? const TileDisplay.instantaneous()
@@ -4815,10 +4816,7 @@ class _ProgressiveHeroImageState extends State<_ProgressiveHeroImage> {
         asset.fullUrl,
         headers: widget.headers,
       );
-      await precacheImage(
-        provider,
-        context,
-      );
+      await precacheImage(provider, context);
       if (!mounted || _fullReadyUrl != asset.fullUrl) return;
       setState(() {
         _fullReady = true;

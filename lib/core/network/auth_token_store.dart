@@ -8,6 +8,8 @@ class AuthTokenStore {
 
   static const _tokenKey = 'blue_mobile_access_token';
   static const _refreshTokenKey = 'blue_mobile_refresh_token';
+  static const _tokenExpiryKey = 'blue_mobile_access_token_expiry';
+  static const _refreshTokenExpiryKey = 'blue_mobile_refresh_token_expiry';
   static const _loginTicketKey = 'blue_mobile_login_ticket';
   static const _deviceIdKey = 'blue_mobile_device_id';
   static const _usernameKey = 'blue_mobile_username';
@@ -16,6 +18,8 @@ class AuthTokenStore {
   String? _cachedToken;
   String? _cachedRefreshToken;
   String? _cachedLoginTicket;
+  DateTime? _cachedTokenExpiry;
+  DateTime? _cachedRefreshTokenExpiry;
   String? _cachedDeviceId;
   String? _cachedUsername;
   String? _cachedThemeMode;
@@ -25,6 +29,10 @@ class AuthTokenStore {
   String? peekRefreshToken() => _cachedRefreshToken;
 
   String? peekLoginTicket() => _cachedLoginTicket;
+
+  DateTime? peekTokenExpiry() => _cachedTokenExpiry;
+
+  DateTime? peekRefreshTokenExpiry() => _cachedRefreshTokenExpiry;
 
   String? peekDeviceId() => _cachedDeviceId;
 
@@ -45,6 +53,20 @@ class AuthTokenStore {
   Future<String?> readLoginTicket() async {
     _cachedLoginTicket = await _storage.read(key: _loginTicketKey);
     return _cachedLoginTicket;
+  }
+
+  Future<DateTime?> readTokenExpiry() async {
+    _cachedTokenExpiry = _readDateTime(
+      await _storage.read(key: _tokenExpiryKey),
+    );
+    return _cachedTokenExpiry;
+  }
+
+  Future<DateTime?> readRefreshTokenExpiry() async {
+    _cachedRefreshTokenExpiry = _readDateTime(
+      await _storage.read(key: _refreshTokenExpiryKey),
+    );
+    return _cachedRefreshTokenExpiry;
   }
 
   Future<String> readOrCreateDeviceId() async {
@@ -80,6 +102,22 @@ class AuthTokenStore {
     await _storage.write(key: _refreshTokenKey, value: token);
   }
 
+  Future<void> writeTokenExpiry(DateTime expiry) async {
+    _cachedTokenExpiry = expiry;
+    await _storage.write(
+      key: _tokenExpiryKey,
+      value: expiry.toUtc().millisecondsSinceEpoch.toString(),
+    );
+  }
+
+  Future<void> writeRefreshTokenExpiry(DateTime expiry) async {
+    _cachedRefreshTokenExpiry = expiry;
+    await _storage.write(
+      key: _refreshTokenExpiryKey,
+      value: expiry.toUtc().millisecondsSinceEpoch.toString(),
+    );
+  }
+
   Future<void> writeLoginTicket(String token) async {
     _cachedLoginTicket = token;
     await _storage.write(key: _loginTicketKey, value: token);
@@ -105,6 +143,16 @@ class AuthTokenStore {
     await _storage.delete(key: _refreshTokenKey);
   }
 
+  Future<void> clearTokenExpiry() async {
+    _cachedTokenExpiry = null;
+    await _storage.delete(key: _tokenExpiryKey);
+  }
+
+  Future<void> clearRefreshTokenExpiry() async {
+    _cachedRefreshTokenExpiry = null;
+    await _storage.delete(key: _refreshTokenExpiryKey);
+  }
+
   Future<void> clearLoginTicket() async {
     _cachedLoginTicket = null;
     await _storage.delete(key: _loginTicketKey);
@@ -118,7 +166,20 @@ class AuthTokenStore {
   Future<void> clear() async {
     await clearToken();
     await clearRefreshToken();
+    await clearTokenExpiry();
+    await clearRefreshTokenExpiry();
     await clearLoginTicket();
     // Username intentionally preserved so login page can prefill it.
+  }
+
+  DateTime? _readDateTime(String? rawValue) {
+    if (rawValue == null || rawValue.isEmpty) {
+      return null;
+    }
+    final millis = int.tryParse(rawValue);
+    if (millis == null) {
+      return null;
+    }
+    return DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true);
   }
 }

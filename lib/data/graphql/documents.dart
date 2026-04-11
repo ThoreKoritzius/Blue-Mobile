@@ -624,7 +624,7 @@ query TimelineDay($date: String!) {
       id name type distanceMeters movingTimeSeconds summaryPolyline startTime
     }
     imageLocations(date: $date) {
-      lat lon path
+      lat lon path timestamp
     }
     segments(date: $date) {
       id segmentType startTime endTime durationMinutes placeId placeName placeAddress placeLat placeLon activityType startLat startLon endLat endLon distanceMeters source

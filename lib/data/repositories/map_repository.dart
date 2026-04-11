@@ -13,12 +13,14 @@ class MapPoint {
     required this.lat,
     required this.lon,
     required this.path,
+    required this.sourcePath,
   });
 
   final String date;
   final double lat;
   final double lon;
   final String path;
+  final String sourcePath;
 }
 
 class MapImagePage {
@@ -31,13 +33,17 @@ class MapImagePage {
 class TimelineImageLocation {
   const TimelineImageLocation({
     required this.path,
+    required this.sourcePath,
     required this.lat,
     required this.lon,
+    this.timestamp,
   });
 
   final String path;
+  final String sourcePath;
   final double lat;
   final double lon;
+  final DateTime? timestamp;
 }
 
 class TimelineRun {
@@ -288,6 +294,7 @@ class MapRepository {
             lat: gps.$1,
             lon: gps.$2,
             path: AppConfig.imageUrlFromPath(fileName, date: date),
+            sourcePath: rawPath,
           ),
         );
       }
@@ -481,8 +488,10 @@ class MapRepository {
                 path.split('/').last,
                 date: date,
               ),
+              sourcePath: path,
               lat: lat,
               lon: lon,
+              timestamp: DateTime.tryParse((r['timestamp'] ?? '').toString()),
             ),
           );
         } catch (error, stackTrace) {

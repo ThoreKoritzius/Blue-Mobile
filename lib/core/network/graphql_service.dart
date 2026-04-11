@@ -19,11 +19,10 @@ class GraphqlService {
   late final http.Client _httpClient = createGraphqlHttpClient();
   // Separate client for mutations so saves never queue behind heavy read requests
   late final http.Client _mutationHttpClient = createGraphqlHttpClient();
-  late final GraphQLClient _multipartGraphqlClient = _buildMultipartClient();
-
   bool _refreshing = false;
   Completer<bool>? _refreshCompleter;
   String? _csrfToken;
+  static const Duration _refreshLeadTime = Duration(minutes: 3);
 
   void _log(String message) {
     debugPrint('[AUTH] $message');
@@ -38,6 +37,53 @@ class GraphqlService {
       if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
       'X-Blue-Client': 'mobile',
     };
+  }
+
+  Future<void> _hydrateAuthCache() async {
+    if (kIsWeb) return;
+    if (_tokenStore.peekToken() == null) {
+      await _tokenStore.readToken();
+    }
+    if (_tokenStore.peekRefreshToken() == null) {
+      await _tokenStore.readRefreshToken();
+    }
+    if (_tokenStore.peekDeviceId() == null) {
+      await _tokenStore.readOrCreateDeviceId();
+    }
+    if (_tokenStore.peekTokenExpiry() == null) {
+      await _tokenStore.readTokenExpiry();
+    }
+    if (_tokenStore.peekRefreshTokenExpiry() == null) {
+      await _tokenStore.readRefreshTokenExpiry();
+    }
+  }
+
+  Future<bool> ensureFreshSession() async {
+    if (kIsWeb) return true;
+    await _hydrateAuthCache();
+    final refreshToken = _tokenStore.peekRefreshToken();
+    if (refreshToken == null || refreshToken.isEmpty) {
+      return false;
+    }
+    final refreshExpiry = _tokenStore.peekRefreshTokenExpiry();
+    final now = DateTime.now().toUtc();
+    if (refreshExpiry != null && !refreshExpiry.isAfter(now)) {
+      _log('refresh token expired — forcing logout');
+      await _tokenStore.clear();
+      await onSessionExpired?.call();
+      return false;
+    }
+    final accessToken = _tokenStore.peekToken();
+    final accessExpiry = _tokenStore.peekTokenExpiry();
+    final needsRefresh =
+        accessToken == null ||
+        accessToken.isEmpty ||
+        accessExpiry == null ||
+        !accessExpiry.isAfter(now.add(_refreshLeadTime));
+    if (!needsRefresh) {
+      return true;
+    }
+    return _tryRefresh();
   }
 
   Future<String?> _getCsrfToken({bool forceRefresh = false}) async {
@@ -63,23 +109,6 @@ class GraphqlService {
     return _csrfToken;
   }
 
-  GraphQLClient _buildMultipartClient() {
-    final httpLink = HttpLink(
-      AppConfig.graphqlHttpUrl,
-      httpClient: _mutationHttpClient,
-    );
-
-    return GraphQLClient(
-      cache: GraphQLCache(store: InMemoryStore()),
-      link: httpLink,
-      defaultPolicies: DefaultPolicies(
-        query: Policies(fetch: FetchPolicy.networkOnly),
-        mutate: Policies(fetch: FetchPolicy.networkOnly),
-        subscribe: Policies(fetch: FetchPolicy.networkOnly),
-      ),
-    );
-  }
-
   /// Attempts to refresh the access token using the stored refresh token.
   /// Returns true if refresh succeeded (new tokens stored), false otherwise.
   /// Concurrent callers wait for the in-flight refresh via a Completer.
@@ -89,6 +118,7 @@ class GraphqlService {
     _refreshCompleter = Completer<bool>();
 
     try {
+      await _hydrateAuthCache();
       final refreshToken = _tokenStore.peekRefreshToken();
       if (refreshToken == null || refreshToken.isEmpty) {
         _log('no refresh token — forcing logout');
@@ -122,6 +152,21 @@ class GraphqlService {
           await _tokenStore.writeRefreshToken(
             (body['refreshToken'] ?? '').toString(),
           );
+          final now = DateTime.now().toUtc();
+          final accessExpiresIn =
+              int.tryParse((body['expiresIn'] ?? '').toString()) ?? 0;
+          final refreshExpiresIn =
+              int.tryParse((body['refreshExpiresIn'] ?? '').toString()) ?? 0;
+          if (accessExpiresIn > 0) {
+            await _tokenStore.writeTokenExpiry(
+              now.add(Duration(seconds: accessExpiresIn)),
+            );
+          }
+          if (refreshExpiresIn > 0) {
+            await _tokenStore.writeRefreshTokenExpiry(
+              now.add(Duration(seconds: refreshExpiresIn)),
+            );
+          }
           _log('token refresh succeeded');
           _refreshCompleter!.complete(true);
           return true;
@@ -151,6 +196,7 @@ class GraphqlService {
     Map<String, dynamic> variables = const {},
   }) async {
     try {
+      await ensureFreshSession();
       _log('graphql query ${AppConfig.graphqlHttpUrl}');
       return await _postJsonGraphql(document, variables: variables);
     } on TimeoutException {
@@ -165,6 +211,7 @@ class GraphqlService {
     Map<String, dynamic> variables = const {},
   }) async {
     try {
+      await ensureFreshSession();
       _log('graphql mutate ${AppConfig.graphqlHttpUrl}');
       return await _postJsonGraphql(
         document,
@@ -187,6 +234,7 @@ class GraphqlService {
   }) async {
     final effectiveTimeout = timeout ?? requestTimeout;
     try {
+      await ensureFreshSession();
       return await _doMultipartWithProgress(
         document,
         variables: variables,
@@ -209,15 +257,6 @@ class GraphqlService {
     Duration? timeout,
     bool isRetry = false,
   }) async {
-    if (kIsWeb) {
-      return _doMultipartViaGraphqlClient(
-        document,
-        variables: variables,
-        files: files,
-        timeout: timeout,
-      );
-    }
-
     final csrfToken = await _getCsrfToken();
     final request = _ProgressMultipartRequest(
       'POST',
@@ -251,8 +290,9 @@ class GraphqlService {
       );
     }
 
-    final streamed =
-        await _mutationHttpClient.send(request).timeout(timeout ?? requestTimeout);
+    final streamed = await _mutationHttpClient
+        .send(request)
+        .timeout(timeout ?? requestTimeout);
     final response = await http.Response.fromStream(streamed);
     final decoded = jsonDecode(response.body);
     if (decoded is! Map<String, dynamic>) {
@@ -300,46 +340,6 @@ class GraphqlService {
     }
     final data = decoded['data'];
     return data is Map<String, dynamic> ? data : <String, dynamic>{};
-  }
-
-  Future<Map<String, dynamic>> _doMultipartViaGraphqlClient(
-    String document, {
-    Map<String, dynamic> variables = const {},
-    required List<MultipartUploadFile> files,
-    Duration? timeout,
-  }) async {
-    final csrfToken = await _getCsrfToken();
-    final graphqlFiles = [
-      for (final file in files)
-        http.MultipartFile.fromBytes(
-          'files',
-          file.bytes,
-          filename: file.filename,
-        ),
-    ];
-
-    final result = await _multipartGraphqlClient
-        .mutate(
-          MutationOptions(
-            document: gql(document),
-            variables: {
-              ...variables,
-              'files': graphqlFiles,
-            },
-            context: Context.fromList([
-              HttpLinkHeaders(
-                headers: {
-                  ...buildAuthHeaders(),
-                  if (csrfToken != null && csrfToken.isNotEmpty)
-                    'X-CSRF-Token': csrfToken,
-                },
-              ),
-            ]),
-          ),
-        )
-        .timeout(timeout ?? requestTimeout);
-    _throwIfError(result);
-    return result.data ?? <String, dynamic>{};
   }
 
   Future<Map<String, dynamic>> _postJsonGraphql(

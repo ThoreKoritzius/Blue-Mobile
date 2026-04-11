@@ -11,6 +11,7 @@ import 'package:latlong2/latlong.dart';
 import '../../core/config/app_config.dart';
 import '../../core/widgets/protected_network_image.dart';
 import '../../core/widgets/calendar_event_detail_sheet.dart';
+import '../../core/widgets/fullscreen_image_viewer.dart';
 import '../../core/utils/date_format.dart';
 import '../../data/models/run_model.dart';
 import '../../data/repositories/map_repository.dart';
@@ -120,6 +121,8 @@ class _MapPageState extends ConsumerState<MapPage>
   final DraggableScrollableController _sheetController =
       DraggableScrollableController();
   AnimationController? _daySwitchMapAnimation;
+  final Map<String, GlobalKey> _visitTimelineKeys = <String, GlobalKey>{};
+  final Map<String, GlobalKey> _runTimelineKeys = <String, GlobalKey>{};
 
   @override
   void initState() {
@@ -686,23 +689,13 @@ class _MapPageState extends ConsumerState<MapPage>
         if (pts.length < 2) continue;
         final color = const Color(0xFFFF9800);
         runPolylines.add(Polyline(points: pts, strokeWidth: 3, color: color));
-        // Try to find the matching full RunOverlay for the sheet.
-        final matchingOverlay = _runs
-            .where((r) => r.run.id == run.id)
-            .firstOrNull;
         runMarkers.add(
           Marker(
             point: pts.first,
             width: 28,
             height: 28,
             child: GestureDetector(
-              onTap: () {
-                if (matchingOverlay != null) {
-                  _showRunSheet(matchingOverlay);
-                } else {
-                  _showDayRunSheet(run);
-                }
-              },
+              onTap: () => _onRunMarkerTapped(run),
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   color: color.withValues(alpha: 0.88),
@@ -826,14 +819,16 @@ class _MapPageState extends ConsumerState<MapPage>
       onSegmentTapped: _onSegmentTapped,
       onCalendarEventTapped: _onCalendarEventTapped,
       onRunTapped: _onRunTapped,
-      onImageTapped: (TimelineImageLocation img) =>
-          _showDayImageSheet(img, _dayViewDate),
+      onImageTapped: (List<TimelineImageLocation> imgs, int index) =>
+          _showDayImageViewer(imgs, date: _dayViewDate, initialIndex: index),
       selectedVisitPlaceId: _selectedVisitPlaceId,
       selectedRunId: _selectedRunId,
       isLoading: _dayViewLoading,
       errorText: _dayViewError,
       authHeaders: _authHeaders(),
       authenticateUrl: _authenticatedUrl,
+      visitKeyForPlaceId: _visitTimelineKey,
+      runKeyForRunId: _runTimelineKey,
       runColors: {
         for (final r in data?.runs ?? <TimelineRun>[])
           r.id: const Color(0xFFFF9800),
@@ -962,6 +957,8 @@ class _MapPageState extends ConsumerState<MapPage>
                   sheetController: _sheetController,
                   authHeaders: sheetParams.authHeaders,
                   authenticateUrl: sheetParams.authenticateUrl,
+                  visitKeyForPlaceId: sheetParams.visitKeyForPlaceId,
+                  runKeyForRunId: sheetParams.runKeyForRunId,
                   runColors: sheetParams.runColors,
                   onAddVisit: _showAddVisitDialog,
                   onDeleteSegment: _deleteManualVisit,
@@ -993,6 +990,8 @@ class _MapPageState extends ConsumerState<MapPage>
                   errorText: sheetParams.errorText,
                   authHeaders: sheetParams.authHeaders,
                   authenticateUrl: sheetParams.authenticateUrl,
+                  visitKeyForPlaceId: sheetParams.visitKeyForPlaceId,
+                  runKeyForRunId: sheetParams.runKeyForRunId,
                   runColors: sheetParams.runColors,
                   onAddVisit: _showAddVisitDialog,
                   onDeleteSegment: _deleteManualVisit,
@@ -1019,6 +1018,9 @@ class _MapPageState extends ConsumerState<MapPage>
     return showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      constraints: BoxConstraints.tightFor(
+        width: MediaQuery.of(context).size.width,
+      ),
       builder: (context) {
         return SafeArea(
           child: SingleChildScrollView(
@@ -1068,49 +1070,33 @@ class _MapPageState extends ConsumerState<MapPage>
   }
 
   Future<void> _showDayImageSheet(TimelineImageLocation img, String date) {
-    return showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) {
-        return SafeArea(
-          child: SingleChildScrollView(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(date, style: Theme.of(context).textTheme.titleLarge),
-                  const SizedBox(height: 12),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: ProtectedNetworkImage(
-                      imageUrl: _authenticatedUrl(img.path),
-                      headers: _authHeaders(),
-                      height: 220,
-                      fit: BoxFit.cover,
-                      errorWidget: Container(
-                        height: 220,
-                        color: const Color(0x11000000),
-                        alignment: Alignment.center,
-                        child: const Icon(Icons.image_not_supported_outlined),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  FilledButton(
-                    onPressed: () {
-                      Navigator.of(context).pop();
-                      _openDay(date);
-                    },
-                    child: const Text('Open day'),
-                  ),
-                ],
-              ),
-            ),
+    return _showDayImageViewer([img], date: date);
+  }
+
+  Future<void> _showDayImageViewer(
+    List<TimelineImageLocation> images, {
+    required String date,
+    int initialIndex = 0,
+  }) {
+    final repo = ref.read(filesRepositoryProvider);
+    final items = images
+        .map(
+          (img) => ImageViewerItem(
+            fullUrl: _authenticatedUrl(img.path),
+            thumbnailUrl: _authenticatedUrl(img.path),
+            fileName: img.sourcePath.split('/').last,
+            path: img.sourcePath,
+            date: date,
+            gps: '${img.lat}, ${img.lon}',
           ),
-        );
-      },
+        )
+        .toList();
+    return FullscreenImageViewer.show(
+      context: context,
+      images: items,
+      initialIndex: initialIndex.clamp(0, items.length - 1),
+      httpHeaders: _authHeaders(),
+      fetchImageInfo: (path) => repo.getImageInfo(path),
     );
   }
 
@@ -1276,52 +1262,22 @@ class _MapPageState extends ConsumerState<MapPage>
   }
 
   Future<void> _showImageSheet(_ImageOverlay image) {
-    return showModalBottomSheet<void>(
+    final repo = ref.read(filesRepositoryProvider);
+    return FullscreenImageViewer.show(
       context: context,
-      showDragHandle: true,
-      builder: (context) {
-        return SafeArea(
-          child: SingleChildScrollView(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    image.point.date,
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 12),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: ProtectedNetworkImage(
-                      imageUrl: _authenticatedUrl(image.point.path),
-                      headers: _authHeaders(),
-                      height: 220,
-                      fit: BoxFit.cover,
-                      errorWidget: Container(
-                        height: 220,
-                        color: const Color(0x11000000),
-                        alignment: Alignment.center,
-                        child: const Icon(Icons.image_not_supported_outlined),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  FilledButton(
-                    onPressed: () {
-                      Navigator.of(context).pop();
-                      _openDay(image.point.date);
-                    },
-                    child: const Text('Open day'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
+      images: [
+        ImageViewerItem(
+          fullUrl: _authenticatedUrl(image.point.path),
+          thumbnailUrl: _authenticatedUrl(image.point.path),
+          fileName: image.point.sourcePath.split('/').last,
+          path: image.point.sourcePath,
+          date: image.point.date,
+          gps: '${image.point.lat}, ${image.point.lon}',
+        ),
+      ],
+      initialIndex: 0,
+      httpHeaders: _authHeaders(),
+      fetchImageInfo: (path) => repo.getImageInfo(path),
     );
   }
 
@@ -1329,6 +1285,9 @@ class _MapPageState extends ConsumerState<MapPage>
     return showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      constraints: BoxConstraints.tightFor(
+        width: MediaQuery.of(context).size.width,
+      ),
       builder: (context) {
         final run = runOverlay.run;
         return SafeArea(
@@ -1465,6 +1424,8 @@ class _MapPageState extends ConsumerState<MapPage>
       _dayViewDates = dates;
       _dayViewDateIndex = idx;
       _dayViewDate = date;
+      _visitTimelineKeys.clear();
+      _runTimelineKeys.clear();
     });
     await _loadDayView(date);
   }
@@ -1490,6 +1451,8 @@ class _MapPageState extends ConsumerState<MapPage>
       _dayViewDate = date;
       _selectedVisitPlaceId = null;
       _selectedRunId = null;
+      _visitTimelineKeys.clear();
+      _runTimelineKeys.clear();
     });
     try {
       final data = await ref
@@ -1787,18 +1750,63 @@ class _MapPageState extends ConsumerState<MapPage>
     _animateMapTo(center: targetCamera.center, zoom: targetCamera.zoom);
   }
 
-  void _onVisitMarkerTapped(TimelineVisit visit) {
+  GlobalKey _visitTimelineKey(String placeId) {
+    return _visitTimelineKeys.putIfAbsent(
+      placeId,
+      () => GlobalKey(debugLabel: 'visit-$placeId'),
+    );
+  }
+
+  GlobalKey _runTimelineKey(String runId) {
+    return _runTimelineKeys.putIfAbsent(
+      runId,
+      () => GlobalKey(debugLabel: 'run-$runId'),
+    );
+  }
+
+  Future<void> _expandSheetForSelection() async {
+    if (_useWideLayout || kIsWeb || !_sheetController.isAttached) return;
+    final targetSize = math.max(_sheetController.size, 0.6);
+    await _sheetController.animateTo(
+      targetSize,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  Future<void> _scrollToTimelineKey(GlobalKey key) async {
+    await _expandSheetForSelection();
+    if (!mounted) return;
+
+    BuildContext? targetContext = key.currentContext;
+    if (targetContext == null) {
+      await Future<void>.delayed(const Duration(milliseconds: 16));
+      if (!mounted) return;
+      targetContext = key.currentContext;
+    }
+    if (targetContext == null) return;
+
+    await Scrollable.ensureVisible(
+      targetContext,
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+      alignment: 0.12,
+      alignmentPolicy: ScrollPositionAlignmentPolicy.explicit,
+    );
+  }
+
+  Future<void> _onVisitMarkerTapped(TimelineVisit visit) async {
+    final placeId = visit.placeId;
+    if (placeId.isEmpty) return;
+    if (_selectedVisitPlaceId == placeId) {
+      _deselectAndFitOverview();
+      return;
+    }
     setState(() {
-      _selectedVisitPlaceId = visit.placeId;
+      _selectedVisitPlaceId = placeId;
       _selectedRunId = null;
     });
-    if (!_useWideLayout && _sheetController.isAttached) {
-      _sheetController.animateTo(
-        0.6,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeOut,
-      );
-    }
+    await _scrollToTimelineKey(_visitTimelineKey(placeId));
   }
 
   void _deselectAndFitOverview() {
@@ -1822,6 +1830,18 @@ class _MapPageState extends ConsumerState<MapPage>
     if (visit.lat != null && visit.lon != null) {
       _flyToPoint(LatLng(visit.lat!, visit.lon!));
     }
+  }
+
+  Future<void> _onRunMarkerTapped(TimelineRun run) async {
+    if (_selectedRunId == run.id) {
+      _deselectAndFitOverview();
+      return;
+    }
+    setState(() {
+      _selectedRunId = run.id;
+      _selectedVisitPlaceId = null;
+    });
+    await _scrollToTimelineKey(_runTimelineKey(run.id));
   }
 
   void _onRunTapped(TimelineRun run) {
@@ -2279,6 +2299,8 @@ class _DayBottomSheet extends StatelessWidget {
     required this.runColors,
     required this.onRunTapped,
     required this.onImageTapped,
+    required this.visitKeyForPlaceId,
+    required this.runKeyForRunId,
     required this.isLoading,
     required this.errorText,
     this.sheetController,
@@ -2300,7 +2322,10 @@ class _DayBottomSheet extends StatelessWidget {
   final void Function(TimelineSegment segment) onSegmentTapped;
   final void Function(TimelineCalendarEvent event) onCalendarEventTapped;
   final void Function(TimelineRun run) onRunTapped;
-  final void Function(TimelineImageLocation img) onImageTapped;
+  final void Function(List<TimelineImageLocation> imgs, int index)
+  onImageTapped;
+  final GlobalKey Function(String placeId) visitKeyForPlaceId;
+  final GlobalKey Function(String runId) runKeyForRunId;
   final String? selectedVisitPlaceId;
   final String? selectedRunId;
   final bool isLoading;
@@ -2344,6 +2369,7 @@ class _DayBottomSheet extends StatelessWidget {
     final images = data?.imageLocations ?? const [];
     final runs = data?.runs ?? const [];
     final calendarEvents = data?.calendarEvents ?? const [];
+    final keyedVisitPlaceIds = <String>{};
 
     // Build run lookup by ID.
     final runById = <String, TimelineRun>{};
@@ -2462,10 +2488,39 @@ class _DayBottomSheet extends StatelessWidget {
     }
     entries.sort((a, b) => a.time.compareTo(b.time));
 
-    // Assign images to nearest visit segment by lat/lon proximity.
+    final sortedImages = [...images]
+      ..sort((a, b) {
+        final aTime = a.timestamp;
+        final bTime = b.timestamp;
+        if (aTime == null && bTime == null) return 0;
+        if (aTime == null) return 1;
+        if (bTime == null) return -1;
+        return aTime.compareTo(bTime);
+      });
+
+    // Assign images by capture time so photo strips appear in chronological order.
+    final leadingImages = <TimelineImageLocation>[];
     final imagesByEntryIndex = <int, List<TimelineImageLocation>>{};
     final unassignedImages = <TimelineImageLocation>[];
-    for (final img in images) {
+    for (final img in sortedImages) {
+      final imageTime = img.timestamp;
+      if (imageTime != null && entries.isNotEmpty) {
+        int? insertAfter;
+        for (var i = 0; i < entries.length; i++) {
+          if (!entries[i].time.isAfter(imageTime)) {
+            insertAfter = i;
+          } else {
+            break;
+          }
+        }
+        if (insertAfter == null) {
+          leadingImages.add(img);
+        } else {
+          (imagesByEntryIndex[insertAfter] ??= []).add(img);
+        }
+        continue;
+      }
+
       int? bestIdx;
       double bestDist = 0.005; // ~500m threshold in degrees²
       for (var i = 0; i < entries.length; i++) {
@@ -2489,13 +2544,18 @@ class _DayBottomSheet extends StatelessWidget {
       }
     }
 
-    final hasTimeline = entries.isNotEmpty || unassignedImages.isNotEmpty;
+    final hasTimeline =
+        entries.isNotEmpty ||
+        leadingImages.isNotEmpty ||
+        unassignedImages.isNotEmpty;
 
     final timelineChildren = _buildTimelineContent(
       context,
       entries: entries,
+      leadingImages: leadingImages,
       imagesByEntryIndex: imagesByEntryIndex,
       unassignedImages: unassignedImages,
+      keyedVisitPlaceIds: keyedVisitPlaceIds,
       runById: runById,
       hasTimeline: hasTimeline,
       isLoading: isLoading,
@@ -2505,13 +2565,19 @@ class _DayBottomSheet extends StatelessWidget {
     if (isWideLayout) {
       return Container(
         color: _timelinePanelColor(context),
-        child: ListView(
-          padding: EdgeInsets.zero,
+        child: Column(
           children: [
             const SizedBox(height: 12),
             _buildSlider(context, safeIndex),
-            ...timelineChildren,
-            SizedBox(height: MediaQuery.of(context).padding.bottom + 16),
+            Expanded(
+              child: ListView(
+                padding: EdgeInsets.zero,
+                children: [
+                  ...timelineChildren,
+                  SizedBox(height: MediaQuery.of(context).padding.bottom + 16),
+                ],
+              ),
+            ),
           ],
         ),
       );
@@ -2530,8 +2596,7 @@ class _DayBottomSheet extends StatelessWidget {
             color: _timelinePanelColor(context),
             borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
           ),
-          child: ListView(
-            padding: EdgeInsets.zero,
+          child: Column(
             children: [
               Center(
                 child: Container(
@@ -2547,8 +2612,17 @@ class _DayBottomSheet extends StatelessWidget {
                 ),
               ),
               _buildSlider(context, safeIndex),
-              ...timelineChildren,
-              SizedBox(height: MediaQuery.of(context).padding.bottom + 16),
+              Expanded(
+                child: ListView(
+                  padding: EdgeInsets.zero,
+                  children: [
+                    ...timelineChildren,
+                    SizedBox(
+                      height: MediaQuery.of(context).padding.bottom + 16,
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -2568,27 +2642,45 @@ class _DayBottomSheet extends StatelessWidget {
             color: _timelinePanelColor(context),
             borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
           ),
-          child: ListView(
+          child: CustomScrollView(
             controller: scrollController,
-            padding: EdgeInsets.zero,
-            children: [
-              // Drag handle
-              Center(
-                child: Container(
-                  margin: const EdgeInsets.only(top: 10, bottom: 4),
-                  width: 36,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
-                    borderRadius: BorderRadius.circular(2),
+            slivers: [
+              SliverToBoxAdapter(
+                child: Center(
+                  child: Container(
+                    margin: const EdgeInsets.only(top: 10, bottom: 4),
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
                 ),
               ),
-              _buildSlider(context, safeIndex),
-              ...timelineChildren,
-              SizedBox(height: MediaQuery.of(context).padding.bottom + 16),
+              SliverAppBar(
+                pinned: true,
+                automaticallyImplyLeading: false,
+                toolbarHeight: 72,
+                backgroundColor: _timelinePanelColor(context),
+                surfaceTintColor: Colors.transparent,
+                elevation: 0,
+                scrolledUnderElevation: 0,
+                titleSpacing: 0,
+                title: _buildSlider(context, safeIndex),
+              ),
+              SliverToBoxAdapter(
+                child: Column(
+                  children: [
+                    ...timelineChildren,
+                    SizedBox(
+                      height: MediaQuery.of(context).padding.bottom + 16,
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         );
@@ -2607,8 +2699,10 @@ class _DayBottomSheet extends StatelessWidget {
       })
     >
     entries,
+    required List<TimelineImageLocation> leadingImages,
     required Map<int, List<TimelineImageLocation>> imagesByEntryIndex,
     required List<TimelineImageLocation> unassignedImages,
+    required Set<String> keyedVisitPlaceIds,
     required Map<String, TimelineRun> runById,
     required bool hasTimeline,
     required bool isLoading,
@@ -2669,15 +2763,22 @@ class _DayBottomSheet extends StatelessWidget {
               top: 8,
               bottom: 8,
               child: Container(
-                width: 1,
+                width: 2,
                 color: colorScheme.outlineVariant.withValues(alpha: 0.45),
               ),
             ),
             Column(
               children: [
+                if (leadingImages.isNotEmpty)
+                  _buildImageStrip(context, leadingImages),
                 for (var i = 0; i < entries.length; i++) ...[
                   if (entries[i].seg != null)
-                    _buildSegmentTile(context, entries[i].seg!, runById)
+                    _buildSegmentTile(
+                      context,
+                      entries[i].seg!,
+                      runById,
+                      keyedVisitPlaceIds,
+                    )
                   else if (entries[i].calendar != null)
                     _buildCalendarEntryTile(context, entries[i].calendar!)
                   else
@@ -2997,15 +3098,20 @@ class _DayBottomSheet extends StatelessWidget {
     BuildContext context,
     TimelineSegment segment,
     Map<String, TimelineRun> runById,
+    Set<String> keyedVisitPlaceIds,
   ) {
     if (segment.isVisit) {
-      return _buildVisitSegmentTile(context, segment);
+      return _buildVisitSegmentTile(context, segment, keyedVisitPlaceIds);
     } else {
       return _buildActivitySegmentTile(context, segment, runById);
     }
   }
 
-  Widget _buildVisitSegmentTile(BuildContext context, TimelineSegment seg) {
+  Widget _buildVisitSegmentTile(
+    BuildContext context,
+    TimelineSegment seg,
+    Set<String> keyedVisitPlaceIds,
+  ) {
     final colorScheme = Theme.of(context).colorScheme;
     final isSelected = seg.placeId == selectedVisitPlaceId;
     final hasLocation = seg.placeLat != null && seg.placeLon != null;
@@ -3017,103 +3123,116 @@ class _DayBottomSheet extends StatelessWidget {
         : colorScheme.outlineVariant;
     final resolvedMarkerAccent = _timelineResolvedAccent(context, markerAccent);
 
-    return GestureDetector(
-      onTap: () => onSegmentTapped(seg),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        margin: const EdgeInsets.fromLTRB(10, 4, 10, 4),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        decoration: _timelineTileDecoration(context, selected: isSelected),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: _timelineTimeWidth,
-              child: Text(
-                timeLabel,
-                style: _timelineTimeStyle(context, selected: isSelected),
+    final placeId = seg.placeId;
+    final anchorKey = placeId != null && keyedVisitPlaceIds.add(placeId)
+        ? visitKeyForPlaceId(placeId)
+        : null;
+
+    return KeyedSubtree(
+      key: anchorKey,
+      child: GestureDetector(
+        onTap: () => onSegmentTapped(seg),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          margin: const EdgeInsets.fromLTRB(10, 4, 10, 4),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          decoration: _timelineTileDecoration(context, selected: isSelected),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: _timelineTimeWidth,
+                child: Text(
+                  timeLabel,
+                  style: _timelineTimeStyle(context, selected: isSelected),
+                ),
               ),
-            ),
-            Container(
-              width: _timelineMarkerSize,
-              height: _timelineMarkerSize,
-              decoration: _timelineMarkerDecoration(
-                context,
-                accent: markerAccent,
-                selected: isSelected,
-              ),
-              child: Icon(
-                Icons.location_on,
-                size: 15,
-                color: _timelineMarkerIconColor(
+              Container(
+                width: _timelineMarkerSize,
+                height: _timelineMarkerSize,
+                decoration: _timelineMarkerDecoration(
                   context,
                   accent: markerAccent,
                   selected: isSelected,
                 ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    displayName,
-                    style: _timelineTitleStyle(context).copyWith(
-                      color: hasLocation
-                          ? resolvedMarkerAccent
-                          : colorScheme.onSurfaceVariant,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+                child: Icon(
+                  Icons.location_on,
+                  size: 15,
+                  color: _timelineMarkerIconColor(
+                    context,
+                    accent: markerAccent,
+                    selected: isSelected,
                   ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      if (seg.placeAddress != null) ...[
-                        Flexible(
-                          child: Text(
-                            seg.placeAddress!,
-                            style: _timelineMetaStyle(context),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        Text(
-                          '  ·  ',
-                          style: TextStyle(
-                            color: colorScheme.outlineVariant,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ],
-                      Text(durationLabel, style: _timelineMetaStyle(context)),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            if (seg.isManual && seg.id != null && onDeleteSegment != null)
-              SizedBox(
-                width: 28,
-                height: 28,
-                child: IconButton(
-                  padding: EdgeInsets.zero,
-                  iconSize: 18,
-                  icon: Icon(
-                    Icons.close,
-                    color: colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
-                  ),
-                  tooltip: 'Delete',
-                  onPressed: () => onDeleteSegment!(seg.id!),
                 ),
-              )
-            else if (hasLocation)
-              Icon(
-                Icons.chevron_right,
-                size: 16,
-                color: _timelineChevronColor(context, highlighted: isSelected),
               ),
-          ],
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      displayName,
+                      style: _timelineTitleStyle(context).copyWith(
+                        color: hasLocation
+                            ? resolvedMarkerAccent
+                            : colorScheme.onSurfaceVariant,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        if (seg.placeAddress != null) ...[
+                          Flexible(
+                            child: Text(
+                              seg.placeAddress!,
+                              style: _timelineMetaStyle(context),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          Text(
+                            '  ·  ',
+                            style: TextStyle(
+                              color: colorScheme.outlineVariant,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                        Text(durationLabel, style: _timelineMetaStyle(context)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              if (seg.isManual && seg.id != null && onDeleteSegment != null)
+                SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: IconButton(
+                    padding: EdgeInsets.zero,
+                    iconSize: 18,
+                    icon: Icon(
+                      Icons.close,
+                      color: colorScheme.onSurfaceVariant.withValues(
+                        alpha: 0.7,
+                      ),
+                    ),
+                    tooltip: 'Delete',
+                    onPressed: () => onDeleteSegment!(seg.id!),
+                  ),
+                )
+              else if (hasLocation)
+                Icon(
+                  Icons.chevron_right,
+                  size: 16,
+                  color: _timelineChevronColor(
+                    context,
+                    highlighted: isSelected,
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -3378,74 +3497,77 @@ class _DayBottomSheet extends StatelessWidget {
       subtitleParts.add(_formatDuration(mins));
     }
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => onRunTapped(run),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        margin: const EdgeInsets.fromLTRB(10, 4, 10, 4),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        decoration: _timelineTileDecoration(context, selected: isSelected),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: _timelineTimeWidth,
-              child: Text(
-                timeLabel,
-                style: _timelineTimeStyle(context, selected: isSelected),
+    return KeyedSubtree(
+      key: runKeyForRunId(run.id),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => onRunTapped(run),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          margin: const EdgeInsets.fromLTRB(10, 4, 10, 4),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          decoration: _timelineTileDecoration(context, selected: isSelected),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: _timelineTimeWidth,
+                child: Text(
+                  timeLabel,
+                  style: _timelineTimeStyle(context, selected: isSelected),
+                ),
               ),
-            ),
-            Container(
-              width: _timelineMarkerSize,
-              height: _timelineMarkerSize,
-              decoration: _timelineMarkerDecoration(
-                context,
-                accent: resolvedRunColor,
-                selected: isSelected,
-              ),
-              child: Icon(
-                Icons.directions_run,
-                size: 15,
-                color: _timelineMarkerIconColor(
+              Container(
+                width: _timelineMarkerSize,
+                height: _timelineMarkerSize,
+                decoration: _timelineMarkerDecoration(
                   context,
                   accent: resolvedRunColor,
                   selected: isSelected,
                 ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    run.name.isNotEmpty ? run.name : 'Run',
-                    style: _timelineTitleStyle(
-                      context,
-                    ).copyWith(color: resolvedRunColor),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+                child: Icon(
+                  Icons.directions_run,
+                  size: 15,
+                  color: _timelineMarkerIconColor(
+                    context,
+                    accent: resolvedRunColor,
+                    selected: isSelected,
                   ),
-                  if (subtitleParts.isNotEmpty) ...[
-                    const SizedBox(height: 4),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Text(
-                      subtitleParts.join('  ·  '),
-                      style: _timelineMetaStyle(context),
+                      run.name.isNotEmpty ? run.name : 'Run',
+                      style: _timelineTitleStyle(
+                        context,
+                      ).copyWith(color: resolvedRunColor),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                     ),
+                    if (subtitleParts.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitleParts.join('  ·  '),
+                        style: _timelineMetaStyle(context),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
-            ),
-            if (run.summaryPolyline.isNotEmpty)
-              Icon(
-                Icons.chevron_right,
-                size: 16,
-                color: isSelected
-                    ? resolvedRunColor
-                    : _timelineChevronColor(context),
-              ),
-          ],
+              if (run.summaryPolyline.isNotEmpty)
+                Icon(
+                  Icons.chevron_right,
+                  size: 16,
+                  color: isSelected
+                      ? resolvedRunColor
+                      : _timelineChevronColor(context),
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -3601,26 +3723,29 @@ class _DayBottomSheet extends StatelessWidget {
           itemBuilder: (context, index) {
             if (index >= showCount) {
               // "+N more" badge
-              return Container(
-                width: 68,
-                height: 68,
-                decoration: BoxDecoration(
-                  color: const Color(0x33FFFFFF),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  '+$remaining',
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
+              return GestureDetector(
+                onTap: () => onImageTapped(imgs, showCount),
+                child: Container(
+                  width: 68,
+                  height: 68,
+                  decoration: BoxDecoration(
+                    color: const Color(0x33FFFFFF),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    '+$remaining',
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               );
             }
             return GestureDetector(
-              onTap: () => onImageTapped(imgs[index]),
+              onTap: () => onImageTapped(imgs, index),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(14),
                 child: ProtectedNetworkImage(

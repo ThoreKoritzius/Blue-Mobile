@@ -44,6 +44,28 @@ class GraphqlAuthRepository implements AuthRepository {
   final AuthTokenStore _tokenStore;
   String? _csrfToken;
 
+  Future<void> _storeMobileTokenMetadata(Map<String, dynamic> payload) async {
+    final now = DateTime.now().toUtc();
+    final accessExpiresIn = _readDurationSeconds(payload['expiresIn']);
+    final refreshExpiresIn = _readDurationSeconds(payload['refreshExpiresIn']);
+    if (accessExpiresIn != null && accessExpiresIn > 0) {
+      await _tokenStore.writeTokenExpiry(
+        now.add(Duration(seconds: accessExpiresIn)),
+      );
+    }
+    if (refreshExpiresIn != null && refreshExpiresIn > 0) {
+      await _tokenStore.writeRefreshTokenExpiry(
+        now.add(Duration(seconds: refreshExpiresIn)),
+      );
+    }
+  }
+
+  int? _readDurationSeconds(Object? rawValue) {
+    if (rawValue == null) return null;
+    if (rawValue is int) return rawValue;
+    return int.tryParse(rawValue.toString());
+  }
+
   @override
   Future<AuthSession> login(String username, String password) async {
     if (kIsWeb) {
@@ -70,8 +92,9 @@ class GraphqlAuthRepository implements AuthRepository {
         throw Exception(_extractError(body));
       }
       final payload = body as Map<String, dynamic>;
-      final user = ((payload['user'] ?? const {}) as Map<String, dynamic>)['username']
-          .toString();
+      final user =
+          ((payload['user'] ?? const {}) as Map<String, dynamic>)['username']
+              .toString();
       await _tokenStore.clear();
       if (user.isNotEmpty) {
         await _tokenStore.writeUsername(user);
@@ -135,13 +158,15 @@ class GraphqlAuthRepository implements AuthRepository {
       final payload = body as Map<String, dynamic>;
       final token = (payload['accessToken'] ?? '').toString();
       final refreshToken = (payload['refreshToken'] ?? '').toString();
-      final user = ((payload['user'] ?? const {}) as Map<String, dynamic>)['username']
-          .toString();
+      final user =
+          ((payload['user'] ?? const {}) as Map<String, dynamic>)['username']
+              .toString();
       if (token.isEmpty || refreshToken.isEmpty) {
         throw Exception('Authentication did not return mobile session tokens.');
       }
       await _tokenStore.writeToken(token);
       await _tokenStore.writeRefreshToken(refreshToken);
+      await _storeMobileTokenMetadata(payload);
       if (user.isNotEmpty) {
         await _tokenStore.writeUsername(user);
       }
@@ -215,9 +240,13 @@ class GraphqlAuthRepository implements AuthRepository {
         throw Exception(_extractError(body));
       }
       await _tokenStore.writeToken((body['accessToken'] ?? '').toString());
-      await _tokenStore.writeRefreshToken((body['refreshToken'] ?? '').toString());
-      final username = ((body['user'] ?? const {}) as Map<String, dynamic>)['username']
-          ?.toString();
+      await _tokenStore.writeRefreshToken(
+        (body['refreshToken'] ?? '').toString(),
+      );
+      await _storeMobileTokenMetadata((body as Map<String, dynamic>));
+      final username =
+          ((body['user'] ?? const {}) as Map<String, dynamic>)['username']
+              ?.toString();
       if (username != null && username.isNotEmpty) {
         await _tokenStore.writeUsername(username);
       }
@@ -291,9 +320,7 @@ class GraphqlAuthRepository implements AuthRepository {
         Uri.parse('${AppConfig.backendUrl}/api/auth/logout'),
         headers: {
           ...headers,
-          if (kIsWeb)
-            'X-CSRF-Token':
-                (await _fetchCsrfToken(client)) ?? '',
+          if (kIsWeb) 'X-CSRF-Token': (await _fetchCsrfToken(client)) ?? '',
         },
       );
     } catch (_) {
@@ -305,7 +332,10 @@ class GraphqlAuthRepository implements AuthRepository {
   }
 
   @override
-  Future<void> changePassword(String currentPassword, String newPassword) async {
+  Future<void> changePassword(
+    String currentPassword,
+    String newPassword,
+  ) async {
     final client = createGraphqlHttpClient();
     try {
       final token = await _tokenStore.readToken();

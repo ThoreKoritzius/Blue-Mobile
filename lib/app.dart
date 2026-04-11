@@ -7,11 +7,36 @@ import 'features/auth/login_page.dart';
 import 'features/home/home_shell.dart';
 import 'providers.dart';
 
-class BlueMobileApp extends ConsumerWidget {
+class BlueMobileApp extends ConsumerStatefulWidget {
   const BlueMobileApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<BlueMobileApp> createState() => _BlueMobileAppState();
+}
+
+class _BlueMobileAppState extends ConsumerState<BlueMobileApp>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      ref.read(authControllerProvider.notifier).restoreSession();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final auth = ref.watch(authControllerProvider);
     final themeMode = ref.watch(themeModeProvider);
     final session = auth.valueOrNull;

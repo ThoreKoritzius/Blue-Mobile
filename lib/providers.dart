@@ -218,6 +218,15 @@ class AuthController extends AsyncNotifier<AuthSession?> {
     return ref.read(authRepositoryProvider).checkSession();
   }
 
+  Future<void> restoreSession() async {
+    try {
+      final session = await ref.read(authRepositoryProvider).checkSession();
+      state = AsyncData(session);
+    } catch (_) {
+      state = const AsyncData(null);
+    }
+  }
+
   void setSession(AuthSession? session) {
     state = AsyncData(session);
   }
