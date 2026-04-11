@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 import 'dart:convert';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -41,16 +40,17 @@ class ProtectedNetworkImage extends StatelessWidget {
       );
     }
 
-    return FutureBuilder<ImageProvider<Object>>(
-      future: loadProtectedImageProvider(imageUrl, headers: headers),
+    return FutureBuilder<String>(
+      future: resolveProtectedMediaUrl(imageUrl, headers: headers),
       builder: (context, snapshot) {
         if (snapshot.hasData) {
-          return Image(
-            image: snapshot.data!,
+          return Image.network(
+            snapshot.data!,
             fit: fit,
             width: width,
             height: height,
-            errorBuilder: (_, __, ___) => errorWidget ?? const SizedBox.shrink(),
+            errorBuilder: (_, __, ___) =>
+                errorWidget ?? const SizedBox.shrink(),
           );
         }
         if (snapshot.hasError) {
@@ -62,8 +62,8 @@ class ProtectedNetworkImage extends StatelessWidget {
   }
 }
 
-final Map<String, Uint8List> _webImageBytesCache = <String, Uint8List>{};
-final Map<String, _SignedMediaEntry> _signedMediaCache = <String, _SignedMediaEntry>{};
+final Map<String, _SignedMediaEntry> _signedMediaCache =
+    <String, _SignedMediaEntry>{};
 
 class _SignedMediaEntry {
   const _SignedMediaEntry({required this.url, required this.expiresAt});
@@ -72,28 +72,41 @@ class _SignedMediaEntry {
   final DateTime expiresAt;
 }
 
-bool _isProtectedBackendMediaUrl(String url) {
-  if (url.isEmpty) return false;
-  if (!url.startsWith(AppConfig.backendUrl)) return false;
-  final uri = Uri.tryParse(url);
+String? _normalizeProtectedBackendMediaUrl(String url) {
+  if (url.isEmpty) return null;
+  final trimmed = url.trim();
+  final normalizedUrl =
+      trimmed.startsWith('http://') || trimmed.startsWith('https://')
+      ? trimmed
+      : (trimmed.startsWith('/')
+            ? '${AppConfig.backendUrl}$trimmed'
+            : '${AppConfig.backendUrl}/$trimmed');
+  final uri = Uri.tryParse(normalizedUrl);
   final path = uri?.path ?? '';
-  return path.startsWith('/api/images/') ||
+  final isProtected =
+      path.startsWith('/api/images/') ||
       path.startsWith('/api/person/') ||
       path.startsWith('/api/runs/') ||
       path.startsWith('/api/face_crops/');
+  if (!isProtected) {
+    return null;
+  }
+  return normalizedUrl;
 }
 
 Future<String> resolveProtectedMediaUrl(
   String imageUrl, {
   Map<String, String> headers = const {},
 }) async {
-  if (!kIsWeb || !_isProtectedBackendMediaUrl(imageUrl)) {
+  final normalizedUrl = _normalizeProtectedBackendMediaUrl(imageUrl);
+  if (!kIsWeb || normalizedUrl == null) {
     return imageUrl;
   }
 
-  final cached = _signedMediaCache[imageUrl];
+  final cached = _signedMediaCache[normalizedUrl];
   final now = DateTime.now().toUtc();
-  if (cached != null && cached.expiresAt.isAfter(now.add(const Duration(seconds: 10)))) {
+  if (cached != null &&
+      cached.expiresAt.isAfter(now.add(const Duration(seconds: 10)))) {
     return cached.url;
   }
 
@@ -101,7 +114,7 @@ Future<String> resolveProtectedMediaUrl(
   try {
     final signUri = Uri.parse(
       '${AppConfig.backendUrl}/api/media/sign',
-    ).replace(queryParameters: {'target': imageUrl});
+    ).replace(queryParameters: {'target': normalizedUrl});
     final response = await client.get(signUri, headers: headers);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('Media sign HTTP ${response.statusCode}');
@@ -119,7 +132,7 @@ Future<String> resolveProtectedMediaUrl(
     if (signedUrl.isEmpty) {
       throw Exception('Missing signed media URL');
     }
-    _signedMediaCache[imageUrl] = _SignedMediaEntry(
+    _signedMediaCache[normalizedUrl] = _SignedMediaEntry(
       url: signedUrl,
       expiresAt: expiresAt,
     );
@@ -141,21 +154,5 @@ Future<ImageProvider<Object>> loadProtectedImageProvider(
   if (!kIsWeb) {
     return CachedNetworkImageProvider(resolvedUrl, headers: headers);
   }
-
-  final cached = _webImageBytesCache[resolvedUrl];
-  if (cached != null) {
-    return MemoryImage(cached);
-  }
-
-  final client = createGraphqlHttpClient();
-  try {
-    final response = await client.get(Uri.parse(resolvedUrl), headers: headers);
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('Image HTTP ${response.statusCode}');
-    }
-    _webImageBytesCache[resolvedUrl] = response.bodyBytes;
-    return MemoryImage(response.bodyBytes);
-  } finally {
-    client.close();
-  }
+  return NetworkImage(resolvedUrl);
 }
