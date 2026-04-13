@@ -5,6 +5,7 @@ import 'package:latlong2/latlong.dart';
 import '../../core/config/app_config.dart';
 import '../../core/network/graphql_service.dart';
 import '../graphql/documents.dart';
+import '../models/calendar_event_model.dart';
 import '../models/run_model.dart';
 
 class MapPoint {
@@ -838,8 +839,12 @@ class MapRepository {
         try {
           final id = (item['id'] ?? '').toString();
           if (id.isEmpty) continue;
-          final start = DateTime.tryParse((item['start'] ?? '').toString());
-          final end = DateTime.tryParse((item['end'] ?? '').toString());
+          final start = parseCalendarEventDateTime(
+            (item['start'] ?? '').toString(),
+          );
+          final end = parseCalendarEventDateTime(
+            (item['end'] ?? '').toString(),
+          );
           calendarEvents.add(
             TimelineCalendarEvent(
               id: id,

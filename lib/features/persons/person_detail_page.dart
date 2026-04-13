@@ -16,6 +16,7 @@ import '../../data/models/day_media_model.dart';
 import '../../data/models/person_detail_payload_model.dart';
 import '../../data/models/person_model.dart';
 import '../../data/models/person_recognition_status_model.dart';
+import '../../data/repositories/person_repository.dart';
 import '../../providers.dart';
 
 class PersonDetailPage extends ConsumerStatefulWidget {
@@ -83,6 +84,16 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
         _loading = false;
       });
     }
+  }
+
+  Future<void> _openPersonFromViewer(PersonModel person) async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PersonDetailPage(person: person),
+        fullscreenDialog: true,
+      ),
+    );
   }
 
   Future<void> _loadMoreImages() async {
@@ -354,6 +365,11 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
                 onLoadMore: _loadMoreImages,
                 headers: authHeaders,
                 fetchImageInfo: ref.read(filesRepositoryProvider).getImageInfo,
+                fetchImageFaces: ref.read(facesRepositoryProvider).getImageFaces,
+                unlabelFace: ref.read(facesRepositoryProvider).unlabelFace,
+                reassignFace: ref.read(facesRepositoryProvider).reassignFace,
+                personRepository: ref.read(personRepositoryProvider),
+                onOpenPerson: _openPersonFromViewer,
                 onDelete: (path) =>
                     ref.read(filesRepositoryProvider).deleteFile(path),
               ),
@@ -1253,6 +1269,11 @@ class _PhotosTab extends StatelessWidget {
     required this.onLoadMore,
     required this.headers,
     required this.fetchImageInfo,
+    required this.fetchImageFaces,
+    required this.unlabelFace,
+    required this.reassignFace,
+    required this.personRepository,
+    required this.onOpenPerson,
     this.onDelete,
   });
 
@@ -1264,6 +1285,11 @@ class _PhotosTab extends StatelessWidget {
   final Future<void> Function() onLoadMore;
   final Map<String, String> headers;
   final ImageInfoFetcher fetchImageInfo;
+  final ImageFacesFetcher fetchImageFaces;
+  final FaceUnlabeler unlabelFace;
+  final FaceReassigner reassignFace;
+  final PersonRepository personRepository;
+  final OpenPerson onOpenPerson;
   final ImageDeleter? onDelete;
 
   @override
@@ -1368,6 +1394,11 @@ class _PhotosTab extends StatelessWidget {
                                 initialIndex: index,
                                 httpHeaders: headers,
                                 fetchImageInfo: fetchImageInfo,
+                                fetchImageFaces: fetchImageFaces,
+                                unlabelFace: unlabelFace,
+                                reassignFace: reassignFace,
+                                personRepository: personRepository,
+                                onOpenPerson: onOpenPerson,
                                 onDelete: onDelete,
                               );
                             },

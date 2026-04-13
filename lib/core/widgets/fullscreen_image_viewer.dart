@@ -10,7 +10,12 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../config/app_config.dart';
+import 'person_picker_sheet.dart';
+import '../../data/models/image_face_model.dart';
+import '../../data/models/image_faces_payload_model.dart';
+import '../../data/models/person_model.dart';
 import '../../data/repositories/files_repository.dart';
+import '../../data/repositories/person_repository.dart';
 import 'protected_network_image.dart';
 
 class ImageViewerItem {
@@ -34,8 +39,13 @@ class ImageViewerItem {
 }
 
 typedef ImageInfoFetcher = Future<ImageInfoResult> Function(String path);
+typedef ImageFacesFetcher = Future<ImageFacesPayloadModel> Function(String path);
 typedef ImageDeleter = Future<void> Function(String path);
 typedef ImageCoverSetter = Future<void> Function(String path);
+typedef FaceUnlabeler = Future<void> Function(int faceId);
+typedef FaceReassigner =
+    Future<void> Function(int faceId, int personId, {bool isReference});
+typedef OpenPerson = Future<void> Function(PersonModel person);
 
 class FullscreenImageViewer extends StatefulWidget {
   const FullscreenImageViewer({
@@ -44,16 +54,26 @@ class FullscreenImageViewer extends StatefulWidget {
     required this.initialIndex,
     required this.httpHeaders,
     required this.fetchImageInfo,
+    required this.fetchImageFaces,
+    required this.unlabelFace,
+    required this.reassignFace,
+    required this.personRepository,
     this.onDelete,
     this.onSetCover,
+    this.onOpenPerson,
   });
 
   final List<ImageViewerItem> images;
   final int initialIndex;
   final Map<String, String> httpHeaders;
   final ImageInfoFetcher fetchImageInfo;
+  final ImageFacesFetcher fetchImageFaces;
+  final FaceUnlabeler unlabelFace;
+  final FaceReassigner reassignFace;
+  final PersonRepository personRepository;
   final ImageDeleter? onDelete;
   final ImageCoverSetter? onSetCover;
+  final OpenPerson? onOpenPerson;
 
   /// Returns the set of deleted image paths (empty if none deleted).
   static Future<Set<String>> show({
@@ -62,8 +82,13 @@ class FullscreenImageViewer extends StatefulWidget {
     required int initialIndex,
     required Map<String, String> httpHeaders,
     required ImageInfoFetcher fetchImageInfo,
+    required ImageFacesFetcher fetchImageFaces,
+    required FaceUnlabeler unlabelFace,
+    required FaceReassigner reassignFace,
+    required PersonRepository personRepository,
     ImageDeleter? onDelete,
     ImageCoverSetter? onSetCover,
+    OpenPerson? onOpenPerson,
   }) {
     return Navigator.of(context).push<Set<String>>(
       PageRouteBuilder<Set<String>>(
@@ -73,8 +98,13 @@ class FullscreenImageViewer extends StatefulWidget {
           initialIndex: initialIndex,
           httpHeaders: httpHeaders,
           fetchImageInfo: fetchImageInfo,
+          fetchImageFaces: fetchImageFaces,
+          unlabelFace: unlabelFace,
+          reassignFace: reassignFace,
+          personRepository: personRepository,
           onDelete: onDelete,
           onSetCover: onSetCover,
+          onOpenPerson: onOpenPerson,
         ),
         transitionsBuilder: (_, animation, __, child) =>
             FadeTransition(opacity: animation, child: child),
@@ -291,6 +321,12 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer> {
       builder: (_) => _ImageMetadataSheet(
         item: item,
         fetchImageInfo: widget.fetchImageInfo,
+        fetchImageFaces: widget.fetchImageFaces,
+        unlabelFace: widget.unlabelFace,
+        reassignFace: widget.reassignFace,
+        personRepository: widget.personRepository,
+        onOpenPerson: widget.onOpenPerson,
+        httpHeaders: widget.httpHeaders,
       ),
     );
   }
@@ -523,10 +559,22 @@ class _ImageMetadataSheet extends StatefulWidget {
   const _ImageMetadataSheet({
     required this.item,
     required this.fetchImageInfo,
+    required this.fetchImageFaces,
+    required this.unlabelFace,
+    required this.reassignFace,
+    required this.personRepository,
+    required this.httpHeaders,
+    this.onOpenPerson,
   });
 
   final ImageViewerItem item;
   final ImageInfoFetcher fetchImageInfo;
+  final ImageFacesFetcher fetchImageFaces;
+  final FaceUnlabeler unlabelFace;
+  final FaceReassigner reassignFace;
+  final PersonRepository personRepository;
+  final Map<String, String> httpHeaders;
+  final OpenPerson? onOpenPerson;
 
   @override
   State<_ImageMetadataSheet> createState() => _ImageMetadataSheetState();
@@ -534,13 +582,18 @@ class _ImageMetadataSheet extends StatefulWidget {
 
 class _ImageMetadataSheetState extends State<_ImageMetadataSheet> {
   ImageInfoResult? _info;
+  ImageFacesPayloadModel? _facesPayload;
   bool _loading = true;
+  bool _facesLoading = true;
+  bool _savingFace = false;
   String? _error;
+  String? _facesError;
 
   @override
   void initState() {
     super.initState();
     _fetchInfo();
+    _fetchFaces();
   }
 
   Future<void> _fetchInfo() async {
@@ -552,8 +605,101 @@ class _ImageMetadataSheetState extends State<_ImageMetadataSheet> {
     }
   }
 
+  Future<void> _fetchFaces() async {
+    setState(() {
+      _facesLoading = true;
+      _facesError = null;
+    });
+    try {
+      final payload = await widget.fetchImageFaces(widget.item.path);
+      if (!mounted) return;
+      setState(() {
+        _facesPayload = payload;
+        _facesLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _facesError = e.toString().replaceFirst('Exception: ', '');
+        _facesLoading = false;
+      });
+    }
+  }
+
+  Future<void> _assignFace(ImageFaceModel face) async {
+    final selected = await PersonPickerSheet.show(
+      context,
+      repository: widget.personRepository,
+      selectedNames: face.isLabeled && face.personName.trim().isNotEmpty
+          ? [face.personName]
+          : const [],
+      allowCreate: false,
+      initialQuery: face.personName,
+      title: face.isLabeled ? 'Change person' : 'Assign person',
+    );
+    if (!mounted || selected == null) return;
+
+    setState(() => _savingFace = true);
+    try {
+      await widget.reassignFace(face.faceId, selected.id);
+      await _fetchFaces();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to update face: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _savingFace = false);
+    }
+  }
+
+  Future<void> _removeFace(ImageFaceModel face) async {
+    setState(() => _savingFace = true);
+    try {
+      await widget.unlabelFace(face.faceId);
+      await _fetchFaces();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to remove person: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _savingFace = false);
+    }
+  }
+
+  PersonModel _minimalPerson(int personId, String name) {
+    final parts = name.trim().split(RegExp(r'\s+'));
+    return PersonModel(
+      id: personId,
+      firstName: parts.isEmpty ? name : parts.first,
+      lastName: parts.length > 1 ? parts.sublist(1).join(' ') : '',
+      birthDate: '',
+      deathDate: '',
+      relation: '',
+      profession: '',
+      studyProgram: '',
+      languages: '',
+      email: '',
+      phone: '',
+      address: '',
+      notes: '',
+      biography: '',
+    );
+  }
+
   /// Parse EXIF datetime "YYYY:MM:DD HH:MM:SS" into a readable string.
   static String _formatExifDateTime(String raw) {
+    final isoValue = DateTime.tryParse(raw);
+    if (isoValue != null) {
+      final local = isoValue.toLocal();
+      final month = local.month.toString().padLeft(2, '0');
+      final day = local.day.toString().padLeft(2, '0');
+      final hour = local.hour.toString().padLeft(2, '0');
+      final minute = local.minute.toString().padLeft(2, '0');
+      final second = local.second.toString().padLeft(2, '0');
+      return '${local.year}-$month-$day  $hour:$minute:$second';
+    }
     // EXIF format: "2024:03:15 14:30:22"
     final parts = raw.split(' ');
     if (parts.length >= 2) {
@@ -599,23 +745,40 @@ class _ImageMetadataSheetState extends State<_ImageMetadataSheet> {
 
     final exif = _info?.exif ?? const {};
     final file = _info?.file ?? const {};
+    final metadata = _info?.metadata ?? const {};
 
     // Date & time from EXIF
-    final rawDateTime = exif['DateTimeOriginal']?.toString() ??
-        exif['DateTime']?.toString();
+    final rawDateTime =
+        _firstNonEmptyString([
+          exif['DateTimeOriginal'],
+          exif['DateTimeDigitized'],
+          exif['DateTime'],
+          metadata['capturedAt'],
+          file['captured_at'],
+          file['capturedAt'],
+        ]);
     final dateDisplay = rawDateTime != null
         ? _formatExifDateTime(rawDateTime)
         : item.date;
 
     // Location
-    final gpsStr = (file['gps'] ?? item.gps ?? '').toString();
+    final gpsStr = _firstNonEmptyString([
+          metadata['gps'],
+          file['gps'],
+          item.gps,
+        ]) ??
+        '';
     final gpsLatLng = gpsStr.isNotEmpty ? _parseGps(gpsStr) : null;
 
     // Image resolution
-    final imgWidth = exif['ExifImageWidth'] ?? exif['ImageWidth'];
-    final imgHeight = exif['ExifImageHeight'] ?? exif['ImageLength'];
-    final resolution = (imgWidth is num && imgHeight is num)
-        ? '${imgWidth.toInt()} × ${imgHeight.toInt()}'
+    final imgWidth = _asInt(
+      exif['ExifImageWidth'] ?? exif['ImageWidth'] ?? metadata['width'] ?? file['width'],
+    );
+    final imgHeight = _asInt(
+      exif['ExifImageHeight'] ?? exif['ImageLength'] ?? metadata['height'] ?? file['height'],
+    );
+    final resolution = (imgWidth != null && imgHeight != null)
+        ? '$imgWidth × $imgHeight'
         : '';
 
     // Camera info
@@ -625,10 +788,10 @@ class _ImageMetadataSheetState extends State<_ImageMetadataSheet> {
     final lens = (exif['LensModel']?.toString() ?? '').trim();
 
     // Shooting parameters
-    final focalLength = exif['FocalLength']?.toString() ?? '';
-    final fNumber = exif['FNumber']?.toString() ?? '';
-    final exposure = exif['ExposureTime']?.toString() ?? '';
-    final iso = exif['ISOSpeedRatings']?.toString() ?? '';
+    final focalLength = _firstNonEmptyString([exif['FocalLength']]) ?? '';
+    final fNumber = _firstNonEmptyString([exif['FNumber']]) ?? '';
+    final exposure = _firstNonEmptyString([exif['ExposureTime']]) ?? '';
+    final iso = _firstNonEmptyString([exif['ISOSpeedRatings'], exif['PhotographicSensitivity']]) ?? '';
     final params = <String>[
       if (focalLength.isNotEmpty) '${focalLength}mm',
       if (fNumber.isNotEmpty) 'f/$fNumber',
@@ -654,6 +817,22 @@ class _ImageMetadataSheetState extends State<_ImageMetadataSheet> {
           children: [
             Text('Details', style: theme.textTheme.titleLarge),
             const SizedBox(height: 20),
+            _PeopleSection(
+              payload: _facesPayload,
+              loading: _facesLoading,
+              saving: _savingFace,
+              error: _facesError,
+              headers: widget.httpHeaders,
+              onTapFace: _assignFace,
+              onRemoveFace: _removeFace,
+              onOpenPerson: widget.onOpenPerson == null
+                  ? null
+                  : (face) => widget.onOpenPerson!(
+                        _minimalPerson(face.personId!, face.personName),
+                      ),
+              onRetry: _fetchFaces,
+            ),
+            const SizedBox(height: 10),
             _MetadataRow(
               icon: Icons.calendar_today_outlined,
               label: 'Date & Time',
@@ -746,6 +925,330 @@ class _ImageMetadataSheetState extends State<_ImageMetadataSheet> {
     if (bytes < 1024) return '$bytes B';
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+
+  static int? _asInt(Object? value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse((value ?? '').toString());
+  }
+
+  static String? _firstNonEmptyString(List<Object?> values) {
+    for (final value in values) {
+      final text = (value ?? '').toString().trim();
+      if (text.isNotEmpty && text != 'null') return text;
+    }
+    return null;
+  }
+}
+
+class _PeopleSection extends StatelessWidget {
+  const _PeopleSection({
+    required this.payload,
+    required this.loading,
+    required this.saving,
+    required this.error,
+    required this.headers,
+    required this.onTapFace,
+    required this.onRemoveFace,
+    required this.onOpenPerson,
+    required this.onRetry,
+  });
+
+  final ImageFacesPayloadModel? payload;
+  final bool loading;
+  final bool saving;
+  final String? error;
+  final Map<String, String> headers;
+  final ValueChanged<ImageFaceModel> onTapFace;
+  final ValueChanged<ImageFaceModel> onRemoveFace;
+  final ValueChanged<ImageFaceModel>? onOpenPerson;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final faces = payload?.faces ?? const <ImageFaceModel>[];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text('People in this photo', style: theme.textTheme.titleMedium),
+            if (saving) ...[
+              const SizedBox(width: 10),
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 10),
+        if (loading)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: LinearProgressIndicator(minHeight: 3),
+          )
+        else if (error != null)
+          _SectionNotice(
+            icon: Icons.error_outline,
+            message: error!,
+            actionLabel: 'Retry',
+            onPressed: onRetry,
+          )
+        else if (faces.isNotEmpty)
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              for (final face in faces)
+                _FaceCard(
+                  face: face,
+                  headers: headers,
+                  onTap: () => onTapFace(face),
+                  onRemove: face.isLabeled ? () => onRemoveFace(face) : null,
+                  onOpenPerson: face.personId != null && onOpenPerson != null
+                      ? () => onOpenPerson!(face)
+                      : null,
+                ),
+            ],
+          )
+        else
+          _SectionNotice(
+            icon: _statusIcon(payload?.status ?? 'pending'),
+            message: payload?.message.isNotEmpty == true
+                ? payload!.message
+                : 'Face indexing has not finished for this image yet.',
+            actionLabel: (payload?.isPending ?? false) || (payload?.isFailed ?? false)
+                ? 'Refresh'
+                : null,
+            onPressed: (payload?.isPending ?? false) || (payload?.isFailed ?? false)
+                ? onRetry
+                : null,
+          ),
+      ],
+    );
+  }
+
+  static IconData _statusIcon(String status) {
+    switch (status) {
+      case 'no_faces':
+        return Icons.sentiment_neutral_outlined;
+      case 'failed':
+        return Icons.warning_amber_rounded;
+      case 'not_found':
+        return Icons.hide_image_outlined;
+      default:
+        return Icons.face_retouching_natural_outlined;
+    }
+  }
+}
+
+class _FaceCard extends StatelessWidget {
+  const _FaceCard({
+    required this.face,
+    required this.headers,
+    required this.onTap,
+    this.onRemove,
+    this.onOpenPerson,
+  });
+
+  final ImageFaceModel face;
+  final Map<String, String> headers;
+  final VoidCallback onTap;
+  final VoidCallback? onRemove;
+  final VoidCallback? onOpenPerson;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final cropUrl = face.cropPath.trim().isEmpty
+        ? null
+        : AppConfig.faceCropUrlFromPath(face.cropPath.trim());
+    return Material(
+      color: colorScheme.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(22),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(22),
+        child: Container(
+          width: 180,
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              _FaceAvatar(
+                cropUrl: cropUrl,
+                headers: headers,
+                initials: _initials(face.personName),
+              ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      face.isLabeled ? face.personName : 'Unknown person',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      face.isLabeled ? 'Tap to change person' : 'Tap to assign',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (onOpenPerson != null)
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      tooltip: 'Open person',
+                      onPressed: onOpenPerson,
+                      icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                    ),
+                  if (onRemove != null)
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      tooltip: 'Remove from photo',
+                      onPressed: onRemove,
+                      icon: Icon(
+                        Icons.person_remove_outlined,
+                        size: 18,
+                        color: colorScheme.error,
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _initials(String name) {
+    final parts = name.trim().split(RegExp(r'\s+')).where((part) => part.isNotEmpty).toList();
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
+    return '${parts.first.substring(0, 1)}${parts.last.substring(0, 1)}'
+        .toUpperCase();
+  }
+}
+
+class _FaceAvatar extends StatelessWidget {
+  const _FaceAvatar({
+    required this.cropUrl,
+    required this.headers,
+    required this.initials,
+  });
+
+  final String? cropUrl;
+  final Map<String, String> headers;
+  final String initials;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: SizedBox(
+        width: 52,
+        height: 52,
+        child: cropUrl == null
+            ? ColoredBox(
+                color: theme.colorScheme.surfaceContainerHighest,
+                child: Center(
+                  child: Text(
+                    initials,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              )
+            : ProtectedNetworkImage(
+                imageUrl: cropUrl!,
+                headers: headers,
+                fit: BoxFit.cover,
+                placeholder: ColoredBox(
+                  color: theme.colorScheme.surfaceContainerHighest,
+                  child: Center(
+                    child: Text(
+                      initials,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+                errorWidget: ColoredBox(
+                  color: theme.colorScheme.surfaceContainerHighest,
+                  child: Center(
+                    child: Text(
+                      initials,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+      ),
+    );
+  }
+}
+
+class _SectionNotice extends StatelessWidget {
+  const _SectionNotice({
+    required this.icon,
+    required this.message,
+    this.actionLabel,
+    this.onPressed,
+  });
+
+  final IconData icon;
+  final String message;
+  final String? actionLabel;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: theme.colorScheme.primary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              message,
+              style: theme.textTheme.bodyMedium,
+            ),
+          ),
+          if (actionLabel != null && onPressed != null)
+            TextButton(onPressed: onPressed, child: Text(actionLabel!)),
+        ],
+      ),
+    );
   }
 }
 

@@ -18,6 +18,7 @@ import 'package:latlong2/latlong.dart';
 import '../../core/config/app_config.dart';
 import '../../core/utils/breakpoints.dart';
 import '../../core/utils/date_format.dart';
+import '../../core/widgets/person_picker_sheet.dart';
 import '../../data/graphql/documents.dart';
 import '../../core/widgets/fullscreen_image_viewer.dart';
 import '../../core/widgets/protected_network_image.dart';
@@ -33,7 +34,6 @@ import '../../data/models/person_model.dart';
 import '../../data/models/run_model.dart';
 import '../../data/models/story_day_model.dart';
 import '../../data/models/upload_batch_state_model.dart';
-import '../../data/repositories/person_repository.dart';
 import '../../providers.dart';
 import 'day_draft_controller.dart';
 import 'widgets/day_weather_section.dart';
@@ -717,15 +717,12 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
 
   Future<void> _showAddPersonSheet() async {
     final selectedNames = _current?.people ?? const <String>[];
-    final selected = await showModalBottomSheet<PersonModel>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => _AddPersonSheet(
-        repository: ref.read(personRepositoryProvider),
-        selectedNames: selectedNames,
-      ),
+    final selected = await PersonPickerSheet.show(
+      context,
+      repository: ref.read(personRepositoryProvider),
+      selectedNames: selectedNames,
+      allowCreate: true,
+      title: 'Add person',
     );
     if (!mounted || selected == null) return;
     _appendPerson(selected);
@@ -1193,12 +1190,24 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
         .toList();
     final index = _media.indexOf(media);
     final repo = ref.read(filesRepositoryProvider);
+    final facesRepo = ref.read(facesRepositoryProvider);
+    final personRepo = ref.read(personRepositoryProvider);
     final deleted = await FullscreenImageViewer.show(
       context: context,
       images: items,
       initialIndex: index >= 0 ? index : 0,
       httpHeaders: _authHeaders(),
       fetchImageInfo: (path) => repo.getImageInfo(path),
+      fetchImageFaces: (path) => facesRepo.getImageFaces(path),
+      unlabelFace: (faceId) => facesRepo.unlabelFace(faceId),
+      reassignFace: (faceId, personId, {isReference = false}) =>
+          facesRepo.reassignFace(
+            faceId,
+            personId,
+            isReference: isReference,
+          ),
+      personRepository: personRepo,
+      onOpenPerson: _openPersonDetailFromViewer,
       onDelete: (path) => repo.deleteFile(path),
       onSetCover: (path) async {
         final media = _media.firstWhere((m) => m.path == path);
@@ -1211,6 +1220,16 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
       });
     }
     _dismissKeyboard();
+  }
+
+  Future<void> _openPersonDetailFromViewer(PersonModel person) async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PersonDetailPage(person: person),
+        fullscreenDialog: true,
+      ),
+    );
   }
 
   Future<void> _scrollToTop() async {
@@ -4064,20 +4083,20 @@ class _CalendarEventTile extends StatelessWidget {
 
   String _timePresentation(CalendarEventModel event) {
     if (event.allDay) return 'All day';
-    final start = DateTime.tryParse(event.start);
+    final start = parseCalendarEventDateTime(event.start);
     if (start == null) return 'Time';
-    return DateFormat('HH:mm').format(start.toLocal());
+    return DateFormat('HH:mm').format(start);
   }
 }
 
 String _calendarDetailTimeLabel(CalendarEventModel event) {
   if (event.allDay) return 'All day';
-  final start = DateTime.tryParse(event.start);
-  final end = DateTime.tryParse(event.end);
+  final start = parseCalendarEventDateTime(event.start);
+  final end = parseCalendarEventDateTime(event.end);
   if (start == null) return 'Time unavailable';
-  final startLabel = DateFormat('HH:mm').format(start.toLocal());
+  final startLabel = DateFormat('HH:mm').format(start);
   if (end == null) return startLabel;
-  final endLabel = DateFormat('HH:mm').format(end.toLocal());
+  final endLabel = DateFormat('HH:mm').format(end);
   return '$startLabel – $endLabel';
 }
 
@@ -4251,19 +4270,6 @@ class _WeatherDetailItem extends StatelessWidget {
   }
 }
 
-class _AddPersonSheet extends StatefulWidget {
-  const _AddPersonSheet({
-    required this.repository,
-    required this.selectedNames,
-  });
-
-  final PersonRepository repository;
-  final List<String> selectedNames;
-
-  @override
-  State<_AddPersonSheet> createState() => _AddPersonSheetState();
-}
-
 class _PlaceEditorSheet extends StatefulWidget {
   const _PlaceEditorSheet({
     required this.initialPlace,
@@ -4414,360 +4420,6 @@ class _PlaceEditorSheetState extends State<_PlaceEditorSheet> {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _AddPersonSheetState extends State<_AddPersonSheet> {
-  late final TextEditingController _searchController;
-  late final TextEditingController _firstNameController;
-  late final TextEditingController _lastNameController;
-  late final TextEditingController _relationController;
-  Timer? _debounce;
-  bool _loading = false;
-  bool _showCreate = false;
-  bool _creating = false;
-  List<PersonModel> _popular = const [];
-  List<PersonModel> _results = const [];
-
-  bool _isAlreadySelected(PersonModel person) {
-    final normalized = person.displayName.trim().toLowerCase();
-    return widget.selectedNames.any(
-      (name) => name.trim().toLowerCase() == normalized,
-    );
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _searchController = TextEditingController();
-    _firstNameController = TextEditingController();
-    _lastNameController = TextEditingController();
-    _relationController = TextEditingController();
-    _loadPopular();
-  }
-
-  @override
-  void dispose() {
-    _debounce?.cancel();
-    _searchController.dispose();
-    _firstNameController.dispose();
-    _lastNameController.dispose();
-    _relationController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _loadPopular() async {
-    setState(() => _loading = true);
-    try {
-      final people = await widget.repository.popular(first: 12);
-      if (!mounted) return;
-      setState(() {
-        _popular = people;
-        _loading = false;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() => _loading = false);
-    }
-  }
-
-  void _onChanged(String value) {
-    _debounce?.cancel();
-    final query = value.trim();
-    if (query.length < 2) {
-      setState(() {
-        _loading = false;
-        _results = _popular;
-      });
-      return;
-    }
-
-    _debounce = Timer(const Duration(milliseconds: 220), () async {
-      if (!mounted) return;
-      setState(() => _loading = true);
-      try {
-        final results = await widget.repository.search(query);
-        if (!mounted) return;
-        setState(() {
-          _results = results;
-          _loading = false;
-        });
-      } catch (_) {
-        if (!mounted) return;
-        setState(() {
-          _results = const [];
-          _loading = false;
-        });
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final query = _searchController.text.trim();
-    final visibleResults = query.length < 2 ? _popular : _results;
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-        12,
-        12,
-        12,
-        12 + MediaQuery.viewInsetsOf(context).bottom,
-      ),
-      child: Container(
-        decoration: BoxDecoration(
-          color: colorScheme.surface,
-          borderRadius: BorderRadius.circular(28),
-          border: Border.all(
-            color: colorScheme.outlineVariant.withValues(alpha: 0.38),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.22),
-              blurRadius: 32,
-              offset: const Offset(0, 18),
-            ),
-          ],
-        ),
-        child: SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 18, 18, 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        _showCreate ? 'Create new person' : 'Add person',
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.w800,
-                          color: colorScheme.onSurface,
-                        ),
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: () {
-                        setState(() {
-                          _showCreate = !_showCreate;
-                        });
-                      },
-                      child: Text(_showCreate ? 'Back' : 'New'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                if (_showCreate)
-                  _buildCreateForm(context)
-                else ...[
-                  TextField(
-                    controller: _searchController,
-                    autofocus: true,
-                    onChanged: _onChanged,
-                    decoration: const InputDecoration(
-                      labelText: 'Search people',
-                      prefixIcon: Icon(Icons.search_rounded),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  Flexible(
-                    child: _loading
-                        ? const Center(child: CircularProgressIndicator())
-                        : visibleResults.isEmpty
-                        ? _PickerInfoCard(
-                            icon: Icons.person_off_outlined,
-                            title: query.length < 2
-                                ? 'No popular people yet'
-                                : 'No matching person found',
-                            subtitle: '',
-                          )
-                        : ListView.separated(
-                            shrinkWrap: true,
-                            itemCount: visibleResults.length,
-                            separatorBuilder: (_, __) =>
-                                const SizedBox(height: 10),
-                            itemBuilder: (context, index) {
-                              final person = visibleResults[index];
-                              final alreadySelected = _isAlreadySelected(
-                                person,
-                              );
-                              final subtitle = [
-                                person.relation.trim(),
-                                person.profession.trim(),
-                              ].where((part) => part.isNotEmpty).join(' · ');
-                              return Material(
-                                color: alreadySelected
-                                    ? colorScheme.secondaryContainer
-                                    : colorScheme.surfaceContainer,
-                                borderRadius: BorderRadius.circular(20),
-                                child: ListTile(
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(20),
-                                  ),
-                                  title: Text(
-                                    person.displayName,
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w700,
-                                      color: alreadySelected
-                                          ? colorScheme.onSecondaryContainer
-                                          : null,
-                                    ),
-                                  ),
-                                  subtitle: subtitle.isEmpty
-                                      ? null
-                                      : Text(subtitle),
-                                  trailing: Icon(
-                                    alreadySelected
-                                        ? Icons.check_circle_rounded
-                                        : Icons.add_circle_outline_rounded,
-                                    color: alreadySelected
-                                        ? colorScheme.primary
-                                        : null,
-                                  ),
-                                  onTap: alreadySelected
-                                      ? null
-                                      : () => Navigator.of(context).pop(person),
-                                ),
-                              );
-                            },
-                          ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCreateForm(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        TextField(
-          controller: _firstNameController,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'First name'),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _lastNameController,
-          decoration: const InputDecoration(labelText: 'Last name'),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _relationController,
-          decoration: const InputDecoration(
-            labelText: 'Relation',
-            hintText: 'Friend, family, colleague...',
-          ),
-        ),
-        const SizedBox(height: 18),
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton(
-            onPressed: _creating
-                ? null
-                : () async {
-                    final navigator = Navigator.of(context);
-                    final first = _firstNameController.text.trim();
-                    final last = _lastNameController.text.trim();
-                    if (first.isEmpty && last.isEmpty) return;
-                    setState(() => _creating = true);
-                    try {
-                      final created = await widget.repository.create(
-                        PersonModel(
-                          id: 0,
-                          firstName: first,
-                          lastName: last,
-                          birthDate: '',
-                          deathDate: '',
-                          relation: _relationController.text.trim(),
-                          profession: '',
-                          studyProgram: '',
-                          languages: '',
-                          email: '',
-                          phone: '',
-                          address: '',
-                          notes: '',
-                          biography: '',
-                        ),
-                      );
-                      if (!mounted) return;
-                      navigator.pop(created);
-                    } catch (_) {
-                      if (!mounted) return;
-                      setState(() => _creating = false);
-                    }
-                  },
-            child: _creating
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
-                : const Text('Create and add'),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _PickerInfoCard extends StatelessWidget {
-  const _PickerInfoCard({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final hasSubtitle = subtitle.trim().isNotEmpty;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainer,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: colorScheme.onSurfaceVariant, size: 28),
-          const SizedBox(height: 10),
-          Text(
-            title,
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              color: colorScheme.onSurface,
-              fontWeight: FontWeight.w800,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          if (hasSubtitle) ...[
-            const SizedBox(height: 6),
-            Text(
-              subtitle,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ],
       ),
     );
   }

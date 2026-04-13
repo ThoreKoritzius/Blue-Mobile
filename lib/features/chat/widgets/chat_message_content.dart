@@ -5,16 +5,30 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/config/app_config.dart';
 import '../../../core/widgets/fullscreen_image_viewer.dart';
 import '../../../data/models/chat_attachment_model.dart';
+import '../../../data/models/person_model.dart';
 import '../../../data/models/story_day_model.dart';
 import '../../../providers.dart';
 import '../chat_image_utils.dart';
 import '../chat_models.dart';
+import '../../persons/person_detail_page.dart';
 import 'chat_agent_activity.dart';
 import 'chat_day_memory_card.dart';
 import 'chat_inline_chart.dart';
 import 'chat_inline_image.dart';
 import 'chat_inline_map.dart';
 import 'chat_typing_indicator.dart';
+
+Future<void> _openPersonDetailPage(
+  BuildContext context,
+  PersonModel person,
+) async {
+  await Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => PersonDetailPage(person: person),
+      fullscreenDialog: true,
+    ),
+  );
+}
 
 /// Renders the full content of a single assistant message:
 /// activity bar, markdown text, date cards, images, maps, charts, errors.
@@ -275,6 +289,8 @@ class ChatMessageContent extends ConsumerWidget {
   ) {
     final headers = chatAuthHeaders(ref);
     final filesRepo = ref.read(filesRepositoryProvider);
+    final facesRepo = ref.read(facesRepositoryProvider);
+    final personRepo = ref.read(personRepositoryProvider);
 
     final viewerItems = images.map((img) {
       final fullUrl = authenticatedUrl(resolveChatImageUrl(img.path), ref);
@@ -305,6 +321,16 @@ class ChatMessageContent extends ConsumerWidget {
       initialIndex: initialIndex,
       httpHeaders: headers,
       fetchImageInfo: (path) => filesRepo.getImageInfo(path),
+      fetchImageFaces: (path) => facesRepo.getImageFaces(path),
+      unlabelFace: (faceId) => facesRepo.unlabelFace(faceId),
+      reassignFace: (faceId, personId, {isReference = false}) =>
+          facesRepo.reassignFace(
+            faceId,
+            personId,
+            isReference: isReference,
+          ),
+      personRepository: personRepo,
+      onOpenPerson: (person) => _openPersonDetailPage(context, person),
     );
   }
 }
@@ -351,6 +377,8 @@ class _ImageGallery extends StatelessWidget {
   void _openViewer(BuildContext context, int index) {
     final headers = chatAuthHeaders(ref);
     final filesRepo = ref.read(filesRepositoryProvider);
+    final facesRepo = ref.read(facesRepositoryProvider);
+    final personRepo = ref.read(personRepositoryProvider);
 
     final viewerItems = images.map((img) {
       final fullUrl = authenticatedUrl(resolveChatImageUrl(img.path), ref);
@@ -379,6 +407,16 @@ class _ImageGallery extends StatelessWidget {
       initialIndex: index,
       httpHeaders: headers,
       fetchImageInfo: (path) => filesRepo.getImageInfo(path),
+      fetchImageFaces: (path) => facesRepo.getImageFaces(path),
+      unlabelFace: (faceId) => facesRepo.unlabelFace(faceId),
+      reassignFace: (faceId, personId, {isReference = false}) =>
+          facesRepo.reassignFace(
+            faceId,
+            personId,
+            isReference: isReference,
+          ),
+      personRepository: personRepo,
+      onOpenPerson: (person) => _openPersonDetailPage(context, person),
     );
   }
 }

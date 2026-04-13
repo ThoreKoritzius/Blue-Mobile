@@ -1,21 +1,23 @@
-import 'package:blue_mobile/data/models/story_day_model.dart';
-import 'package:blue_mobile/core/config/app_config.dart';
-import 'package:blue_mobile/core/network/auth_token_store.dart';
-import 'package:blue_mobile/core/network/graphql_service.dart';
-import 'package:blue_mobile/data/cache/person_cache_store.dart';
-import 'package:blue_mobile/data/models/chat_event_model.dart';
-import 'package:blue_mobile/data/models/chat_response_model.dart';
-import 'package:blue_mobile/data/models/run_detail_model.dart';
-import 'package:blue_mobile/data/models/run_model.dart';
-import 'package:blue_mobile/data/models/memory_search_result_model.dart';
-import 'package:blue_mobile/data/models/person_model.dart';
-import 'package:blue_mobile/data/models/story_day_page_model.dart';
-import 'package:blue_mobile/data/repositories/day_repository.dart';
-import 'package:blue_mobile/data/repositories/person_repository.dart';
-import 'package:blue_mobile/data/repositories/runs_repository.dart';
-import 'package:blue_mobile/data/repositories/search_repository.dart';
-import 'package:blue_mobile/data/repositories/stories_repository.dart';
-import 'package:blue_mobile/features/chat/chat_parsing.dart';
+import 'package:blue/data/models/story_day_model.dart';
+import 'package:blue/core/config/app_config.dart';
+import 'package:blue/core/network/auth_token_store.dart';
+import 'package:blue/core/network/graphql_service.dart';
+import 'package:blue/data/cache/person_cache_store.dart';
+import 'package:blue/data/models/chat_event_model.dart';
+import 'package:blue/data/models/chat_response_model.dart';
+import 'package:blue/data/models/calendar_event_model.dart';
+import 'package:blue/data/models/image_faces_payload_model.dart';
+import 'package:blue/data/models/run_detail_model.dart';
+import 'package:blue/data/models/run_model.dart';
+import 'package:blue/data/models/memory_search_result_model.dart';
+import 'package:blue/data/models/person_model.dart';
+import 'package:blue/data/models/story_day_page_model.dart';
+import 'package:blue/data/repositories/day_repository.dart';
+import 'package:blue/data/repositories/person_repository.dart';
+import 'package:blue/data/repositories/runs_repository.dart';
+import 'package:blue/data/repositories/search_repository.dart';
+import 'package:blue/data/repositories/stories_repository.dart';
+import 'package:blue/features/chat/chat_parsing.dart';
 import 'package:google_polyline_algorithm/google_polyline_algorithm.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -109,24 +111,51 @@ void main() {
     expect(normal.urlTemplate, contains('tile.openstreetmap.org'));
   });
 
+  test('Calendar event parser keeps a local display time', () {
+    final utc = parseCalendarEventDateTime('2026-04-13T09:00:00Z');
+    final local = parseCalendarEventDateTime('2026-04-13T09:00:00');
+
+    expect(utc, isNotNull);
+    expect(utc!.isUtc, isFalse);
+    expect(utc.hour, 9);
+    expect(utc.minute, 0);
+
+    expect(local, isNotNull);
+    expect(local!.isUtc, isFalse);
+    expect(local.hour, 9);
+    expect(local.minute, 0);
+  });
+
   test('Memory search result uses highlight image then file path preview', () {
     final withHighlight = MemorySearchResultModel.fromJson({
+      'story': {
+        'date': '2026-03-10',
+        'highlight_image': 'stories_images/2026-03-10/compressed/a.jpg',
+        'names': 'Alex;Sam',
+        'keywords': 'travel;run',
+      },
+      'file': {
+        'path': 'stories_images/2026-03-10/compressed/b.jpg',
+        'date': '2026-03-10',
+      },
       'date': '2026-03-10',
-      'highlight_image': 'stories_images/2026-03-10/compressed/a.jpg',
-      'path': 'stories_images/2026-03-10/compressed/b.jpg',
-      'names': 'Alex;Sam',
-      'keywords': 'travel;run',
     });
     final withoutHighlight = MemorySearchResultModel.fromJson({
+      'story': {
+        'date': '2026-03-10',
+        'highlight_image': '',
+      },
+      'file': {
+        'path': 'stories_images/2026-03-10/compressed/b.jpg',
+        'date': '2026-03-10',
+      },
       'date': '2026-03-10',
-      'highlight_image': '',
-      'path': 'stories_images/2026-03-10/compressed/b.jpg',
     });
 
-    expect(withHighlight.previewImagePath, contains('a.jpg'));
+    expect(withHighlight.previewImagePath, contains('b.jpg'));
     expect(withoutHighlight.previewImagePath, contains('b.jpg'));
-    expect(withHighlight.people, ['Alex', 'Sam']);
-    expect(withHighlight.tags, ['travel', 'run']);
+    expect(withHighlight.story?.people, ['Alex', 'Sam']);
+    expect(withHighlight.story?.tags, ['travel', 'run']);
   });
 
   test('GraphqlDayRepository parses combined day payload', () async {
@@ -178,17 +207,50 @@ void main() {
     expect(payload.detailsLoaded, isFalse);
   });
 
+  test('ImageFacesPayloadModel parses labeled and unknown faces', () {
+    final payload = ImageFacesPayloadModel.fromJson({
+      'path': './Blue/stories_images/2026-03-14/a.jpg',
+      'status': 'ready',
+      'message': 'Detected 2 faces.',
+      'faces': [
+        {
+          'face_id': 1,
+          'path': './Blue/stories_images/2026-03-14/a.jpg',
+          'crop_path': './Blue/face_crops/a-0.jpg',
+          'person_id': 7,
+          'person_name': 'Ada Lovelace',
+          'bbox': [0, 0, 10, 10],
+        },
+        {
+          'face_id': 2,
+          'path': './Blue/stories_images/2026-03-14/a.jpg',
+          'crop_path': './Blue/face_crops/a-1.jpg',
+          'person_id': null,
+          'person_name': '',
+          'bbox': [10, 10, 10, 10],
+        },
+      ],
+    });
+
+    expect(payload.status, 'ready');
+    expect(payload.faces.length, 2);
+    expect(payload.faces.first.personName, 'Ada Lovelace');
+    expect(payload.faces.first.isLabeled, isTrue);
+    expect(payload.faces.last.isLabeled, isFalse);
+  });
+
   test(
     'MemorySearchRepository falls back to cached day search offline',
     () async {
       final repo = MemorySearchRepository(
         _ThrowingGraphqlService(),
         _FakeStoriesRepository(
-          cachedRecentDays: const [
+          cachedRecentDays: [
             StoryDayModel(
               date: '2026-03-14',
               place: 'Berlin',
               names: 'Alex;Sam',
+              personIds: const [],
               description: 'Great run by the river',
               food: 'Pasta',
               sport: 'Running',
@@ -202,15 +264,12 @@ void main() {
 
       final page = await repo.searchMemories(
         'river',
-        mode: MemorySearchMode.days,
-        page: 1,
-        pageSize: 24,
-        columns: const ['description', 'place'],
+        first: 24,
       );
 
       expect(page.isOfflineFallback, isTrue);
       expect(page.items.single.date, '2026-03-14');
-      expect(page.offlineMessage, contains('10 years'));
+      expect(page.offlineMessage, contains('cached story days'));
     },
   );
 

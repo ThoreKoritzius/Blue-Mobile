@@ -25,10 +25,12 @@ class ImageInfoResult {
   const ImageInfoResult({
     required this.file,
     required this.exif,
+    this.metadata = const {},
   });
 
   final Map<String, dynamic> file;
   final Map<String, dynamic> exif;
+  final Map<String, dynamic> metadata;
 }
 
 class GraphqlFilesRepository implements FilesRepository {
@@ -246,6 +248,19 @@ class GraphqlFilesRepository implements FilesRepository {
     );
     final raw = (response['files'] as Map<String, dynamic>)['imageInfo'];
     debugPrint('[IMAGE_INFO] raw type=${raw.runtimeType} value=$raw');
+    if (raw is Map<String, dynamic>) {
+      return ImageInfoResult(
+        file: raw['file'] is Map<String, dynamic>
+            ? raw['file'] as Map<String, dynamic>
+            : const {},
+        exif: raw['exif'] is Map<String, dynamic>
+            ? raw['exif'] as Map<String, dynamic>
+            : const {},
+        metadata: raw['metadata'] is Map<String, dynamic>
+            ? raw['metadata'] as Map<String, dynamic>
+            : const {},
+      );
+    }
     if (raw is List) {
       if (raw.length >= 2) {
         return ImageInfoResult(
@@ -255,6 +270,7 @@ class GraphqlFilesRepository implements FilesRepository {
           exif: raw[1] is Map<String, dynamic>
               ? raw[1] as Map<String, dynamic>
               : const {},
+          metadata: const {},
         );
       }
       // File not found in DB — only exif dict returned
@@ -264,6 +280,7 @@ class GraphqlFilesRepository implements FilesRepository {
           exif: raw[0] is Map<String, dynamic>
               ? raw[0] as Map<String, dynamic>
               : const {},
+          metadata: const {},
         );
       }
     }
@@ -279,11 +296,25 @@ class GraphqlFilesRepository implements FilesRepository {
             exif: decoded.isNotEmpty && decoded.last is Map<String, dynamic>
                 ? decoded.last as Map<String, dynamic>
                 : const {},
+            metadata: const {},
+          );
+        }
+        if (decoded is Map<String, dynamic>) {
+          return ImageInfoResult(
+            file: decoded['file'] is Map<String, dynamic>
+                ? decoded['file'] as Map<String, dynamic>
+                : const {},
+            exif: decoded['exif'] is Map<String, dynamic>
+                ? decoded['exif'] as Map<String, dynamic>
+                : const {},
+            metadata: decoded['metadata'] is Map<String, dynamic>
+                ? decoded['metadata'] as Map<String, dynamic>
+                : const {},
           );
         }
       } catch (_) {}
     }
-    return const ImageInfoResult(file: {}, exif: {});
+    return const ImageInfoResult(file: {}, exif: {}, metadata: {});
   }
 
   static dynamic _decodeJsonString(String s) {

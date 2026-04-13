@@ -15,9 +15,11 @@ import '../../core/widgets/calendar_event_detail_sheet.dart';
 import '../../core/widgets/fullscreen_image_viewer.dart';
 import '../../core/widgets/protected_network_image.dart';
 import '../../core/utils/date_format.dart';
+import '../../data/models/person_model.dart';
 import '../../data/models/run_model.dart';
 import '../../data/repositories/map_repository.dart';
 import '../../providers.dart';
+import '../persons/person_detail_page.dart';
 import '../runs/run_detail_page.dart';
 
 enum _MapStyle { light, dark, normal }
@@ -1097,6 +1099,8 @@ class _MapPageState extends ConsumerState<MapPage>
     int initialIndex = 0,
   }) {
     final repo = ref.read(filesRepositoryProvider);
+    final facesRepo = ref.read(facesRepositoryProvider);
+    final personRepo = ref.read(personRepositoryProvider);
     final items = images
         .map(
           (img) => ImageViewerItem(
@@ -1115,6 +1119,16 @@ class _MapPageState extends ConsumerState<MapPage>
       initialIndex: initialIndex.clamp(0, items.length - 1),
       httpHeaders: _authHeaders(),
       fetchImageInfo: (path) => repo.getImageInfo(path),
+      fetchImageFaces: (path) => facesRepo.getImageFaces(path),
+      unlabelFace: (faceId) => facesRepo.unlabelFace(faceId),
+      reassignFace: (faceId, personId, {isReference = false}) =>
+          facesRepo.reassignFace(
+            faceId,
+            personId,
+            isReference: isReference,
+          ),
+      personRepository: personRepo,
+      onOpenPerson: _openPersonFromViewer,
     );
   }
 
@@ -1367,6 +1381,8 @@ class _MapPageState extends ConsumerState<MapPage>
 
   Future<void> _showImageSheet(_ImageOverlay image) {
     final repo = ref.read(filesRepositoryProvider);
+    final facesRepo = ref.read(facesRepositoryProvider);
+    final personRepo = ref.read(personRepositoryProvider);
     return FullscreenImageViewer.show(
       context: context,
       images: [
@@ -1382,6 +1398,26 @@ class _MapPageState extends ConsumerState<MapPage>
       initialIndex: 0,
       httpHeaders: _authHeaders(),
       fetchImageInfo: (path) => repo.getImageInfo(path),
+      fetchImageFaces: (path) => facesRepo.getImageFaces(path),
+      unlabelFace: (faceId) => facesRepo.unlabelFace(faceId),
+      reassignFace: (faceId, personId, {isReference = false}) =>
+          facesRepo.reassignFace(
+            faceId,
+            personId,
+            isReference: isReference,
+          ),
+      personRepository: personRepo,
+      onOpenPerson: _openPersonFromViewer,
+    );
+  }
+
+  Future<void> _openPersonFromViewer(PersonModel person) async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PersonDetailPage(person: person),
+        fullscreenDialog: true,
+      ),
     );
   }
 
@@ -2363,9 +2399,10 @@ class _MapPageState extends ConsumerState<MapPage>
     final startIso = toIso(baseDate, startTime);
     final resolvedEndDate =
         isTravel &&
-            !combineDateTime(endDate, endTime).isAfter(
-              combineDateTime(baseDate, startTime),
-            )
+            !combineDateTime(
+              endDate,
+              endTime,
+            ).isAfter(combineDateTime(baseDate, startTime))
         ? baseDate.add(const Duration(days: 1))
         : endDate;
     final endIso = toIso(resolvedEndDate, endTime);
@@ -3208,7 +3245,11 @@ class _DayBottomSheet extends StatelessWidget {
   _activitySliceForCurrentDay(TimelineSegment segment) {
     final currentDay =
         DateTime.tryParse(currentDate) ?? DateUtils.dateOnly(DateTime.now());
-    final dayStart = DateTime(currentDay.year, currentDay.month, currentDay.day);
+    final dayStart = DateTime(
+      currentDay.year,
+      currentDay.month,
+      currentDay.day,
+    );
     final dayEnd = dayStart.add(const Duration(days: 1));
     final startedPreviousDay = segment.startTime.isBefore(dayStart);
     final visibleStart = startedPreviousDay ? dayStart : segment.startTime;

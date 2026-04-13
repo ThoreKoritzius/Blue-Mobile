@@ -1,18 +1,23 @@
 import 'dart:async';
-import 'dart:io';
+import 'dart:typed_data';
 
-import 'package:blue_mobile/data/models/day_media_model.dart';
-import 'package:blue_mobile/data/models/run_detail_model.dart';
-import 'package:blue_mobile/data/models/run_model.dart';
-import 'package:blue_mobile/data/repositories/files_repository.dart';
-import 'package:blue_mobile/data/repositories/map_repository.dart';
-import 'package:blue_mobile/data/repositories/runs_repository.dart';
-import 'package:blue_mobile/core/network/auth_token_store.dart';
-import 'package:blue_mobile/core/network/graphql_service.dart';
-import 'package:blue_mobile/features/auth/login_page.dart';
-import 'package:blue_mobile/features/chat/chat_page.dart';
-import 'package:blue_mobile/features/map/map_page.dart';
-import 'package:blue_mobile/providers.dart';
+import 'package:blue/data/models/image_faces_payload_model.dart';
+import 'package:blue/data/models/person_detail_payload_model.dart';
+import 'package:blue/data/models/person_images_page_model.dart';
+import 'package:blue/data/models/run_model.dart';
+import 'package:blue/data/models/person_model.dart';
+import 'package:blue/data/models/person_photo_upload_result_model.dart';
+import 'package:blue/data/models/person_recognition_status_model.dart';
+import 'package:blue/core/widgets/fullscreen_image_viewer.dart';
+import 'package:blue/data/repositories/files_repository.dart';
+import 'package:blue/data/repositories/map_repository.dart';
+import 'package:blue/data/repositories/person_repository.dart';
+import 'package:blue/core/network/auth_token_store.dart';
+import 'package:blue/core/network/graphql_service.dart';
+import 'package:blue/features/auth/login_page.dart';
+import 'package:blue/features/chat/chat_page.dart';
+import 'package:blue/features/map/map_page.dart';
+import 'package:blue/providers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -23,7 +28,7 @@ void main() {
       const ProviderScope(child: MaterialApp(home: LoginPage())),
     );
 
-    expect(find.text('Blue Mobile'), findsOneWidget);
+    expect(find.text('Welcome to Blue'), findsOneWidget);
     expect(find.text('Username'), findsOneWidget);
     expect(find.text('Password'), findsOneWidget);
   });
@@ -47,8 +52,6 @@ void main() {
     await tester.pumpWidget(
       _buildMapHarness(
         _FakeMapRepository(
-          imagePageLoader: ({required page, required pageSize}) async =>
-              const MapImagePage(points: [], hasMore: false),
           runsLoader: () => runs.future,
         ),
       ),
@@ -66,8 +69,6 @@ void main() {
     await tester.pumpWidget(
       _buildMapHarness(
         _FakeMapRepository(
-          imagePageLoader: ({required page, required pageSize}) async =>
-              const MapImagePage(points: [], hasMore: false),
           runsLoader: () async => const [],
         ),
       ),
@@ -89,8 +90,6 @@ void main() {
     await tester.pumpWidget(
       _buildMapHarness(
         _FakeMapRepository(
-          imagePageLoader: ({required page, required pageSize}) async =>
-              const MapImagePage(points: [], hasMore: false),
           runsLoader: () async => throw Exception('boom'),
         ),
       ),
@@ -103,6 +102,64 @@ void main() {
     expect(find.text('Failed to load run routes.'), findsOneWidget);
   }, skip: true);
 
+  testWidgets('fullscreen viewer info sheet shows named and unknown faces', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FullscreenImageViewer(
+          images: const [
+            ImageViewerItem(
+              fullUrl: 'https://example.com/full.jpg',
+              thumbnailUrl: 'https://example.com/thumb.jpg',
+              fileName: 'full.jpg',
+              path: './Blue/stories_images/2026-03-14/full.jpg',
+              date: '2026-03-14',
+            ),
+          ],
+          initialIndex: 0,
+          httpHeaders: const {},
+          fetchImageInfo: (_) async =>
+              const ImageInfoResult(file: {}, exif: {}),
+          fetchImageFaces: (_) async => ImageFacesPayloadModel.fromJson({
+            'path': './Blue/stories_images/2026-03-14/full.jpg',
+            'status': 'ready',
+            'message': 'Detected 2 faces.',
+            'faces': [
+              {
+                'face_id': 1,
+                'path': './Blue/stories_images/2026-03-14/full.jpg',
+                'crop_path': '',
+                'person_id': 7,
+                'person_name': 'Ada Lovelace',
+                'bbox': [0, 0, 10, 10],
+              },
+              {
+                'face_id': 2,
+                'path': './Blue/stories_images/2026-03-14/full.jpg',
+                'crop_path': '',
+                'person_id': null,
+                'person_name': '',
+                'bbox': [10, 10, 10, 10],
+              },
+            ],
+          }),
+          unlabelFace: (_) async {},
+          reassignFace: (_, __, {isReference = false}) async {},
+          personRepository: _FakePersonRepository(),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byTooltip('Details'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(find.text('People in this photo'), findsOneWidget);
+    expect(find.text('Ada Lovelace'), findsOneWidget);
+    expect(find.text('Unknown person'), findsOneWidget);
+  });
+
   testWidgets('map page opens run sheet and navigates to day tab action', (
     tester,
   ) async {
@@ -110,8 +167,6 @@ void main() {
       overrides: [
         mapRepositoryProvider.overrideWithValue(
           _FakeMapRepository(
-            imagePageLoader: ({required page, required pageSize}) async =>
-                const MapImagePage(points: [], hasMore: false),
             runsLoader: () async => const [
               RunModel(
                 id: 'run-1',
@@ -119,6 +174,11 @@ void main() {
                 startDateLocal: '2026-03-10T08:00:00',
                 distance: 5000,
                 summaryPolyline: '_p~iF~ps|U_ulLnnqC_mqNvxq`@',
+                movingTime: 1500,
+                averageSpeed: 3.33,
+                startTime: '08:00',
+                source: 'strava',
+                sourceLabel: 'Strava',
               ),
             ],
           ),
@@ -159,90 +219,62 @@ Widget _buildMapHarness(MapRepository repository) {
 }
 
 class _FakeMapRepository extends MapRepository {
-  _FakeMapRepository({required this.imagePageLoader, required this.runsLoader})
-    : super(
-        _FakeFilesRepository(loader: () async => const []),
-        _FakeRunsRepository(listRunsLoader: () async => const []),
-        GraphqlService(AuthTokenStore()),
-      );
+  _FakeMapRepository({required this.runsLoader})
+    : super(GraphqlService(AuthTokenStore()));
 
-  final Future<MapImagePage> Function({
-    required int page,
-    required int pageSize,
-  })
-  imagePageLoader;
   final Future<List<RunModel>> Function() runsLoader;
 
   @override
-  Future<MapImagePage> searchImagePage({
+  Future<List<RunModel>> loadRuns({
+    String? dateFrom,
+    String? dateTo,
+    bool forceRefresh = false,
+  }) => runsLoader();
+}
+
+class _FakePersonRepository implements PersonRepository {
+  @override
+  Future<PersonModel?> getCachedPerson(int id) async => null;
+
+  @override
+  Future<List<PersonModel>> popular({int first = 12}) async => const [];
+
+  @override
+  Future<List<PersonModel>> search(String query, {int first = 12}) async =>
+      const [];
+
+  @override
+  Future<PersonDetailPayloadModel> loadDetail(PersonModel person) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<PersonImagesPageModel> loadPersonImagesPage(
+    int personId, {
     required int page,
     required int pageSize,
-  }) => imagePageLoader(page: page, pageSize: pageSize);
-
-  @override
-  Future<List<RunModel>> loadRuns() => runsLoader();
-}
-
-class _FakeRunsRepository implements RunsRepository {
-  _FakeRunsRepository({required this.listRunsLoader});
-
-  final Future<List<RunModel>> Function() listRunsLoader;
-
-  @override
-  Future<void> cacheRuns(List<RunModel> runs) async {}
-
-  @override
-  Future<RunDetailModel> detail(String runId) {
+    String mode = 'auto',
+  }) {
     throw UnimplementedError();
   }
 
   @override
-  Future<List<RunModel>> getCachedRuns({int limit = 2000}) async => const [];
-
-  @override
-  Future<List<RunModel>> listRuns({int first = 2000}) => listRunsLoader();
-
-  @override
-  Future<List<RunModel>> monthlyRuns({int first = 2000}) async {
-    return const [];
-  }
-
-  @override
-  Future<List<RunModel>> runsForDate(String date, {int first = 50}) async {
-    return const [];
-  }
-
-  @override
-  Future<({RunDetailModel summary, RunDetailModel detail})> loadDetailBundle(
-    String runId,
-  ) async {
+  Future<PersonRecognitionStatusModel> loadRecognitionStatus(int personId) {
     throw UnimplementedError();
   }
 
   @override
-  Future<RunDetailModel> summary(String runId) {
+  Future<PersonModel> create(PersonModel person) async => person;
+
+  @override
+  Future<PersonModel> update(PersonModel person) async => person;
+
+  @override
+  Future<PersonPhotoUploadResultModel> uploadPhoto(
+    int personId,
+    String filename,
+    Uint8List bytes,
+  ) {
     throw UnimplementedError();
   }
-
-  @override
-  Future<void> warmRecentCache({int limitDays = 400}) async {}
-}
-
-class _FakeFilesRepository implements FilesRepository {
-  _FakeFilesRepository({required this.loader});
-
-  final Future<List<DayMediaModel>> Function() loader;
-
-  @override
-  Future<List<DayMediaModel>> getDayFiles(String day, {int first = 300}) =>
-      loader();
-
-  @override
-  Future<List<DayMediaModel>> listFiles({int first = 2000}) => loader();
-
-  @override
-  Future<void> updateHighlight(String imagePath) async {}
-
-  @override
-  Future<String> uploadFiles(String day, List<File> files) async => 'ok';
 }

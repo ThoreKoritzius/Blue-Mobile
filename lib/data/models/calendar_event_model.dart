@@ -53,3 +53,15 @@ class CalendarEventModel {
     );
   }
 }
+
+DateTime? parseCalendarEventDateTime(String? value) {
+  final trimmed = value?.trim() ?? '';
+  if (trimmed.isEmpty) return null;
+  final normalized = trimmed.replaceFirst(
+    RegExp(r'(Z|[+-]\d{2}:\d{2})$'),
+    '',
+  );
+  final parsed = DateTime.tryParse(normalized);
+  if (parsed == null) return null;
+  return parsed;
+}

@@ -13,6 +13,7 @@ import 'data/repositories/auth_repository.dart';
 import 'data/repositories/calendar_repository.dart';
 import 'data/repositories/chat_repository.dart';
 import 'data/repositories/day_repository.dart';
+import 'data/repositories/faces_repository.dart';
 import 'data/repositories/files_repository.dart';
 import 'data/repositories/map_repository.dart';
 import 'data/repositories/person_repository.dart';
@@ -83,6 +84,10 @@ final storiesRepositoryProvider = Provider<StoriesRepository>((ref) {
 
 final filesRepositoryProvider = Provider<FilesRepository>((ref) {
   return GraphqlFilesRepository(ref.watch(graphqlServiceProvider));
+});
+
+final facesRepositoryProvider = Provider<FacesRepository>((ref) {
+  return GraphqlFacesRepository(ref.watch(graphqlServiceProvider));
 });
 
 final runsRepositoryProvider = Provider<RunsRepository>((ref) {

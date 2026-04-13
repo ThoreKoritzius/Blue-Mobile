@@ -145,6 +145,34 @@ query FilesImageInfo($path: String!) {
 }
 ''';
 
+  static const facesByPath = r'''
+query FacesByPath($path: String!) {
+  faces {
+    byPath(path: $path)
+  }
+}
+''';
+
+  static const facesUnlabel = r'''
+mutation FacesUnlabel($faceId: Int!) {
+  faces {
+    unlabel(faceId: $faceId) {
+      data
+    }
+  }
+}
+''';
+
+  static const facesReassign = r'''
+mutation FacesReassign($faceId: Int!, $personId: Int!, $isReference: Boolean!) {
+  faces {
+    reassign(faceId: $faceId, personId: $personId, isReference: $isReference) {
+      data
+    }
+  }
+}
+''';
+
   static const filesDeleteFile = r'''
 mutation FilesDeleteFile($path: String!) {
   files {
