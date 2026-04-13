@@ -23,6 +23,16 @@ class GraphqlStoriesRepository implements StoriesRepository {
   final GraphqlService _gql;
   final StoryCacheStore _cacheStore;
 
+  Future<StoryDayModel> _preservePeopleIfFreshPayloadIsEmpty(
+    String day,
+    StoryDayModel incoming,
+  ) async {
+    if (incoming.people.isNotEmpty) return incoming;
+    final cached = await _cacheStore.readDay(day);
+    if (cached == null || cached.people.isEmpty) return incoming;
+    return incoming.copyWith(names: cached.names, personIds: cached.personIds);
+  }
+
   @override
   Future<StoryDayModel?> getCachedDay(String day) {
     return _cacheStore.readDay(day);
@@ -49,18 +59,24 @@ class GraphqlStoriesRepository implements StoriesRepository {
       );
       final payload = ((response['stories'] as Map<String, dynamic>)['day']);
 
-      late final StoryDayModel story;
-      if (payload is Map<String, dynamic> &&
-          payload['story'] is Map<String, dynamic>) {
-        story = StoryDayModel.fromJson(
+      late final StoryDayModel parsedStory;
+      if (payload is Map && payload['story'] is Map) {
+        parsedStory = StoryDayModel.fromJson(
           day,
-          payload['story'] as Map<String, dynamic>,
+          Map<String, dynamic>.from(payload['story'] as Map),
         );
-      } else if (payload is Map<String, dynamic>) {
-        story = StoryDayModel.fromJson(day, payload);
+      } else if (payload is Map) {
+        parsedStory = StoryDayModel.fromJson(
+          day,
+          Map<String, dynamic>.from(payload),
+        );
       } else {
-        story = StoryDayModel.empty(day);
+        parsedStory = StoryDayModel.empty(day);
       }
+      final story = await _preservePeopleIfFreshPayloadIsEmpty(
+        day,
+        parsedStory,
+      );
       await _cacheStore.upsertStory(story);
       return story;
     } catch (_) {
@@ -85,8 +101,10 @@ class GraphqlStoriesRepository implements StoriesRepository {
               as Map<String, dynamic>?);
       final edges = (connection?['edges'] as List<dynamic>? ?? const []);
       final items = edges
-          .map((item) => (item as Map<String, dynamic>)['node'])
-          .whereType<Map<String, dynamic>>()
+          .whereType<Map>()
+          .map((item) => item['node'])
+          .whereType<Map>()
+          .map((json) => Map<String, dynamic>.from(json))
           .map((json) {
             final day = (json['date'] ?? '').toString();
             return StoryDayModel.fromJson(day, json);

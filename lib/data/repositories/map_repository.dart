@@ -915,7 +915,6 @@ class MapRepository {
   }
 
   Future<void> addManualActivity({
-    required String date,
     required String startTime,
     required String endTime,
     required String activityType,
@@ -925,7 +924,6 @@ class MapRepository {
     await _gql.query(
       GqlDocuments.addManualActivity,
       variables: {
-        'date': date,
         'startTime': startTime,
         'endTime': endTime,
         'activityType': activityType,
@@ -933,7 +931,8 @@ class MapRepository {
         'placeNameEnd': placeNameEnd,
       },
     );
-    _invalidateTimelineDay(date);
+    _invalidateTimelineDay(_isoDatePart(startTime));
+    _invalidateTimelineDay(_isoDatePart(endTime));
   }
 
   Future<void> deleteManualVisit(int segmentId) async {
@@ -947,6 +946,16 @@ class MapRepository {
   void _invalidateTimelineDay(String date) {
     _timelineDayCache.remove(date);
     _timelineDayInFlight.remove(date);
+  }
+
+  String _isoDatePart(String dateTime) {
+    final parsed = DateTime.tryParse(dateTime);
+    if (parsed == null) {
+      return dateTime.split('T').first;
+    }
+    final month = parsed.month.toString().padLeft(2, '0');
+    final day = parsed.day.toString().padLeft(2, '0');
+    return '${parsed.year}-$month-$day';
   }
 
   List<dynamic> _asList(Object? value) {

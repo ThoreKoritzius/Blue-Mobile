@@ -623,25 +623,63 @@ query PersonPopular($first: Int!) {
 ''';
 
   static const personDetailBundle = r'''
-query PersonDetailBundle($personId: Int!) {
+query PersonDetailBundle($personId: Int!, $imagePage: Int!, $imagePageSize: Int!, $faceFirst: Int!) {
   faces {
-    personFaces(personId: $personId, first: 24) {
+    personFaces(personId: $personId, first: $faceFirst) {
       edges {
         node
       }
     }
     personImages(
       personId: $personId
-      limit: 24
-      page: 1
-      pageSize: 24
+      limit: $imagePageSize
+      page: $imagePage
+      pageSize: $imagePageSize
       mode: "auto"
-      first: 24
+      first: $imagePageSize
     ) {
       edges {
         node
       }
+      totalCount
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
     }
+    personRecognitionStatus(personId: $personId)
+  }
+}
+''';
+
+  static const personImagesPage = r'''
+query PersonImagesPage($personId: Int!, $page: Int!, $pageSize: Int!, $mode: String!) {
+  faces {
+    personImages(
+      personId: $personId
+      limit: $pageSize
+      page: $page
+      pageSize: $pageSize
+      mode: $mode
+      first: $pageSize
+    ) {
+      edges {
+        node
+      }
+      totalCount
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+}
+''';
+
+  static const personRecognitionStatus = r'''
+query PersonRecognitionStatus($personId: Int!) {
+  faces {
+    personRecognitionStatus(personId: $personId)
   }
 }
 ''';
@@ -776,7 +814,6 @@ mutation AddManualVisit(
 
   static const addManualActivity = r'''
 mutation AddManualActivity(
-  $date: String!,
   $startTime: String!,
   $endTime: String!,
   $activityType: ActivityTypeEnum!,
@@ -785,7 +822,6 @@ mutation AddManualActivity(
 ) {
   timeline {
     addManualActivity(
-      date: $date,
       startTime: $startTime,
       endTime: $endTime,
       activityType: $activityType,

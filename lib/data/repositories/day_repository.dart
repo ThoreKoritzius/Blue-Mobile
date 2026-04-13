@@ -31,6 +31,16 @@ class GraphqlDayRepository implements DayRepository {
   final Map<String, Future<DayPayloadModel>> _inFlight =
       <String, Future<DayPayloadModel>>{};
 
+  Future<StoryDayModel> _preservePeopleIfFreshPayloadIsEmpty(
+    String day,
+    StoryDayModel incoming,
+  ) async {
+    if (incoming.people.isNotEmpty) return incoming;
+    final cached = await _storiesRepository.getCachedDay(day);
+    if (cached == null || cached.people.isEmpty) return incoming;
+    return incoming.copyWith(names: cached.names, personIds: cached.personIds);
+  }
+
   @override
   Future<DayPayloadModel?> getCachedDayCorePayload(String day) async {
     final story = await _storiesRepository.getCachedDay(day);
@@ -94,10 +104,10 @@ class GraphqlDayRepository implements DayRepository {
 
       final stories = response['stories'] as Map<String, dynamic>? ?? const {};
       final storyPayload = stories['day'];
-      final storyJson = storyPayload is Map<String, dynamic>
-          ? (storyPayload['story'] is Map<String, dynamic>
-                ? storyPayload['story'] as Map<String, dynamic>
-                : storyPayload)
+      final storyJson = storyPayload is Map
+          ? (storyPayload['story'] is Map
+                ? Map<String, dynamic>.from(storyPayload['story'] as Map)
+                : Map<String, dynamic>.from(storyPayload))
           : const <String, dynamic>{};
 
       final files = response['files'] as Map<String, dynamic>? ?? const {};
@@ -113,44 +123,53 @@ class GraphqlDayRepository implements DayRepository {
                     as List<dynamic>? ??
                 const []);
 
-      final story = StoryDayModel.fromJson(day, storyJson);
+      final story = await _preservePeopleIfFreshPayloadIsEmpty(
+        day,
+        StoryDayModel.fromJson(day, storyJson),
+      );
       await _storiesRepository.cacheDay(story);
       final dayRuns = runEdges
-          .map((item) => (item as Map<String, dynamic>)['node'])
-          .whereType<Map<String, dynamic>>()
+          .whereType<Map>()
+          .map((item) => item['node'])
+          .whereType<Map>()
+          .map((json) => Map<String, dynamic>.from(json))
           .map(RunModel.fromJson)
           .toList();
       await _runsRepository.cacheRuns(dayRuns);
       final activityEdges =
           (((response['health'] as Map<String, dynamic>?)?['dailyActivity']
-                      as Map<String, dynamic>?)?['edges']
-                  as List<dynamic>?) ??
-              const [];
+                  as Map<String, dynamic>?)?['edges']
+              as List<dynamic>?) ??
+          const [];
       DailyActivityModel? activity;
       if (activityEdges.isNotEmpty) {
-        final node = (activityEdges.first as Map<String, dynamic>)['node'];
-        if (node is Map<String, dynamic>) {
-          activity = DailyActivityModel.fromJson(node);
+        final node = (activityEdges.first as Map)['node'];
+        if (node is Map) {
+          activity = DailyActivityModel.fromJson(
+            Map<String, dynamic>.from(node),
+          );
         }
       }
       final weatherEdges =
           (((response['health'] as Map<String, dynamic>?)?['dailyWeather']
-                      as Map<String, dynamic>?)?['edges']
-                  as List<dynamic>?) ??
-              const [];
+                  as Map<String, dynamic>?)?['edges']
+              as List<dynamic>?) ??
+          const [];
       DailyWeatherModel? weather;
       if (weatherEdges.isNotEmpty) {
-        final node = (weatherEdges.first as Map<String, dynamic>)['node'];
-        if (node is Map<String, dynamic>) {
-          weather = DailyWeatherModel.fromJson(node);
+        final node = (weatherEdges.first as Map)['node'];
+        if (node is Map) {
+          weather = DailyWeatherModel.fromJson(Map<String, dynamic>.from(node));
         }
       }
 
       return DayPayloadModel(
         story: story,
         media: fileEdges
-            .map((item) => (item as Map<String, dynamic>)['node'])
-            .whereType<Map<String, dynamic>>()
+            .whereType<Map>()
+            .map((item) => item['node'])
+            .whereType<Map>()
+            .map((json) => Map<String, dynamic>.from(json))
             .map(DayMediaModel.fromJson)
             .toList(),
         runs: dayRuns,

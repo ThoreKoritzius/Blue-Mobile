@@ -15,6 +15,7 @@ import '../../core/widgets/section_card.dart';
 import '../../data/models/day_media_model.dart';
 import '../../data/models/person_detail_payload_model.dart';
 import '../../data/models/person_model.dart';
+import '../../data/models/person_recognition_status_model.dart';
 import '../../providers.dart';
 
 class PersonDetailPage extends ConsumerStatefulWidget {
@@ -27,11 +28,22 @@ class PersonDetailPage extends ConsumerStatefulWidget {
 }
 
 class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
+  static const _galleryPageSize = 24;
+
   PersonDetailPayloadModel? _payload;
+  List<DayMediaModel> _galleryImages = const [];
+  PersonRecognitionStatusModel? _recognition;
   bool _loading = true;
   bool _saving = false;
+  bool _loadingMoreImages = false;
+  bool _loadingRecognition = false;
   String? _error;
+  String? _imagesError;
+  String? _recognitionError;
   int _photoCacheBust = 0;
+  int _imagePage = 1;
+  int _imageTotalCount = 0;
+  bool _imageHasNextPage = false;
 
   @override
   void initState() {
@@ -39,11 +51,15 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
     _load();
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future<void> _load({bool showLoading = true}) async {
+    if (showLoading || _payload == null) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    } else {
+      setState(() => _error = null);
+    }
     try {
       final payload = await ref
           .read(personRepositoryProvider)
@@ -51,6 +67,13 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
       if (!mounted) return;
       setState(() {
         _payload = payload;
+        _galleryImages = payload.images;
+        _recognition = payload.recognition;
+        _imagePage = 1;
+        _imageTotalCount = payload.imageTotalCount;
+        _imageHasNextPage = payload.imageHasNextPage;
+        _imagesError = null;
+        _recognitionError = null;
         _loading = false;
       });
     } catch (error) {
@@ -60,6 +83,78 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
         _loading = false;
       });
     }
+  }
+
+  Future<void> _loadMoreImages() async {
+    final payload = _payload;
+    if (payload == null || _loadingMoreImages || !_imageHasNextPage) return;
+
+    setState(() => _loadingMoreImages = true);
+    try {
+      final page = await ref
+          .read(personRepositoryProvider)
+          .loadPersonImagesPage(
+            payload.person.id,
+            page: _imagePage + 1,
+            pageSize: _galleryPageSize,
+          );
+      if (!mounted) return;
+      setState(() {
+        _galleryImages = _mergeImages(_galleryImages, page.items);
+        _imagePage = page.page;
+        _imageTotalCount = page.totalCount;
+        _imageHasNextPage = page.hasNextPage;
+        _imagesError = null;
+        _loadingMoreImages = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _imagesError = error.toString().replaceFirst('Exception: ', '');
+        _loadingMoreImages = false;
+      });
+    }
+  }
+
+  Future<void> _refreshRecognition() async {
+    final payload = _payload;
+    if (payload == null || _loadingRecognition) return;
+
+    setState(() {
+      _loadingRecognition = true;
+      _recognitionError = null;
+    });
+    try {
+      final recognition = await ref
+          .read(personRepositoryProvider)
+          .loadRecognitionStatus(payload.person.id);
+      if (!mounted) return;
+      setState(() {
+        _recognition = recognition;
+        _recognitionError = null;
+        _loadingRecognition = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _recognitionError = error.toString().replaceFirst('Exception: ', '');
+        _loadingRecognition = false;
+      });
+    }
+  }
+
+  List<DayMediaModel> _mergeImages(
+    List<DayMediaModel> current,
+    List<DayMediaModel> incoming,
+  ) {
+    final seen = current.map((item) => item.path).toSet();
+    final merged = List<DayMediaModel>.of(current);
+    for (final image in incoming) {
+      if (seen.add(image.path)) {
+        merged.add(image);
+      }
+    }
+    return merged;
   }
 
   Future<void> _editPerson() async {
@@ -90,6 +185,11 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
                       person: saved,
                       faces: const [],
                       images: const [],
+                      recognition: PersonRecognitionStatusModel.empty(
+                        personId: saved.id,
+                      ),
+                      imageTotalCount: 0,
+                      imageHasNextPage: false,
                     ))
                 .copyWith(person: saved);
         _saving = false;
@@ -113,6 +213,8 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final isCompactMobile = screenWidth < Breakpoints.compact;
     if (_loading && _payload == null) {
       return Scaffold(
         backgroundColor: colorScheme.surface,
@@ -139,6 +241,20 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
     final contact = _contact(person);
     final authHeaders = _authHeaders();
     final notes = person.notes.trim();
+    final recognition =
+        _recognition ?? PersonRecognitionStatusModel.empty(personId: person.id);
+    final heroHeader = _HeroHeader(
+      person: person,
+      imageUrl: heroUrl,
+      headers: authHeaders,
+      fallbackInitials: _initials(person),
+      onPhotoTap: _pickAndUploadPhoto,
+    );
+    final tabsBar = _PersonTabBar(
+      colorScheme: colorScheme,
+      horizontalPadding: isCompactMobile ? 12 : 16,
+      bottomPadding: isCompactMobile ? 8 : 10,
+    );
 
     return DefaultTabController(
       length: 2,
@@ -147,6 +263,43 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
         backgroundColor: colorScheme.surface,
         body: NestedScrollView(
           headerSliverBuilder: (context, innerBoxIsScrolled) {
+            if (isCompactMobile) {
+              return [
+                SliverAppBar(
+                  pinned: true,
+                  backgroundColor: colorScheme.surface,
+                  foregroundColor: colorScheme.onSurface,
+                  actions: [
+                    IconButton(
+                      onPressed: _saving ? null : _editPerson,
+                      icon: _saving
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.edit_outlined),
+                    ),
+                  ],
+                ),
+                SliverToBoxAdapter(
+                  child: _HeroSurface(
+                    isDark: isDark,
+                    colorScheme: colorScheme,
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                    child: heroHeader,
+                  ),
+                ),
+                SliverPersistentHeader(
+                  pinned: true,
+                  delegate: _PinnedHeaderDelegate(child: tabsBar),
+                ),
+              ];
+            }
+
             return [
               SliverAppBar(
                 pinned: true,
@@ -169,89 +322,14 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
                   ),
                 ],
                 flexibleSpace: FlexibleSpaceBar(
-                  background: Container(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: isDark
-                            ? [
-                                colorScheme.surfaceContainerHighest,
-                                colorScheme.surfaceContainer,
-                              ]
-                            : [
-                                colorScheme.surface,
-                                colorScheme.primaryContainer,
-                              ],
-                      ),
-                    ),
-                    child: SafeArea(
-                      bottom: false,
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          return Align(
-                            alignment: Alignment.topCenter,
-                            child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 1200),
-                              child: Padding(
-                                padding: EdgeInsets.fromLTRB(
-                                  20,
-                                  22,
-                                  20,
-                                  constraints.maxWidth >= Breakpoints.medium
-                                      ? 88
-                                      : 92,
-                                ),
-                                child: _HeroHeader(
-                                  person: person,
-                                  imageUrl: heroUrl,
-                                  headers: authHeaders,
-                                  fallbackInitials: _initials(person),
-                                  onPhotoTap: _pickAndUploadPhoto,
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
+                  background: _HeroSurface(
+                    isDark: isDark,
+                    colorScheme: colorScheme,
+                    padding: const EdgeInsets.fromLTRB(20, 22, 20, 88),
+                    child: heroHeader,
                   ),
                 ),
-                bottom: PreferredSize(
-                  preferredSize: const Size.fromHeight(64),
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 1232),
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: colorScheme.surfaceContainer,
-                            borderRadius: BorderRadius.circular(18),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.12),
-                                blurRadius: 20,
-                                offset: const Offset(0, 8),
-                              ),
-                            ],
-                          ),
-                          child: TabBar(
-                            dividerColor: Colors.transparent,
-                            labelColor: colorScheme.onSurface,
-                            unselectedLabelColor: colorScheme.onSurfaceVariant,
-                            indicatorColor: colorScheme.primary,
-                            indicatorWeight: 3,
-                            tabs: const [
-                              Tab(text: 'Overview'),
-                              Tab(text: 'Gallery'),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
+                bottom: tabsBar,
               ),
             ];
           },
@@ -262,9 +340,18 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
                 contact: contact,
                 biography: person.biography.trim(),
                 notes: notes,
+                recognition: recognition,
+                recognitionLoading: _loadingRecognition,
+                recognitionError: _recognitionError,
+                onRefreshRecognition: _refreshRecognition,
               ),
               _PhotosTab(
-                images: payload.images,
+                images: _galleryImages,
+                hasNextPage: _imageHasNextPage,
+                isLoadingMore: _loadingMoreImages,
+                loadError: _imagesError,
+                totalCount: _imageTotalCount,
+                onLoadMore: _loadMoreImages,
                 headers: authHeaders,
                 fetchImageInfo: ref.read(filesRepositoryProvider).getImageInfo,
                 onDelete: (path) =>
@@ -338,21 +425,29 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
 
     setState(() => _saving = true);
     try {
-      final photoPath = await ref
+      final uploadResult = await ref
           .read(personRepositoryProvider)
           .uploadPhoto(personId, 'photo.jpg', croppedBytes);
       if (!mounted) return;
       setState(() {
         _payload = _payload?.copyWith(
-          person: _payload!.person.copyWith(photoPath: photoPath),
+          person: _payload!.person.copyWith(photoPath: uploadResult.photoPath),
         );
         _photoCacheBust++;
         _saving = false;
         imageCache.clear();
       });
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Photo updated.')));
+      await _load(showLoading: false);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            uploadResult.message.isEmpty
+                ? 'Photo updated.'
+                : uploadResult.message,
+          ),
+        ),
+      );
     } catch (error) {
       if (!mounted) return;
       setState(() => _saving = false);
@@ -399,12 +494,25 @@ class _PersonDetailPageState extends ConsumerState<PersonDetailPage> {
 
   double _heroExpandedHeight(BuildContext context, PersonModel person) {
     final width = MediaQuery.sizeOf(context).width;
-    final chipRows = person.chips.isEmpty
-        ? 0
-        : (person.chips.length / 3).ceil();
     if (width >= Breakpoints.expanded) return 292;
     if (width >= Breakpoints.medium) return 272;
-    return 288 + (chipRows.clamp(0, 3) * 20);
+    final chipsPerRow = width >= Breakpoints.compact
+        ? 3
+        : width >= 360
+        ? 2
+        : 1;
+    final chipRows = person.chips.isEmpty
+        ? 0
+        : (person.chips.length / chipsPerRow).ceil();
+    final relationExtra = person.relation.trim().isEmpty ? 0 : 28;
+    final nameExtra = person.displayName.trim().length > 22 ? 18 : 0;
+    if (width >= Breakpoints.compact) {
+      return 288 + relationExtra + (chipRows.clamp(0, 3) * 20);
+    }
+    return 228.0 +
+        relationExtra.toDouble() +
+        (chipRows.clamp(0, 2) * 16).toDouble() +
+        (nameExtra / 2);
   }
 }
 
@@ -431,6 +539,7 @@ class _HeroHeader extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isWide = constraints.maxWidth >= Breakpoints.medium;
+        final isCompactMobile = constraints.maxWidth < Breakpoints.compact;
         final avatar = GestureDetector(
           onTap: onPhotoTap,
           child: Stack(
@@ -440,7 +549,11 @@ class _HeroHeader extends StatelessWidget {
                 imageUrl: imageUrl,
                 headers: headers,
                 fallback: fallbackInitials,
-                size: isWide ? 132 : 112,
+                size: isWide
+                    ? 132
+                    : isCompactMobile
+                    ? 76
+                    : 112,
               ),
               Positioned(
                 right: -2,
@@ -462,7 +575,11 @@ class _HeroHeader extends StatelessWidget {
             ],
           ),
         );
-        final content = _HeroDetails(person: person, centered: !isWide);
+        final content = _HeroDetails(
+          person: person,
+          centered: !isWide && !isCompactMobile,
+          compact: isCompactMobile,
+        );
 
         if (isWide) {
           return Row(
@@ -475,20 +592,168 @@ class _HeroHeader extends StatelessWidget {
           );
         }
 
+        if (isCompactMobile) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              avatar,
+              const SizedBox(width: 14),
+              Expanded(child: content),
+            ],
+          );
+        }
+
         return Column(
           mainAxisAlignment: MainAxisAlignment.center,
-          children: [avatar, const SizedBox(height: 18), content],
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            avatar,
+            SizedBox(height: isCompactMobile ? 12 : 18),
+            content,
+          ],
         );
       },
     );
   }
 }
 
+class _HeroSurface extends StatelessWidget {
+  const _HeroSurface({
+    required this.isDark,
+    required this.colorScheme,
+    required this.padding,
+    required this.child,
+  });
+
+  final bool isDark;
+  final ColorScheme colorScheme;
+  final EdgeInsets padding;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: isDark
+              ? [
+                  colorScheme.surfaceContainerHighest,
+                  colorScheme.surfaceContainer,
+                ]
+              : [colorScheme.surface, colorScheme.primaryContainer],
+        ),
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1200),
+            child: Padding(padding: padding, child: child),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PersonTabBar extends StatelessWidget implements PreferredSizeWidget {
+  const _PersonTabBar({
+    required this.colorScheme,
+    required this.horizontalPadding,
+    required this.bottomPadding,
+  });
+
+  final ColorScheme colorScheme;
+  final double horizontalPadding;
+  final double bottomPadding;
+
+  @override
+  Size get preferredSize => Size.fromHeight(54 + bottomPadding);
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: colorScheme.surface,
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 1232),
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              horizontalPadding,
+              0,
+              horizontalPadding,
+              bottomPadding,
+            ),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainer,
+                borderRadius: BorderRadius.circular(18),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.12),
+                    blurRadius: 20,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: TabBar(
+                dividerColor: Colors.transparent,
+                labelColor: colorScheme.onSurface,
+                unselectedLabelColor: colorScheme.onSurfaceVariant,
+                indicatorColor: colorScheme.primary,
+                indicatorWeight: 3,
+                tabs: const [
+                  Tab(text: 'Overview'),
+                  Tab(text: 'Gallery'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PinnedHeaderDelegate extends SliverPersistentHeaderDelegate {
+  const _PinnedHeaderDelegate({required this.child});
+
+  final PreferredSizeWidget child;
+
+  @override
+  double get minExtent => child.preferredSize.height;
+
+  @override
+  double get maxExtent => child.preferredSize.height;
+
+  @override
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) {
+    return child;
+  }
+
+  @override
+  bool shouldRebuild(covariant _PinnedHeaderDelegate oldDelegate) {
+    return oldDelegate.child != child;
+  }
+}
+
 class _HeroDetails extends StatelessWidget {
-  const _HeroDetails({required this.person, required this.centered});
+  const _HeroDetails({
+    required this.person,
+    required this.centered,
+    this.compact = false,
+  });
 
   final PersonModel person;
   final bool centered;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -503,37 +768,51 @@ class _HeroDetails extends StatelessWidget {
       children: [
         Text(
           person.displayName,
-          maxLines: centered ? 2 : 1,
+          maxLines: compact ? 2 : (centered ? 2 : 1),
           overflow: TextOverflow.ellipsis,
           textAlign: centered ? TextAlign.center : TextAlign.start,
-          style: theme.textTheme.headlineSmall?.copyWith(
-            color: colorScheme.onSurface,
-            fontWeight: FontWeight.w900,
-          ),
+          style:
+              (compact
+                      ? theme.textTheme.titleLarge
+                      : theme.textTheme.headlineSmall)
+                  ?.copyWith(
+                    color: colorScheme.onSurface,
+                    fontWeight: FontWeight.w900,
+                  ),
         ),
         if (person.relation.trim().isNotEmpty) ...[
-          const SizedBox(height: 6),
+          SizedBox(height: compact ? 4 : 6),
           Text(
             person.relation.trim(),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             textAlign: centered ? TextAlign.center : TextAlign.start,
-            style: theme.textTheme.titleMedium?.copyWith(
-              color: colorScheme.onSurfaceVariant,
-              fontWeight: FontWeight.w600,
-            ),
+            style:
+                (compact
+                        ? theme.textTheme.titleSmall
+                        : theme.textTheme.titleMedium)
+                    ?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
           ),
         ],
         if (person.chips.isNotEmpty) ...[
-          const SizedBox(height: 12),
+          SizedBox(height: compact ? 10 : 12),
           Align(
             alignment: centered ? Alignment.center : Alignment.centerLeft,
             child: Wrap(
               alignment: centered ? WrapAlignment.center : WrapAlignment.start,
-              spacing: 8,
-              runSpacing: 8,
+              spacing: compact ? 6 : 8,
+              runSpacing: compact ? 6 : 8,
               children: person.chips
-                  .map((chip) => _HeroBadge(label: chip, centered: centered))
+                  .map(
+                    (chip) => _HeroBadge(
+                      label: chip,
+                      centered: centered,
+                      compact: compact,
+                    ),
+                  )
                   .toList(),
             ),
           ),
@@ -549,12 +828,20 @@ class _OverviewTab extends StatelessWidget {
     required this.contact,
     required this.biography,
     required this.notes,
+    required this.recognition,
+    required this.recognitionLoading,
+    required this.recognitionError,
+    required this.onRefreshRecognition,
   });
 
   final List<(String, String)> stats;
   final List<(String, String)> contact;
   final String biography;
   final String notes;
+  final PersonRecognitionStatusModel recognition;
+  final bool recognitionLoading;
+  final String? recognitionError;
+  final Future<void> Function() onRefreshRecognition;
 
   @override
   Widget build(BuildContext context) {
@@ -565,6 +852,12 @@ class _OverviewTab extends StatelessWidget {
       builder: (context, constraints) {
         final isTwoColumn = constraints.maxWidth >= Breakpoints.expanded;
         final primary = <Widget>[
+          _RecognitionCard(
+            recognition: recognition,
+            loading: recognitionLoading,
+            error: recognitionError,
+            onRefresh: onRefreshRecognition,
+          ),
           if (stats.isNotEmpty)
             SectionCard(
               title: 'About',
@@ -680,6 +973,160 @@ class _OverviewColumn extends StatelessWidget {
   }
 }
 
+class _RecognitionCard extends StatelessWidget {
+  const _RecognitionCard({
+    required this.recognition,
+    required this.loading,
+    required this.error,
+    required this.onRefresh,
+  });
+
+  final PersonRecognitionStatusModel recognition;
+  final bool loading;
+  final String? error;
+  final Future<void> Function() onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    return SectionCard(
+      title: 'Recognition',
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _RecognitionPill(
+                label: 'Reference Faces',
+                value: '${recognition.referenceFaceCount}',
+              ),
+              _RecognitionPill(
+                label: 'Linked Images',
+                value: '${recognition.linkedImageCount}',
+              ),
+              _RecognitionPill(
+                label: 'Candidate Images',
+                value: '${recognition.candidateImageCount}',
+              ),
+              _RecognitionPill(
+                label: 'Embedding',
+                value: recognition.hasEmbedding ? 'Ready' : 'Missing',
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: colorScheme.surfaceContainer,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Profile photo',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    color: colorScheme.onSurface,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  recognition.profilePhotoMessage,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                    height: 1.4,
+                  ),
+                ),
+                if (recognition.profilePhotoError != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'Status: ${recognition.profilePhotoStatus}',
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      color: colorScheme.error,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (error != null) ...[
+            const SizedBox(height: 12),
+            Text(
+              error!,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: colorScheme.error,
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.tonalIcon(
+              onPressed: loading ? null : () => onRefresh(),
+              icon: loading
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh_rounded),
+              label: const Text('Refresh recognition'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RecognitionPill extends StatelessWidget {
+  const _RecognitionPill({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              color: colorScheme.onSurface,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _StatsGrid extends StatelessWidget {
   const _StatsGrid({required this.stats});
 
@@ -716,15 +1163,105 @@ class _StatsGrid extends StatelessWidget {
   }
 }
 
+class _PhotosFooter extends StatelessWidget {
+  const _PhotosFooter({
+    required this.totalCount,
+    required this.loadedCount,
+    required this.hasNextPage,
+    required this.isLoadingMore,
+    required this.loadError,
+    required this.onRetry,
+  });
+
+  final int totalCount;
+  final int loadedCount;
+  final bool hasNextPage;
+  final bool isLoadingMore;
+  final String? loadError;
+  final Future<void> Function() onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+
+    if (isLoadingMore) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 12),
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
+    if (loadError != null) {
+      return SectionCard(
+        title: 'Gallery loading',
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                loadError!,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.error,
+                ),
+              ),
+              const SizedBox(height: 12),
+              FilledButton.tonal(
+                onPressed: () => onRetry(),
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (hasNextPage) {
+      return Center(
+        child: Text(
+          'Loaded $loadedCount${totalCount > 0 ? ' of $totalCount' : ''}. Scroll for more.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: colorScheme.onSurfaceVariant,
+          ),
+        ),
+      );
+    }
+
+    return Center(
+      child: Text(
+        totalCount > 0
+            ? 'Showing all $totalCount photos.'
+            : 'No more photos to load.',
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: colorScheme.onSurfaceVariant,
+        ),
+      ),
+    );
+  }
+}
+
 class _PhotosTab extends StatelessWidget {
   const _PhotosTab({
     required this.images,
+    required this.hasNextPage,
+    required this.isLoadingMore,
+    required this.loadError,
+    required this.totalCount,
+    required this.onLoadMore,
     required this.headers,
     required this.fetchImageInfo,
     this.onDelete,
   });
 
   final List<DayMediaModel> images;
+  final bool hasNextPage;
+  final bool isLoadingMore;
+  final String? loadError;
+  final int totalCount;
+  final Future<void> Function() onLoadMore;
   final Map<String, String> headers;
   final ImageInfoFetcher fetchImageInfo;
   final ImageDeleter? onDelete;
@@ -774,134 +1311,167 @@ class _PhotosTab extends StatelessWidget {
                 ? 0.92
                 : 1.18;
 
-            return GridView.builder(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: columns,
-                crossAxisSpacing: 12,
-                mainAxisSpacing: 12,
-                childAspectRatio: aspectRatio,
-              ),
-              itemCount: images.length,
-              itemBuilder: (context, index) {
-                final image = images[index];
-                final imageUrl = AppConfig.imageUrlFromPath(
-                  image.path,
-                  date: image.date,
-                );
-                return Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(24),
-                    onTap: () {
-                      final items = images
-                          .map(
-                            (m) => ImageViewerItem(
-                              fullUrl: AppConfig.imageUrlFromPath(
-                                m.path,
-                                date: m.date,
-                              ),
-                              thumbnailUrl: AppConfig.imageUrlFromPath(
-                                m.path,
-                                date: m.date,
-                              ),
-                              fileName: m.fileName,
-                              path: m.path,
-                              date: m.date,
-                              gps: m.gps,
-                              favorite: m.favorite,
-                            ),
-                          )
-                          .toList();
-                      FullscreenImageViewer.show(
-                        context: context,
-                        images: items,
-                        initialIndex: index,
-                        httpHeaders: headers,
-                        fetchImageInfo: fetchImageInfo,
-                        onDelete: onDelete,
-                      );
-                    },
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(24),
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          _AuthenticatedImage(
-                            imageUrl: imageUrl,
-                            headers: headers,
-                            fit: BoxFit.cover,
-                            errorWidget: Container(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.surfaceContainerHighest,
-                              alignment: Alignment.center,
-                              child: Icon(
-                                Icons.image_not_supported_outlined,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ),
-                          DecoratedBox(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topCenter,
-                                end: Alignment.bottomCenter,
-                                colors: [
-                                  Colors.black.withValues(alpha: 0.02),
-                                  Colors.black.withValues(alpha: 0.08),
-                                  Colors.black.withValues(alpha: 0.44),
+            return NotificationListener<ScrollNotification>(
+              onNotification: (notification) {
+                if (loadError == null &&
+                    hasNextPage &&
+                    notification.metrics.pixels >=
+                        notification.metrics.maxScrollExtent - 320) {
+                  onLoadMore();
+                }
+                return false;
+              },
+              child: CustomScrollView(
+                slivers: [
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                    sliver: SliverGrid(
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: columns,
+                        crossAxisSpacing: 12,
+                        mainAxisSpacing: 12,
+                        childAspectRatio: aspectRatio,
+                      ),
+                      delegate: SliverChildBuilderDelegate((context, index) {
+                        final image = images[index];
+                        final imageUrl = AppConfig.imageUrlFromPath(
+                          image.path,
+                          date: image.date,
+                        );
+                        return Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(24),
+                            onTap: () {
+                              final items = images
+                                  .map(
+                                    (m) => ImageViewerItem(
+                                      fullUrl: AppConfig.imageUrlFromPath(
+                                        m.path,
+                                        date: m.date,
+                                      ),
+                                      thumbnailUrl: AppConfig.imageUrlFromPath(
+                                        m.path,
+                                        date: m.date,
+                                      ),
+                                      fileName: m.fileName,
+                                      path: m.path,
+                                      date: m.date,
+                                      gps: m.gps,
+                                      favorite: m.favorite,
+                                    ),
+                                  )
+                                  .toList();
+                              FullscreenImageViewer.show(
+                                context: context,
+                                images: items,
+                                initialIndex: index,
+                                httpHeaders: headers,
+                                fetchImageInfo: fetchImageInfo,
+                                onDelete: onDelete,
+                              );
+                            },
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(24),
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  _AuthenticatedImage(
+                                    imageUrl: imageUrl,
+                                    headers: headers,
+                                    fit: BoxFit.cover,
+                                    errorWidget: Container(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.surfaceContainerHighest,
+                                      alignment: Alignment.center,
+                                      child: Icon(
+                                        Icons.image_not_supported_outlined,
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ),
+                                  DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topCenter,
+                                        end: Alignment.bottomCenter,
+                                        colors: [
+                                          Colors.black.withValues(alpha: 0.02),
+                                          Colors.black.withValues(alpha: 0.08),
+                                          Colors.black.withValues(alpha: 0.44),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  Positioned(
+                                    left: 12,
+                                    right: 12,
+                                    bottom: 12,
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            image.fileName,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 10,
+                                            vertical: 6,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: Colors.white.withValues(
+                                              alpha: 0.18,
+                                            ),
+                                            borderRadius: BorderRadius.circular(
+                                              999,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            image.date,
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                                 ],
                               ),
                             ),
                           ),
-                          Positioned(
-                            left: 12,
-                            right: 12,
-                            bottom: 12,
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    image.fileName,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 6,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withValues(alpha: 0.18),
-                                    borderRadius: BorderRadius.circular(999),
-                                  ),
-                                  child: Text(
-                                    image.date,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
+                        );
+                      }, childCount: images.length),
+                    ),
+                  ),
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 28),
+                      child: _PhotosFooter(
+                        totalCount: totalCount,
+                        loadedCount: images.length,
+                        hasNextPage: hasNextPage,
+                        isLoadingMore: isLoadingMore,
+                        loadError: loadError,
+                        onRetry: onLoadMore,
                       ),
                     ),
                   ),
-                );
-              },
+                ],
+              ),
             );
           },
         ),
@@ -1195,20 +1765,29 @@ class _AvatarFallback extends StatelessWidget {
 }
 
 class _HeroBadge extends StatelessWidget {
-  const _HeroBadge({required this.label, this.centered = false});
+  const _HeroBadge({
+    required this.label,
+    this.centered = false,
+    this.compact = false,
+  });
 
   final String label;
   final bool centered;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final maxWidth =
-        MediaQuery.sizeOf(context).width * (centered ? 0.72 : 0.46);
+        MediaQuery.sizeOf(context).width *
+        (compact ? (centered ? 0.82 : 0.54) : (centered ? 0.72 : 0.46));
     return ConstrainedBox(
       constraints: BoxConstraints(maxWidth: maxWidth.clamp(120.0, 220.0)),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 10 : 12,
+          vertical: compact ? 6 : 8,
+        ),
         decoration: BoxDecoration(
           color: colorScheme.secondaryContainer,
           borderRadius: BorderRadius.circular(999),
@@ -1221,10 +1800,14 @@ class _HeroBadge extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           softWrap: false,
-          style: Theme.of(context).textTheme.labelLarge?.copyWith(
-            color: colorScheme.onSecondaryContainer,
-            fontWeight: FontWeight.w700,
-          ),
+          style:
+              (compact
+                      ? Theme.of(context).textTheme.labelMedium
+                      : Theme.of(context).textTheme.labelLarge)
+                  ?.copyWith(
+                    color: colorScheme.onSecondaryContainer,
+                    fontWeight: FontWeight.w700,
+                  ),
         ),
       ),
     );

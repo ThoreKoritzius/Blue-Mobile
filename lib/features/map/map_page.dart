@@ -2027,13 +2027,50 @@ class _MapPageState extends ConsumerState<MapPage>
     final startPlaceController = TextEditingController();
     final endPlaceController = TextEditingController();
     final date = _dayViewDate;
+    final baseDate =
+        DateTime.tryParse(date) ?? DateUtils.dateOnly(DateTime.now());
     var startTime = TimeOfDay.now();
     var endTime = TimeOfDay(
       hour: (startTime.hour + 1) % 24,
       minute: startTime.minute,
     );
+    var endDate = baseDate;
     var isTravel = false;
     var activityType = _activityOptions.first;
+
+    DateTime combineDateTime(DateTime day, TimeOfDay time) =>
+        DateTime(day.year, day.month, day.day, time.hour, time.minute);
+
+    String formatTod(TimeOfDay t) =>
+        '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+    String formatDialogDate(DateTime value) {
+      const months = <String>[
+        'Jan',
+        'Feb',
+        'Mar',
+        'Apr',
+        'May',
+        'Jun',
+        'Jul',
+        'Aug',
+        'Sep',
+        'Oct',
+        'Nov',
+        'Dec',
+      ];
+      return '${months[value.month - 1]} ${value.day}, ${value.year}';
+    }
+
+    String toIso(DateTime day, TimeOfDay time) {
+      final dt = combineDateTime(day, time);
+      final month = dt.month.toString().padLeft(2, '0');
+      final dayPart = dt.day.toString().padLeft(2, '0');
+      final hour = dt.hour.toString().padLeft(2, '0');
+      final minute = dt.minute.toString().padLeft(2, '0');
+      return '${dt.year}-$month-$dayPart'
+          'T$hour:$minute:00';
+    }
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -2043,9 +2080,8 @@ class _MapPageState extends ConsumerState<MapPage>
           builder: (context, setDialogState) {
             final theme = Theme.of(context);
             final colorScheme = theme.colorScheme;
-
-            String formatTod(TimeOfDay t) =>
-                '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+            final startDateTime = combineDateTime(baseDate, startTime);
+            final endDateTime = combineDateTime(endDate, endTime);
 
             return AlertDialog(
               shape: RoundedRectangleBorder(
@@ -2150,49 +2186,159 @@ class _MapPageState extends ConsumerState<MapPage>
                       ),
                     ],
                     const SizedBox(height: 16),
-                    // Time pickers
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            icon: const Icon(Icons.schedule, size: 18),
-                            label: Text(formatTod(startTime)),
-                            onPressed: () async {
-                              final picked = await showTimePicker(
-                                context: context,
-                                initialTime: startTime,
-                              );
-                              if (picked != null) {
-                                setDialogState(() => startTime = picked);
-                              }
-                            },
+                    if (!isTravel)
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              icon: const Icon(Icons.schedule, size: 18),
+                              label: Text(formatTod(startTime)),
+                              onPressed: () async {
+                                final picked = await showTimePicker(
+                                  context: context,
+                                  initialTime: startTime,
+                                );
+                                if (picked != null) {
+                                  setDialogState(() => startTime = picked);
+                                }
+                              },
+                            ),
                           ),
-                        ),
-                        const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 8),
-                          child: Icon(
-                            Icons.arrow_forward,
-                            size: 16,
-                            color: Colors.grey,
+                          const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 8),
+                            child: Icon(
+                              Icons.arrow_forward,
+                              size: 16,
+                              color: Colors.grey,
+                            ),
                           ),
-                        ),
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            icon: const Icon(Icons.schedule, size: 18),
-                            label: Text(formatTod(endTime)),
-                            onPressed: () async {
-                              final picked = await showTimePicker(
-                                context: context,
-                                initialTime: endTime,
-                              );
-                              if (picked != null) {
-                                setDialogState(() => endTime = picked);
-                              }
-                            },
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              icon: const Icon(Icons.schedule, size: 18),
+                              label: Text(formatTod(endTime)),
+                              onPressed: () async {
+                                final picked = await showTimePicker(
+                                  context: context,
+                                  initialTime: endTime,
+                                );
+                                if (picked != null) {
+                                  setDialogState(() => endTime = picked);
+                                }
+                              },
+                            ),
                           ),
+                        ],
+                      )
+                    else ...[
+                      Text(
+                        'Trip window',
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
                         ),
-                      ],
-                    ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: InputDecorator(
+                              decoration: const InputDecoration(
+                                labelText: 'Start date',
+                                border: OutlineInputBorder(),
+                                prefixIcon: Icon(Icons.today_outlined),
+                              ),
+                              child: Text(formatDialogDate(baseDate)),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              icon: const Icon(Icons.schedule, size: 18),
+                              label: Text(formatTod(startTime)),
+                              onPressed: () async {
+                                final picked = await showTimePicker(
+                                  context: context,
+                                  initialTime: startTime,
+                                );
+                                if (picked != null) {
+                                  setDialogState(() {
+                                    startTime = picked;
+                                    if (!endDateTime.isAfter(
+                                      combineDateTime(baseDate, startTime),
+                                    )) {
+                                      endDate = baseDate.add(
+                                        const Duration(days: 1),
+                                      );
+                                    }
+                                  });
+                                }
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              icon: const Icon(
+                                Icons.calendar_today_outlined,
+                                size: 18,
+                              ),
+                              label: Text(formatDialogDate(endDate)),
+                              onPressed: () async {
+                                final picked = await showDatePicker(
+                                  context: context,
+                                  initialDate: endDate,
+                                  firstDate: baseDate,
+                                  lastDate: baseDate.add(
+                                    const Duration(days: 7),
+                                  ),
+                                );
+                                if (picked != null) {
+                                  setDialogState(() => endDate = picked);
+                                }
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              icon: const Icon(Icons.schedule, size: 18),
+                              label: Text(formatTod(endTime)),
+                              onPressed: () async {
+                                final picked = await showTimePicker(
+                                  context: context,
+                                  initialTime: endTime,
+                                );
+                                if (picked != null) {
+                                  setDialogState(() {
+                                    endTime = picked;
+                                    if (endDate == baseDate &&
+                                        !combineDateTime(
+                                          endDate,
+                                          endTime,
+                                        ).isAfter(startDateTime)) {
+                                      endDate = baseDate.add(
+                                        const Duration(days: 1),
+                                      );
+                                    }
+                                  });
+                                }
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        '${formatDialogDate(baseDate)} ${formatTod(startTime)}'
+                        ' -> ${formatDialogDate(endDate)} ${formatTod(endTime)}',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -2214,12 +2360,15 @@ class _MapPageState extends ConsumerState<MapPage>
 
     if (confirmed != true || !mounted) return;
 
-    final startIso =
-        '${date}T${startTime.hour.toString().padLeft(2, '0')}'
-        ':${startTime.minute.toString().padLeft(2, '0')}:00';
-    final endIso =
-        '${date}T${endTime.hour.toString().padLeft(2, '0')}'
-        ':${endTime.minute.toString().padLeft(2, '0')}:00';
+    final startIso = toIso(baseDate, startTime);
+    final resolvedEndDate =
+        isTravel &&
+            !combineDateTime(endDate, endTime).isAfter(
+              combineDateTime(baseDate, startTime),
+            )
+        ? baseDate.add(const Duration(days: 1))
+        : endDate;
+    final endIso = toIso(resolvedEndDate, endTime);
 
     try {
       if (isTravel) {
@@ -2229,7 +2378,6 @@ class _MapPageState extends ConsumerState<MapPage>
         await ref
             .read(mapRepositoryProvider)
             .addManualActivity(
-              date: date,
               startTime: startIso,
               endTime: endIso,
               activityType: activityType.$1,
@@ -3050,6 +3198,41 @@ class _DayBottomSheet extends StatelessWidget {
     return hours > 0 ? '${hours}h ${mins}m' : '${mins}m';
   }
 
+  ({
+    DateTime visibleStart,
+    DateTime? visibleEnd,
+    int visibleDurationMinutes,
+    bool startedPreviousDay,
+    bool continuesNextDay,
+  })
+  _activitySliceForCurrentDay(TimelineSegment segment) {
+    final currentDay =
+        DateTime.tryParse(currentDate) ?? DateUtils.dateOnly(DateTime.now());
+    final dayStart = DateTime(currentDay.year, currentDay.month, currentDay.day);
+    final dayEnd = dayStart.add(const Duration(days: 1));
+    final startedPreviousDay = segment.startTime.isBefore(dayStart);
+    final visibleStart = startedPreviousDay ? dayStart : segment.startTime;
+    final rawEnd = segment.endTime;
+    final continuesNextDay = rawEnd != null && rawEnd.isAfter(dayEnd);
+    DateTime? visibleEnd;
+    if (rawEnd != null) {
+      visibleEnd = continuesNextDay ? dayEnd : rawEnd;
+      if (visibleEnd.isBefore(visibleStart)) {
+        visibleEnd = visibleStart;
+      }
+    }
+    final visibleDurationMinutes = visibleEnd == null
+        ? 0
+        : visibleEnd.difference(visibleStart).inMinutes;
+    return (
+      visibleStart: visibleStart,
+      visibleEnd: visibleEnd,
+      visibleDurationMinutes: visibleDurationMinutes,
+      startedPreviousDay: startedPreviousDay,
+      continuesNextDay: continuesNextDay,
+    );
+  }
+
   String _timelineWeekdayLabel(DateTime date) {
     const labels = <String>['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     return labels[date.weekday - 1];
@@ -3440,7 +3623,8 @@ class _DayBottomSheet extends StatelessWidget {
   ) {
     final colorScheme = Theme.of(context).colorScheme;
     final run = seg.matchedRunId != null ? runById[seg.matchedRunId] : null;
-    final timeLabel = _formatTime(seg.startTime);
+    final slice = _activitySliceForCurrentDay(seg);
+    final timeLabel = _formatTime(slice.visibleStart);
     final hasLocation = seg.startLat != null && seg.startLon != null;
     final isRunning = seg.activityType == 'RUNNING';
     final activityColor = isRunning
@@ -3458,14 +3642,25 @@ class _DayBottomSheet extends StatelessWidget {
 
     // Build subtitle parts
     final subtitleParts = <String>[];
-    if (seg.durationMinutes > 0) {
-      subtitleParts.add(_formatDuration(seg.durationMinutes));
+    if (slice.visibleEnd != null) {
+      subtitleParts.add(
+        '${_formatTime(slice.visibleStart)} – ${_formatTime(slice.visibleEnd!)}',
+      );
+    }
+    if (slice.visibleDurationMinutes > 0) {
+      subtitleParts.add(_formatDuration(slice.visibleDurationMinutes));
     }
     if (seg.distanceMeters != null && seg.distanceMeters! > 0) {
       final km = seg.distanceMeters! / 1000;
       subtitleParts.add(
         km >= 1 ? '${km.toStringAsFixed(1)} km' : '${seg.distanceMeters} m',
       );
+    }
+    if (slice.startedPreviousDay) {
+      subtitleParts.add('started previous day');
+    }
+    if (slice.continuesNextDay) {
+      subtitleParts.add('continues next day');
     }
 
     return GestureDetector(
