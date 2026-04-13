@@ -1,11 +1,11 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter_map/flutter_map.dart' show LatLngBounds;
+import 'package:latlong2/latlong.dart';
 
 import '../../core/config/app_config.dart';
 import '../../core/network/graphql_service.dart';
 import '../graphql/documents.dart';
 import '../models/run_model.dart';
-import 'files_repository.dart';
-import 'runs_repository.dart';
 
 class MapPoint {
   const MapPoint({
@@ -14,6 +14,7 @@ class MapPoint {
     required this.lon,
     required this.path,
     required this.sourcePath,
+    this.timestamp,
   });
 
   final String date;
@@ -21,11 +22,47 @@ class MapPoint {
   final double lon;
   final String path;
   final String sourcePath;
+  final DateTime? timestamp;
 }
 
-class MapImagePage {
-  const MapImagePage({required this.points, required this.hasMore});
+class MapImageCluster {
+  const MapImageCluster({
+    required this.lat,
+    required this.lon,
+    required this.count,
+    this.previewPath,
+    this.previewDate,
+    this.dateFrom,
+    this.dateTo,
+    this.latMin,
+    this.latMax,
+    this.lonMin,
+    this.lonMax,
+  });
 
+  final double lat;
+  final double lon;
+  final int count;
+  final String? previewPath;
+  final String? previewDate;
+  final String? dateFrom;
+  final String? dateTo;
+  final double? latMin;
+  final double? latMax;
+  final double? lonMin;
+  final double? lonMax;
+}
+
+class MapMarkerResult {
+  const MapMarkerResult({
+    required this.mode,
+    required this.clusters,
+    required this.points,
+    required this.hasMore,
+  });
+
+  final String mode;
+  final List<MapImageCluster> clusters;
   final List<MapPoint> points;
   final bool hasMore;
 }
@@ -222,96 +259,120 @@ class WhenWasINearResult {
 }
 
 class MapRepository {
-  static final RegExp _gpsPattern = RegExp(r'-?\d+(?:\.\d+)?');
   static const Duration timelineDayCacheTtl = Duration(minutes: 5);
+  static const Duration mapMarkerCacheTtl = Duration(minutes: 2);
+  static const int overviewTimelineMaxPoints = 5000;
 
-  MapRepository(FilesRepository _, this._runsRepository, this._gql);
+  MapRepository(this._gql);
 
-  final RunsRepository _runsRepository;
   final GraphqlService _gql;
-  final Map<int, String?> _imageSearchCursors = <int, String?>{1: null};
+  List<RunModel>? _runOverviewCache;
+  List<LatLng>? _timelineOverviewCache;
+  Future<List<LatLng>>? _timelineOverviewInFlight;
+  final Map<String, ({DateTime cachedAt, MapMarkerResult data})>
+  _mapMarkerCache = <String, ({DateTime cachedAt, MapMarkerResult data})>{};
+  final Map<String, Future<MapMarkerResult>> _mapMarkerInFlight =
+      <String, Future<MapMarkerResult>>{};
   final Map<String, ({DateTime cachedAt, TimelineDayData data})>
   _timelineDayCache = <String, ({DateTime cachedAt, TimelineDayData data})>{};
   final Map<String, Future<TimelineDayData>> _timelineDayInFlight =
       <String, Future<TimelineDayData>>{};
 
-  Future<MapImagePage> searchImagePage({
-    required int page,
-    required int pageSize,
+  Future<List<RunModel>> loadRuns({
+    String? dateFrom,
+    String? dateTo,
+    bool forceRefresh = false,
   }) async {
-    final points = <MapPoint>[];
-    try {
-      final after = _imageSearchCursors[page];
-      if (page > 1 && !_imageSearchCursors.containsKey(page)) {
-        throw Exception(
-          'Image paging state is unavailable. Restart image search.',
-        );
-      }
-      final response = await _gql.query(
-        GqlDocuments.searchImages,
-        variables: {
-          'input': {
-            'query': '',
-            'types': <String>['FILE'],
-            'limit': pageSize,
-            'includeContext': false,
-            'filters': {'fileKind': 'photo'},
-          },
-          'first': pageSize,
-          'after': after,
-        },
-      );
-      final connection =
-          ((response['search'] as Map<String, dynamic>)['unified']
-              as Map<String, dynamic>? ??
-          const {});
-      final items = (connection['edges'] as List<dynamic>? ?? const [])
-          .map((item) => (item as Map<String, dynamic>)['node'])
-          .whereType<Map<String, dynamic>>()
-          .map((item) => item['file'] as Map<String, dynamic>? ?? item)
-          .whereType<Map<String, dynamic>>()
-          .toList();
-      final pageInfo =
-          connection['pageInfo'] as Map<String, dynamic>? ?? const {};
-      final hasMore = pageInfo['hasNextPage'] == true;
-      final endCursor = (pageInfo['endCursor'] ?? '').toString();
-      if (page == 1) {
-        _imageSearchCursors.removeWhere((key, _) => key > 1);
-      }
-      if (hasMore && endCursor.isNotEmpty) {
-        _imageSearchCursors[page + 1] = endCursor;
-      }
+    if (!forceRefresh &&
+        _runOverviewCache != null &&
+        dateFrom == null &&
+        dateTo == null) {
+      return _runOverviewCache!;
+    }
+    final response = await _gql.query(
+      GqlDocuments.runsMapOverview,
+      variables: {'dateFrom': dateFrom, 'dateTo': dateTo},
+    );
+    final rawRuns =
+        ((response['runs'] as Map<String, dynamic>?)?['mapOverview']
+            as List<dynamic>? ??
+        const []);
+    final runs = rawRuns
+        .whereType<Map<String, dynamic>>()
+        .map(RunModel.fromJson)
+        .toList();
+    if (dateFrom == null && dateTo == null) {
+      _runOverviewCache = runs;
+    }
+    return runs;
+  }
 
-      for (final item in items) {
-        final gps = _parseGps((item['gps'] ?? '').toString());
-        final date = (item['date'] ?? '').toString();
-        final rawPath = (item['path'] ?? '').toString();
-        final fileName = rawPath.split('/').last;
-        if (gps == null || date.isEmpty || fileName.isEmpty) continue;
-        points.add(
-          MapPoint(
-            date: date,
-            lat: gps.$1,
-            lon: gps.$2,
-            path: AppConfig.imageUrlFromPath(fileName, date: date),
-            sourcePath: rawPath,
-          ),
-        );
-      }
-      debugPrint(
-        '[MAP] image page=$page raw=${items.length} usable=${points.length}',
-      );
-      return MapImagePage(points: points, hasMore: hasMore);
-    } catch (error, stackTrace) {
-      debugPrint(
-        '[MAP] searchImagePage error page=$page size=$pageSize: $error',
-      );
-      debugPrintStack(stackTrace: stackTrace);
-      rethrow;
+  Future<MapMarkerResult> loadMapMarkers({
+    required LatLngBounds bounds,
+    required double zoom,
+    int first = 300,
+    String? dateFrom,
+    String? dateTo,
+  }) async {
+    final cacheKey = _mapMarkerCacheKey(
+      bounds: bounds,
+      zoom: zoom,
+      dateFrom: dateFrom,
+      dateTo: dateTo,
+      first: first,
+    );
+    final cached = _mapMarkerCache[cacheKey];
+    if (cached != null &&
+        DateTime.now().difference(cached.cachedAt) <= mapMarkerCacheTtl) {
+      return cached.data;
+    }
+    final inFlight = _mapMarkerInFlight[cacheKey];
+    if (inFlight != null) return inFlight;
+
+    final future = _loadMapMarkersUncached(
+      bounds: bounds,
+      zoom: zoom,
+      first: first,
+      dateFrom: dateFrom,
+      dateTo: dateTo,
+    );
+    _mapMarkerInFlight[cacheKey] = future;
+    try {
+      final result = await future;
+      _mapMarkerCache[cacheKey] = (cachedAt: DateTime.now(), data: result);
+      return result;
+    } finally {
+      _mapMarkerInFlight.remove(cacheKey);
     }
   }
 
-  Future<List<RunModel>> loadRuns() => _runsRepository.listRuns();
+  Future<List<LatLng>> loadTimelineOverview({
+    bool forceRefresh = false,
+    String dateFrom = '1900-01-01',
+    String dateTo = '2100-12-31',
+    int maxPoints = overviewTimelineMaxPoints,
+  }) async {
+    if (!forceRefresh && _timelineOverviewCache != null) {
+      return _timelineOverviewCache!;
+    }
+    if (!forceRefresh && _timelineOverviewInFlight != null) {
+      return _timelineOverviewInFlight!;
+    }
+
+    final future = _loadTimelineOverviewUncached(
+      dateFrom: dateFrom,
+      dateTo: dateTo,
+      maxPoints: maxPoints,
+    );
+    _timelineOverviewInFlight = future;
+    try {
+      final points = await future;
+      _timelineOverviewCache = points;
+      return points;
+    } finally {
+      _timelineOverviewInFlight = null;
+    }
+  }
 
   Future<WhenWasINearResult> whenWasINear(String location) async {
     debugPrint('[TIMELINE] whenWasINear location=$location');
@@ -338,6 +399,150 @@ class MapRepository {
       lonMin: (bb?['lonMin'] as num?)?.toDouble(),
       lonMax: (bb?['lonMax'] as num?)?.toDouble(),
     );
+  }
+
+  Future<List<LatLng>> _loadTimelineOverviewUncached({
+    required String dateFrom,
+    required String dateTo,
+    required int maxPoints,
+  }) async {
+    final response = await _gql.query(
+      GqlDocuments.timelineOverview,
+      variables: {
+        'dateFrom': dateFrom,
+        'dateTo': dateTo,
+        'maxPoints': maxPoints,
+      },
+    );
+    final rawPoints =
+        ((response['timeline'] as Map<String, dynamic>?)?['polylineRange']
+            as List<dynamic>? ??
+        const []);
+    final points = <LatLng>[];
+    for (final item in rawPoints) {
+      final point = _asMap(item);
+      if (point == null) continue;
+      final lat = (point['lat'] as num?)?.toDouble();
+      final lon = (point['lon'] as num?)?.toDouble();
+      if (lat == null || lon == null) continue;
+      if (lat.abs() > 90 || lon.abs() > 180) continue;
+      points.add(LatLng(lat, lon));
+    }
+    return points;
+  }
+
+  Future<MapMarkerResult> _loadMapMarkersUncached({
+    required LatLngBounds bounds,
+    required double zoom,
+    required int first,
+    String? dateFrom,
+    String? dateTo,
+  }) async {
+    final response = await _gql.query(
+      GqlDocuments.fileMapMarkers,
+      variables: {
+        'bounds': {
+          'latMin': bounds.south,
+          'latMax': bounds.north,
+          'lonMin': bounds.west,
+          'lonMax': bounds.east,
+        },
+        'zoom': zoom,
+        'first': first,
+        'dateFrom': dateFrom,
+        'dateTo': dateTo,
+      },
+    );
+    final raw =
+        ((response['files'] as Map<String, dynamic>?)?['mapMarkers']
+            as Map<String, dynamic>? ??
+        const <String, dynamic>{});
+    final points = <MapPoint>[];
+    for (final item in _asList(raw['points'])) {
+      final point = _asMap(item);
+      if (point == null) continue;
+      final rawPath = (point['path'] ?? '').toString();
+      final date = (point['date'] ?? '').toString();
+      final lat = (point['lat'] as num?)?.toDouble();
+      final lon = (point['lon'] as num?)?.toDouble();
+      if (rawPath.isEmpty || date.isEmpty || lat == null || lon == null) {
+        continue;
+      }
+      points.add(
+        MapPoint(
+          date: date,
+          lat: lat,
+          lon: lon,
+          path: AppConfig.imageUrlFromPath(rawPath),
+          sourcePath: rawPath,
+          timestamp: DateTime.tryParse((point['timestamp'] ?? '').toString()),
+        ),
+      );
+    }
+
+    final clusters = <MapImageCluster>[];
+    for (final item in _asList(raw['clusters'])) {
+      final cluster = _asMap(item);
+      if (cluster == null) continue;
+      final lat = (cluster['lat'] as num?)?.toDouble();
+      final lon = (cluster['lon'] as num?)?.toDouble();
+      final count = (cluster['count'] as num?)?.toInt();
+      if (lat == null || lon == null || count == null || count <= 0) {
+        continue;
+      }
+      final rawPreviewPath = (cluster['previewPath'] ?? '').toString();
+      final previewDate = (cluster['previewDate'] ?? '').toString();
+      clusters.add(
+        MapImageCluster(
+          lat: lat,
+          lon: lon,
+          count: count,
+          previewPath: rawPreviewPath.isEmpty
+              ? null
+              : AppConfig.imageUrlFromPath(rawPreviewPath),
+          previewDate: previewDate.isEmpty ? null : previewDate,
+          dateFrom: (cluster['dateFrom'] ?? '').toString(),
+          dateTo: (cluster['dateTo'] ?? '').toString(),
+          latMin: (cluster['latMin'] as num?)?.toDouble(),
+          latMax: (cluster['latMax'] as num?)?.toDouble(),
+          lonMin: (cluster['lonMin'] as num?)?.toDouble(),
+          lonMax: (cluster['lonMax'] as num?)?.toDouble(),
+        ),
+      );
+    }
+    return MapMarkerResult(
+      mode: (raw['mode'] ?? 'CLUSTERS').toString(),
+      clusters: clusters,
+      points: points,
+      hasMore: raw['hasMore'] == true,
+    );
+  }
+
+  String _mapMarkerCacheKey({
+    required LatLngBounds bounds,
+    required double zoom,
+    required int first,
+    String? dateFrom,
+    String? dateTo,
+  }) {
+    final bucket = zoom < 5
+        ? 'z0'
+        : zoom < 7
+        ? 'z1'
+        : zoom < 9
+        ? 'z2'
+        : 'z3';
+    String roundTo(double value, int digits) => value.toStringAsFixed(digits);
+    return [
+      bucket,
+      roundTo(bounds.south, 2),
+      roundTo(bounds.north, 2),
+      roundTo(bounds.west, 2),
+      roundTo(bounds.east, 2),
+      dateFrom ?? '',
+      dateTo ?? '',
+      '$first',
+    ].join('|');
   }
 
   Future<TimelineDayData> loadTimelineDay(
@@ -737,25 +942,6 @@ class MapRepository {
       variables: {'segmentId': segmentId},
     );
     _timelineDayCache.clear();
-  }
-
-  (double, double)? _parseGps(String input) {
-    final matches = _gpsPattern
-        .allMatches(input)
-        .map((match) => match.group(0))
-        .whereType<String>()
-        .toList();
-    if (matches.length < 2) return null;
-    var lat = double.tryParse(matches[0]);
-    var lon = double.tryParse(matches[1]);
-    if (lat == null || lon == null) return null;
-    if (lat.abs() > 90 && lon.abs() <= 90) {
-      final swappedLat = lon;
-      lon = lat;
-      lat = swappedLat;
-    }
-    if (lat.abs() > 90 || lon.abs() > 180) return null;
-    return (lat, lon);
   }
 
   void _invalidateTimelineDay(String date) {

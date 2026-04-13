@@ -32,7 +32,19 @@ query StoriesDay($day: String!) {
   stories {
     day(day: $day) {
       story {
-        date place names description highlightImage keywords country latitude longitude
+        date
+        place
+        persons {
+          id
+          firstName
+          lastName
+        }
+        description
+        highlightImage
+        keywords
+        country
+        latitude
+        longitude
       }
       run {
         id name type distance movingTime elapsedTime averageSpeed maxSpeed totalElevationGain startDateLocal startTime source sourceLabel
@@ -53,7 +65,19 @@ query StoriesList($first: Int!, $after: String) {
       }
       edges {
         node {
-          date place names description highlightImage keywords country latitude longitude
+          date
+          place
+          persons {
+            id
+            firstName
+            lastName
+          }
+          description
+          highlightImage
+          keywords
+          country
+          latitude
+          longitude
         }
       }
     }
@@ -155,6 +179,29 @@ query RunsList($first: Int!) {
 }
 ''';
 
+  static const runsMapOverview = r'''
+query RunsMapOverview($dateFrom: String, $dateTo: String) {
+  runs {
+    mapOverview(dateFrom: $dateFrom, dateTo: $dateTo) {
+      id
+      name
+      type
+      distance
+      movingTime
+      elapsedTime
+      averageSpeed
+      maxSpeed
+      totalElevationGain
+      startDateLocal
+      summaryPolyline
+      startTime
+      source
+      sourceLabel
+    }
+  }
+}
+''';
+
   static const runsByDate = r'''
 query RunsByDate($date: String!, $first: Int!) {
   runs {
@@ -216,6 +263,49 @@ query SearchImages($input: UnifiedSearchInput!, $first: Int!, $after: String) {
 }
 ''';
 
+  static const fileMapMarkers = r'''
+query FileMapMarkers(
+  $bounds: BoundingBoxInput!,
+  $zoom: Float!,
+  $first: Int!,
+  $dateFrom: String,
+  $dateTo: String
+) {
+  files {
+    mapMarkers(
+      bounds: $bounds,
+      zoom: $zoom,
+      first: $first,
+      dateFrom: $dateFrom,
+      dateTo: $dateTo
+    ) {
+      mode
+      hasMore
+      clusters {
+        lat
+        lon
+        count
+        previewPath
+        previewDate
+        dateFrom
+        dateTo
+        latMin
+        latMax
+        lonMin
+        lonMax
+      }
+      points {
+        path
+        date
+        lat
+        lon
+        timestamp
+      }
+    }
+  }
+}
+''';
+
   static const searchUnified = r'''
 query SearchUnified($input: UnifiedSearchInput!, $first: Int!, $after: String) {
   search {
@@ -240,7 +330,11 @@ query SearchUnified($input: UnifiedSearchInput!, $first: Int!, $after: String) {
           story {
             date
             place
-            names
+            persons {
+              id
+              firstName
+              lastName
+            }
             description
             highlightImage
             keywords
@@ -435,7 +529,19 @@ query DayBundle($day: String!, $filesFirst: Int!, $runsFirst: Int!) {
   stories {
     day(day: $day) {
       story {
-        date place names description highlightImage keywords country latitude longitude
+        date
+        place
+        persons {
+          id
+          firstName
+          lastName
+        }
+        description
+        highlightImage
+        keywords
+        country
+        latitude
+        longitude
       }
       run {
         id name type distance movingTime elapsedTime averageSpeed maxSpeed totalElevationGain startDateLocal startTime
@@ -631,6 +737,18 @@ query TimelineDay($date: String!) {
     }
     calendar(date: $date) {
       id summary description location status start end isAllDay htmlLink source sourceName sourceId
+    }
+  }
+}
+''';
+
+  static const timelineOverview = r'''
+query TimelineOverview($dateFrom: String!, $dateTo: String!, $maxPoints: Int!) {
+  timeline {
+    polylineRange(dateFrom: $dateFrom, dateTo: $dateTo, maxPoints: $maxPoints) {
+      lat
+      lon
+      timestamp
     }
   }
 }

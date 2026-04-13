@@ -39,6 +39,25 @@ class GraphqlService {
     };
   }
 
+  Future<Map<String, String>> buildRequestHeaders({
+    bool includeCsrf = false,
+    Map<String, String> extra = const {},
+    bool forceRefreshCsrf = false,
+  }) async {
+    String? csrfToken;
+    if (includeCsrf) {
+      if (forceRefreshCsrf) {
+        _csrfToken = null;
+      }
+      csrfToken = await _getCsrfToken(forceRefresh: forceRefreshCsrf);
+    }
+    return {
+      if (csrfToken != null && csrfToken.isNotEmpty) 'X-CSRF-Token': csrfToken,
+      ...buildAuthHeaders(),
+      ...extra,
+    };
+  }
+
   Future<void> _hydrateAuthCache() async {
     if (kIsWeb) return;
     if (_tokenStore.peekToken() == null) {
@@ -171,19 +190,27 @@ class GraphqlService {
           _refreshCompleter!.complete(true);
           return true;
         }
+
+        if (response.statusCode == 400 ||
+            response.statusCode == 401 ||
+            response.statusCode == 403) {
+          _log(
+            'token refresh rejected (${response.statusCode}) — forcing logout',
+          );
+          await _tokenStore.clear();
+          await onSessionExpired?.call();
+          _refreshCompleter!.complete(false);
+          return false;
+        }
       } finally {
         client.close();
       }
 
-      _log('token refresh failed — forcing logout');
-      await _tokenStore.clear();
-      await onSessionExpired?.call();
+      _log('token refresh unavailable — preserving cached session');
       _refreshCompleter!.complete(false);
       return false;
     } catch (e) {
-      _log('token refresh error: $e — forcing logout');
-      await _tokenStore.clear();
-      await onSessionExpired?.call();
+      _log('token refresh error: $e — preserving cached session');
       _refreshCompleter?.complete(false);
       return false;
     } finally {

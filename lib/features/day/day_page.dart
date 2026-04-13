@@ -680,20 +680,36 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
 
   void _removePerson(String name) {
     if (_current == null) return;
-    final people = [..._current!.people]..remove(name);
-    setState(() => _current = _current!.copyWith(names: people.join(';')));
+    final current = _current!;
+    final people = [...current.people]..remove(name);
+    final matchedId = _personLookup[name]?.id;
+    final nextPersonIds = [
+      for (final personId in current.personIds)
+        if (matchedId == null || personId != matchedId) personId,
+    ];
+    setState(() {
+      _current = current.copyWith(
+        names: people.join(';'),
+        personIds: nextPersonIds,
+      );
+    });
     _markDirtyAndScheduleAutosave(delay: _autosaveDelayDiscrete);
   }
 
-  bool _appendPersonName(String name) {
-    final normalized = name.trim();
+  bool _appendPerson(PersonModel person) {
+    final normalized = person.displayName.trim();
     if (normalized.isEmpty || _current == null) return false;
-    final people = [..._current!.people];
+    final current = _current!;
+    final people = [...current.people];
     if (people.any((item) => item.toLowerCase() == normalized.toLowerCase())) {
       return false;
     }
     setState(() {
-      _current = _current!.copyWith(names: [...people, normalized].join(';'));
+      _personLookup = {..._personLookup, normalized: person};
+      _current = current.copyWith(
+        names: [...people, normalized].join(';'),
+        personIds: [...current.personIds, person.id],
+      );
     });
     _markDirtyAndScheduleAutosave(delay: _autosaveDelayDiscrete);
     return true;
@@ -712,7 +728,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
       ),
     );
     if (!mounted || selected == null) return;
-    _appendPersonName(selected.displayName);
+    _appendPerson(selected);
   }
 
   Future<void> _openPersonFromName(String name) async {

@@ -213,64 +213,49 @@ class GraphqlAuthRepository implements AuthRepository {
     }
   }
 
-  Future<void> _refreshMobileSession() async {
+  Future<AuthSession?> _readCachedMobileSession() async {
     final refreshToken = await _tokenStore.readRefreshToken();
     if (refreshToken == null || refreshToken.isEmpty) {
-      throw Exception('Refresh token missing.');
+      return null;
     }
-    final deviceId = await _tokenStore.readOrCreateDeviceId();
-    final client = createGraphqlHttpClient();
-    try {
-      final response = await client
-          .post(
-            Uri.parse('${AppConfig.backendUrl}/api/auth/refresh'),
-            headers: const {
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-              'X-Blue-Client': 'mobile',
-            },
-            body: jsonEncode({
-              'refresh_token': refreshToken,
-              'device_id': deviceId,
-            }),
-          )
-          .timeout(const Duration(seconds: 12));
-      final body = jsonDecode(response.body);
-      if (response.statusCode != 200) {
-        throw Exception(_extractError(body));
-      }
-      await _tokenStore.writeToken((body['accessToken'] ?? '').toString());
-      await _tokenStore.writeRefreshToken(
-        (body['refreshToken'] ?? '').toString(),
-      );
-      await _storeMobileTokenMetadata((body as Map<String, dynamic>));
-      final username =
-          ((body['user'] ?? const {}) as Map<String, dynamic>)['username']
-              ?.toString();
-      if (username != null && username.isNotEmpty) {
-        await _tokenStore.writeUsername(username);
-      }
-    } finally {
-      client.close();
+
+    final refreshExpiry = await _tokenStore.readRefreshTokenExpiry();
+    final now = DateTime.now().toUtc();
+    if (refreshExpiry != null && !refreshExpiry.isAfter(now)) {
+      await _tokenStore.clear();
+      return null;
     }
+
+    final username = (await _tokenStore.readUsername() ?? '').trim();
+    if (username.isEmpty) {
+      return null;
+    }
+
+    final token = await _tokenStore.readToken() ?? '';
+    return AuthSession(username: username, accessToken: token);
   }
 
   @override
   Future<AuthSession?> checkSession() async {
+    if (!kIsWeb) {
+      final cachedSession = await _readCachedMobileSession();
+      if (cachedSession == null) {
+        return null;
+      }
+
+      try {
+        final fresh = await _gql.ensureFreshSession();
+        if (!fresh) {
+          return await _readCachedMobileSession();
+        }
+        return await _querySessionUser() ?? await _readCachedMobileSession();
+      } catch (_) {
+        return cachedSession;
+      }
+    }
+
     final status = await fetchSessionStatus();
     if (!status.appReady) {
-      if (!kIsWeb) {
-        final refresh = await _tokenStore.readRefreshToken();
-        if (refresh != null && refresh.isNotEmpty) {
-          try {
-            await _refreshMobileSession();
-            final refreshed = await fetchSessionStatus();
-            if (refreshed.appReady) {
-              return _querySessionUser();
-            }
-          } catch (_) {}
-        }
-      }
       return null;
     }
     return _querySessionUser();
@@ -289,7 +274,6 @@ class GraphqlAuthRepository implements AuthRepository {
       }
       return AuthSession(username: username, accessToken: token);
     } catch (_) {
-      await _tokenStore.clear();
       return null;
     }
   }

@@ -325,32 +325,29 @@ class _ActivityDetailPanel extends StatelessWidget {
     }
 
     var queryIndex = 0;
+    final hasQueryStage = stageOrder.contains('query');
+    final queryTiles = toolCalls.map((call) {
+      final idx = queryIndex++;
+      final tileId = 'tool_${call.name}_${idx}_${call.displayQuery.hashCode}';
+      return _ActivityStepTile(
+        icon: _stageIcons['query']!,
+        label: call.displaySummary,
+        hasError: call.errors != null && call.errors!.isNotEmpty,
+        toolCall: call,
+        isExpanded: expandedDetailIds.contains(tileId),
+        onToggle: () => onToggleDetail(tileId),
+      );
+    }).toList();
 
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (!hasQueryStage && queryTiles.isNotEmpty) ...queryTiles,
           for (final stage in stageOrder)
             if (stage == 'query' || stage == 'db' || stage == 'error')
-              if (stage == 'query')
-                ...toolCalls.map((call) {
-                  final idx = queryIndex++;
-                  return _ActivityStepTile(
-                    icon: _stageIcons['query']!,
-                    label: call.displaySummary,
-                    hasError: call.errors != null && call.errors!.isNotEmpty,
-                    toolCall: call,
-                    isExpanded: expandedDetailIds.contains(
-                      'tool_${call.name}_${idx}_${call.displayQuery.hashCode}',
-                    ),
-                    onToggle: () => onToggleDetail(
-                      'tool_${call.name}_${idx}_${call.displayQuery.hashCode}',
-                    ),
-                  );
-                })
-              else
-                const SizedBox.shrink()
+              if (stage == 'query') ...queryTiles else const SizedBox.shrink()
             else
               _ActivityStepTile(
                 icon: _stageIcons[stage] ?? Icons.circle_outlined,

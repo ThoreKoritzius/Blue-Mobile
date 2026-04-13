@@ -116,11 +116,7 @@ final personRepositoryProvider = Provider<PersonRepository>((ref) {
 });
 
 final mapRepositoryProvider = Provider<MapRepository>((ref) {
-  return MapRepository(
-    ref.watch(filesRepositoryProvider),
-    ref.watch(runsRepositoryProvider),
-    ref.watch(graphqlServiceProvider),
-  );
+  return MapRepository(ref.watch(graphqlServiceProvider));
 });
 
 final searchRepositoryProvider = Provider<SearchRepository>((ref) {

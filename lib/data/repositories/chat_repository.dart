@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../../core/config/app_config.dart';
@@ -27,22 +28,12 @@ class StreamingChatRepository implements ChatRepository {
   Stream<ChatEventModel> stream(List<Map<String, String>> messages) async* {
     final client = createGraphqlHttpClient();
     try {
-      final headers = _gql.buildAuthHeaders();
-      final request = http.Request(
-        'POST',
-        Uri.parse('${AppConfig.backendUrl}/api/chat'),
+      final response = await _openStream(
+        client,
+        messages,
+        forceRefreshCsrf: false,
+        isRetry: false,
       );
-      request.headers.addAll({
-        'Content-Type': 'application/json',
-        'Accept': 'application/x-ndjson',
-        ...headers,
-      });
-      request.body = jsonEncode({'stream': true, 'messages': messages});
-
-      final response = await client.send(request).timeout(_streamOpenTimeout);
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw Exception('Chat stream failed (${response.statusCode}).');
-      }
 
       yield const ChatEventModel(
         type: 'status',
@@ -88,18 +79,12 @@ class StreamingChatRepository implements ChatRepository {
   ) async {
     final client = createGraphqlHttpClient();
     try {
-      final headers = _gql.buildAuthHeaders();
-      final response = await client
-          .post(
-            Uri.parse('${AppConfig.backendUrl}/api/chat'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Accept': 'application/json',
-              ...headers,
-            },
-            body: jsonEncode({'stream': false, 'messages': messages}),
-          )
-          .timeout(_completeTimeout);
+      final response = await _postComplete(
+        client,
+        messages,
+        forceRefreshCsrf: false,
+        isRetry: false,
+      );
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw Exception('Chat complete failed (${response.statusCode}).');
@@ -115,5 +100,70 @@ class StreamingChatRepository implements ChatRepository {
     } finally {
       client.close();
     }
+  }
+
+  Future<http.StreamedResponse> _openStream(
+    http.Client client,
+    List<Map<String, String>> messages, {
+    required bool forceRefreshCsrf,
+    required bool isRetry,
+  }) async {
+    final headers = await _gql.buildRequestHeaders(
+      includeCsrf: kIsWeb,
+      forceRefreshCsrf: forceRefreshCsrf,
+      extra: const {
+        'Content-Type': 'application/json',
+        'Accept': 'application/x-ndjson',
+      },
+    );
+    final request = http.Request(
+      'POST',
+      Uri.parse('${AppConfig.backendUrl}/api/chat'),
+    );
+    request.headers.addAll(headers);
+    request.body = jsonEncode({'stream': true, 'messages': messages});
+
+    final response = await client.send(request).timeout(_streamOpenTimeout);
+    if (response.statusCode == 403 && kIsWeb && !isRetry) {
+      return _openStream(
+        client,
+        messages,
+        forceRefreshCsrf: true,
+        isRetry: true,
+      );
+    }
+    return response;
+  }
+
+  Future<http.Response> _postComplete(
+    http.Client client,
+    List<Map<String, String>> messages, {
+    required bool forceRefreshCsrf,
+    required bool isRetry,
+  }) async {
+    final headers = await _gql.buildRequestHeaders(
+      includeCsrf: kIsWeb,
+      forceRefreshCsrf: forceRefreshCsrf,
+      extra: const {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    );
+    final response = await client
+        .post(
+          Uri.parse('${AppConfig.backendUrl}/api/chat'),
+          headers: headers,
+          body: jsonEncode({'stream': false, 'messages': messages}),
+        )
+        .timeout(_completeTimeout);
+    if (response.statusCode == 403 && kIsWeb && !isRetry) {
+      return _postComplete(
+        client,
+        messages,
+        forceRefreshCsrf: true,
+        isRetry: true,
+      );
+    }
+    return response;
   }
 }

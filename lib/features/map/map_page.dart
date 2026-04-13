@@ -1,3 +1,5 @@
+// ignore_for_file: use_build_context_synchronously
+
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -9,9 +11,9 @@ import 'package:google_polyline_algorithm/google_polyline_algorithm.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../core/config/app_config.dart';
-import '../../core/widgets/protected_network_image.dart';
 import '../../core/widgets/calendar_event_detail_sheet.dart';
 import '../../core/widgets/fullscreen_image_viewer.dart';
+import '../../core/widgets/protected_network_image.dart';
 import '../../core/utils/date_format.dart';
 import '../../data/models/run_model.dart';
 import '../../data/repositories/map_repository.dart';
@@ -19,8 +21,6 @@ import '../../providers.dart';
 import '../runs/run_detail_page.dart';
 
 enum _MapStyle { light, dark, normal }
-
-enum _DisplayType { images, runs, both }
 
 class _RunOverlay {
   const _RunOverlay({
@@ -43,6 +43,13 @@ class _ImageOverlay {
   final LatLng position;
 }
 
+class _ImageClusterOverlay {
+  const _ImageClusterOverlay({required this.cluster, required this.position});
+
+  final MapImageCluster cluster;
+  final LatLng position;
+}
+
 class MapPage extends ConsumerStatefulWidget {
   const MapPage({super.key});
 
@@ -52,11 +59,9 @@ class MapPage extends ConsumerStatefulWidget {
 
 class _MapPageState extends ConsumerState<MapPage>
     with TickerProviderStateMixin {
-  static const double _imageLoadZoomThreshold = 3.5;
   static const int _mapTabIndex = 3;
-  static const int _imagePageSize = 60;
-  static const Duration _viewportDebounce = Duration(milliseconds: 350);
-  static const Duration _pageDelay = Duration(milliseconds: 650);
+  static const int _mapMarkerPageSize = 300;
+  static const Duration _viewportDebounce = Duration(milliseconds: 250);
   static const Duration _dayViewLoadTimeout = Duration(seconds: 24);
   static const Duration _daySwitchMapTransitionDuration = Duration(
     milliseconds: 560,
@@ -71,37 +76,38 @@ class _MapPageState extends ConsumerState<MapPage>
   static const int _maxDayWalkRenderPoints = 3000;
   static const int _maxDayFitPoints = 4200;
   static const int _maxDayImageMarkers = 240;
-  static const _loadingTextKey = Key('map-loading-text');
-  static const _loadedTextKey = Key('map-loaded-text');
-  static const _errorTextKey = Key('map-error-text');
   static const _emptyTextKey = Key('map-empty-text');
 
   final MapController _mapController = MapController();
-  final Map<String, _ImageOverlay> _imageCache = <String, _ImageOverlay>{};
+  final Map<String, _ImageOverlay> _imagePointCache = <String, _ImageOverlay>{};
+  final Map<String, _ImageClusterOverlay> _imageClusterCache =
+      <String, _ImageClusterOverlay>{};
   late final ProviderSubscription<int> _selectedTabSubscription;
   late final ProviderSubscription<DateTime> _selectedDateSubscription;
   String? _pendingDayViewDate;
 
   Timer? _viewportDebounceTimer;
-  Timer? _nextImagePageTimer;
 
   List<_RunOverlay> _runs = const [];
+  List<LatLng> _timelineOverviewPoints = const [];
   bool _runsLoading = true;
   bool _imagesLoading = false;
-  bool _imageSearchExhausted = false;
-  bool _imageRequestInFlight = false;
+  bool _timelineOverviewLoading = false;
+  bool _timelineOverviewLoadedOnce = false;
   String _error = '';
-  int _imagesLoaded = 0;
-  int _runsLoaded = 0;
-  int _nextImagePage = 1;
+  String _timelineOverviewError = '';
   int _imageSearchGeneration = 0;
   double _currentZoom = 2.2;
   LatLngBounds? _currentBounds;
+  bool _mapReady = false;
+  bool _overviewFittedOnce = false;
   bool _isVisibleTab = false;
   bool _hasStartedLoad = false;
   _MapStyle _mapStyle = _MapStyle.light;
-  _DisplayType _displayType = _DisplayType.both;
-  bool _differentRouteColors = false;
+  bool _showPhotos = true;
+  bool _showRuns = true;
+  bool _showTimelineHistory = false;
+  final bool _differentRouteColors = false;
 
   // Day-view state
   bool _dayViewMode = false;
@@ -142,7 +148,7 @@ class _MapPageState extends ConsumerState<MapPage>
       if (!_hasStartedLoad) {
         _load();
       } else {
-        _ensureImagesLoadedIfNeeded();
+        _scheduleViewportRefresh();
       }
       // If a day-view was requested and runs are already loaded, enter now.
       // If runs are still loading, _pendingDayViewDate will be consumed in _loadRuns.
@@ -182,7 +188,6 @@ class _MapPageState extends ConsumerState<MapPage>
   void dispose() {
     _daySwitchMapAnimation?.dispose();
     _viewportDebounceTimer?.cancel();
-    _nextImagePageTimer?.cancel();
     _selectedTabSubscription.close();
     _selectedDateSubscription.close();
     _sheetController.removeListener(_onSheetChanged);
@@ -193,23 +198,21 @@ class _MapPageState extends ConsumerState<MapPage>
   Future<void> _load() async {
     _hasStartedLoad = true;
     _viewportDebounceTimer?.cancel();
-    _nextImagePageTimer?.cancel();
     _imageSearchGeneration += 1;
-    _imageRequestInFlight = false;
 
     setState(() {
       _runsLoading = true;
       _imagesLoading = false;
-      _imageSearchExhausted = false;
       _error = '';
-      _imageCache.clear();
-      _imagesLoaded = 0;
-      _runsLoaded = 0;
-      _nextImagePage = 1;
+      _timelineOverviewError = '';
+      _timelineOverviewLoadedOnce = false;
+      _imagePointCache.clear();
+      _imageClusterCache.clear();
+      _overviewFittedOnce = false;
     });
 
     await _loadRuns(ref.read(mapRepositoryProvider));
-    _ensureImagesLoadedIfNeeded();
+    _scheduleViewportRefresh();
   }
 
   Future<void> _loadRuns(MapRepository repo) async {
@@ -238,9 +241,9 @@ class _MapPageState extends ConsumerState<MapPage>
       if (!mounted) return;
       setState(() {
         _runs = overlays;
-        _runsLoaded = overlays.length;
         _runsLoading = false;
       });
+      _fitOverviewBoundsIfNeeded();
       final pending = _pendingDayViewDate;
       if (pending != null) {
         _pendingDayViewDate = null;
@@ -271,9 +274,15 @@ class _MapPageState extends ConsumerState<MapPage>
       setState(() {
         _currentZoom = nextZoom;
         _currentBounds = nextBounds;
+        _mapReady = true;
       });
     }
     _scheduleViewportRefresh();
+    if (_showTimelineHistory &&
+        !_timelineOverviewLoadedOnce &&
+        !_timelineOverviewLoading) {
+      unawaited(_ensureTimelineOverviewLoaded());
+    }
   }
 
   void _onMapReady() {
@@ -285,148 +294,104 @@ class _MapPageState extends ConsumerState<MapPage>
     setState(() {
       _currentZoom = camera.zoom;
       _currentBounds = camera.visibleBounds;
+      _mapReady = true;
     });
     _scheduleViewportRefresh();
+    if (_showTimelineHistory &&
+        !_timelineOverviewLoadedOnce &&
+        !_timelineOverviewLoading) {
+      unawaited(_ensureTimelineOverviewLoaded());
+    }
   }
 
   void _scheduleViewportRefresh() {
-    if (!_isVisibleTab) return;
+    if (!_isVisibleTab || !_mapReady || _dayViewMode) return;
     _viewportDebounceTimer?.cancel();
     _viewportDebounceTimer = Timer(_viewportDebounce, () {
       if (!mounted) return;
       _imageSearchGeneration += 1;
-      _nextImagePageTimer?.cancel();
-      _ensureImagesLoadedIfNeeded();
-      setState(() {});
+      _refreshVisibleMapData(_imageSearchGeneration);
     });
-  }
-
-  void _ensureImagesLoadedIfNeeded() {
-    if (!_needsImagesForViewport()) {
-      _stopImageSearch();
-      return;
-    }
-
-    if (_hasEnoughVisibleImages()) {
-      if (_imagesLoading && mounted) {
-        setState(() => _imagesLoading = false);
-      }
-      return;
-    }
-
-    _scheduleNextImagePage();
-  }
-
-  bool _needsImagesForViewport() {
-    return _isVisibleTab &&
-        !_dayViewMode &&
-        _displayType != _DisplayType.runs &&
-        _currentBounds != null &&
-        _currentZoom >= _imageLoadZoomThreshold;
   }
 
   void _stopImageSearch() {
     _imageSearchGeneration += 1;
-    _nextImagePageTimer?.cancel();
     if (_imagesLoading && mounted) {
       setState(() => _imagesLoading = false);
     }
   }
 
-  void _scheduleNextImagePage() {
-    if (_imageRequestInFlight ||
-        _imageSearchExhausted ||
-        !_needsImagesForViewport()) {
+  Future<void> _refreshVisibleMapData(int generation) async {
+    if (!_isVisibleTab || _dayViewMode || !_showPhotos) {
+      if (mounted && _imagesLoading) {
+        setState(() => _imagesLoading = false);
+      }
       return;
     }
+    final bounds = _expandedBounds();
+    if (bounds == null) return;
 
-    _nextImagePageTimer?.cancel();
-    if (mounted) {
-      setState(() {
-        _imagesLoading = true;
-      });
-    }
-    final generation = _imageSearchGeneration;
-    _nextImagePageTimer = Timer(_pageDelay, () {
-      _loadNextImagePage(generation);
+    setState(() {
+      _imagesLoading = true;
+      _error = '';
     });
-  }
-
-  Future<void> _loadNextImagePage(int generation) async {
-    if (_imageRequestInFlight ||
-        generation != _imageSearchGeneration ||
-        !_needsImagesForViewport() ||
-        _imageSearchExhausted) {
-      return;
-    }
-
-    _imageRequestInFlight = true;
-    final page = _nextImagePage;
-
     try {
       final result = await ref
           .read(mapRepositoryProvider)
-          .searchImagePage(page: page, pageSize: _imagePageSize);
+          .loadMapMarkers(
+            bounds: bounds,
+            zoom: _currentZoom,
+            first: _mapMarkerPageSize,
+          );
+      if (!mounted || generation != _imageSearchGeneration) return;
 
-      if (!mounted) return;
-      if (generation != _imageSearchGeneration) {
-        debugPrint('[MAP] stale image page ignored page=$page');
-        return;
-      }
-
+      final nextPoints = <String, _ImageOverlay>{};
       for (final point in result.points) {
-        _imageCache[point.path] = _ImageOverlay(
+        nextPoints[point.sourcePath] = _ImageOverlay(
           point: point,
           position: LatLng(point.lat, point.lon),
         );
       }
-
+      final nextClusters = <String, _ImageClusterOverlay>{};
+      for (final cluster in result.clusters) {
+        final key = [
+          cluster.previewPath ?? '',
+          cluster.count,
+          cluster.lat.toStringAsFixed(5),
+          cluster.lon.toStringAsFixed(5),
+        ].join('|');
+        nextClusters[key] = _ImageClusterOverlay(
+          cluster: cluster,
+          position: LatLng(cluster.lat, cluster.lon),
+        );
+      }
       setState(() {
-        _imagesLoaded = _imageCache.length;
-        _nextImagePage = page + 1;
-        _imageSearchExhausted = !result.hasMore;
+        _imagePointCache
+          ..clear()
+          ..addAll(nextPoints);
+        _imageClusterCache
+          ..clear()
+          ..addAll(nextClusters);
+        _imagesLoading = false;
       });
+      _fitOverviewBoundsIfNeeded();
     } catch (error, stackTrace) {
-      debugPrint('[MAP] _loadNextImagePage failed: $error');
+      debugPrint('[MAP] overview marker load failed: $error');
       debugPrintStack(stackTrace: stackTrace);
-      if (!mounted) return;
+      if (!mounted || generation != _imageSearchGeneration) return;
       setState(() {
         _imagesLoading = false;
         _error = error.toString().replaceFirst('Exception: ', '');
       });
-    } finally {
-      _imageRequestInFlight = false;
-      if (mounted) {
-        if (generation != _imageSearchGeneration) {
-          _ensureImagesLoadedIfNeeded();
-        } else {
-          final shouldContinue =
-              _needsImagesForViewport() &&
-              !_imageSearchExhausted &&
-              !_hasEnoughVisibleImages();
-
-          setState(() {
-            _imagesLoading = shouldContinue;
-          });
-
-          if (shouldContinue) {
-            _scheduleNextImagePage();
-          }
-        }
-      }
     }
-  }
-
-  bool _hasEnoughVisibleImages() {
-    return _visibleImages().length >= _targetVisibleImageCount();
   }
 
   List<_ImageOverlay> _visibleImages() {
     final bounds = _expandedBounds();
-    if (bounds == null || _imageCache.isEmpty) return const [];
+    if (bounds == null || _imagePointCache.isEmpty) return const [];
 
     final candidates =
-        _imageCache.values
+        _imagePointCache.values
             .where((image) => bounds.contains(image.position))
             .toList()
           ..sort((a, b) => b.point.date.compareTo(a.point.date));
@@ -436,6 +401,14 @@ class _MapPageState extends ConsumerState<MapPage>
       return candidates.take(cap).toList();
     }
     return candidates;
+  }
+
+  List<_ImageClusterOverlay> _visibleClusters() {
+    final bounds = _expandedBounds();
+    if (bounds == null || _imageClusterCache.isEmpty) return const [];
+    return _imageClusterCache.values
+        .where((cluster) => bounds.contains(cluster.position))
+        .toList();
   }
 
   LatLngBounds? _expandedBounds() {
@@ -478,20 +451,84 @@ class _MapPageState extends ConsumerState<MapPage>
     );
   }
 
-  int _targetVisibleImageCount() {
-    if (_currentZoom <= 4) return 10;
-    if (_currentZoom <= 5) return 16;
-    if (_currentZoom <= 6) return 24;
-    if (_currentZoom <= 7) return 36;
-    return 48;
+  int _maxVisibleImageMarkers() {
+    if (_currentZoom < 7) return 0;
+    if (_currentZoom < 9) return 120;
+    return 120;
   }
 
-  int _maxVisibleImageMarkers() {
-    if (_currentZoom <= 4) return 18;
-    if (_currentZoom <= 5) return 30;
-    if (_currentZoom <= 6) return 48;
-    if (_currentZoom <= 7) return 72;
-    return 96;
+  double _timelineStrokeWidth() {
+    if (_currentZoom < 3) return 1.0;
+    if (_currentZoom < 5) return 1.5;
+    if (_currentZoom < 7) return 2.1;
+    return 2.5;
+  }
+
+  double _runStrokeWidth() {
+    if (_currentZoom < 3) return 1.25;
+    if (_currentZoom < 5) return 1.8;
+    if (_currentZoom < 7) return 2.2;
+    return 2.8;
+  }
+
+  void _fitOverviewBoundsIfNeeded() {
+    if (!_mapReady || _dayViewMode || _overviewFittedOnce) return;
+    final target = _overviewCameraTarget();
+    if (target == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _dayViewMode) return;
+      _overviewFittedOnce = true;
+      _mapController.move(target.center, target.zoom);
+    });
+  }
+
+  Future<void> _ensureTimelineOverviewLoaded() async {
+    if (_timelineOverviewLoadedOnce || _timelineOverviewLoading) return;
+    setState(() {
+      _timelineOverviewLoading = true;
+      _timelineOverviewError = '';
+    });
+    try {
+      final points = await ref
+          .read(mapRepositoryProvider)
+          .loadTimelineOverview();
+      if (!mounted) return;
+      setState(() {
+        _timelineOverviewPoints = points;
+        _timelineOverviewLoading = false;
+        _timelineOverviewLoadedOnce = true;
+      });
+      _fitOverviewBoundsIfNeeded();
+    } catch (error, stackTrace) {
+      debugPrint('[MAP] overview timeline load failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
+      if (!mounted) return;
+      setState(() {
+        _timelineOverviewLoading = false;
+        _timelineOverviewLoadedOnce = true;
+        _timelineOverviewError = error.toString().replaceFirst(
+          'Exception: ',
+          '',
+        );
+      });
+    }
+  }
+
+  ({LatLng center, double zoom})? _overviewCameraTarget() {
+    final points = <LatLng>[
+      if (_showTimelineHistory) ..._sampleLatLngs(_timelineOverviewPoints, 180),
+      for (final run in _runs) ..._sampleLatLngs(run.points, 120),
+      for (final image in _imagePointCache.values) image.position,
+      for (final cluster in _imageClusterCache.values) cluster.position,
+    ];
+    if (points.isEmpty) return null;
+    final cameraFit = CameraFit.bounds(
+      bounds: LatLngBounds.fromPoints(points),
+      padding: const EdgeInsets.all(48),
+      maxZoom: 8,
+    );
+    final fitted = cameraFit.fit(_mapController.camera);
+    return (center: fitted.center, zoom: fitted.zoom);
   }
 
   @override
@@ -500,14 +537,18 @@ class _MapPageState extends ConsumerState<MapPage>
 
     final tileConfig = AppConfig.mapTileConfig(_mapStyle.name);
     final center = _initialCenter();
-    final showImages = _displayType != _DisplayType.runs;
-    final showRuns = _displayType != _DisplayType.images;
+    final showImages = _showPhotos;
+    final showRuns = _showRuns;
+    final showTimelineHistory = _showTimelineHistory;
     final visibleImages = showImages
         ? _visibleImages()
         : const <_ImageOverlay>[];
+    final visibleClusters = showImages
+        ? _visibleClusters()
+        : const <_ImageClusterOverlay>[];
     final loading = _runsLoading || (showImages && _imagesLoading);
     final colorScheme = Theme.of(context).colorScheme;
-    final routeColor = colorScheme.primary;
+    final routeColor = Colors.orangeAccent;
     final imageBorderColor = colorScheme.tertiary;
     final imageMarkerSize = _imageMarkerSizeForZoom(_currentZoom);
     final imageIconSize = imageMarkerSize * 0.5;
@@ -532,14 +573,25 @@ class _MapPageState extends ConsumerState<MapPage>
               maxZoom: tileConfig.maxZoom.toDouble(),
               userAgentPackageName: 'blue_mobile',
             ),
+            if (showTimelineHistory && _timelineOverviewPoints.length >= 2)
+              PolylineLayer(
+                polylines: [
+                  Polyline(
+                    points: _timelineOverviewPoints,
+                    strokeWidth: _timelineStrokeWidth(),
+                    color: const Color(0xFF4A90D9).withValues(alpha: 0.55),
+                  ),
+                ],
+              ),
             if (showRuns)
               PolylineLayer(
                 polylines: _runs
                     .map(
                       (run) => Polyline(
                         points: run.points,
-                        strokeWidth: 3,
-                        color: _differentRouteColors ? run.color : routeColor,
+                        strokeWidth: _runStrokeWidth(),
+                        color: (_differentRouteColors ? run.color : routeColor)
+                            .withValues(alpha: showImages ? 0.38 : 0.88),
                       ),
                     )
                     .toList(),
@@ -577,7 +629,27 @@ class _MapPageState extends ConsumerState<MapPage>
               ),
             if (showImages)
               MarkerLayer(
+                markers: visibleClusters
+                    .map(
+                      (cluster) => Marker(
+                        point: cluster.position,
+                        width: 34,
+                        height: 34,
+                        child: GestureDetector(
+                          onTap: () => _zoomToCluster(cluster),
+                          child: _buildClusterMarker(
+                            cluster,
+                            borderColor: imageBorderColor,
+                          ),
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
+            if (showImages)
+              MarkerLayer(
                 markers: visibleImages
+                    .take(120)
                     .map(
                       (image) => Marker(
                         point: image.position,
@@ -613,9 +685,10 @@ class _MapPageState extends ConsumerState<MapPage>
 
         if (!loading &&
             _error.isEmpty &&
+            visibleClusters.isEmpty &&
             visibleImages.isEmpty &&
             _runs.isEmpty &&
-            !(showImages && _currentZoom < _imageLoadZoomThreshold))
+            _timelineOverviewPoints.isEmpty)
           Center(
             child: Card(
               child: Padding(
@@ -1014,61 +1087,6 @@ class _MapPageState extends ConsumerState<MapPage>
     );
   }
 
-  Future<void> _showDayRunSheet(TimelineRun run) {
-    return showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      constraints: BoxConstraints.tightFor(
-        width: MediaQuery.of(context).size.width,
-      ),
-      builder: (context) {
-        return SafeArea(
-          child: SingleChildScrollView(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    run.name.isEmpty ? 'Run ${run.id}' : run.name,
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 12),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: ProtectedNetworkImage(
-                      imageUrl: _authenticatedUrl(
-                        AppConfig.runImageUrl(run.id),
-                      ),
-                      headers: _authHeaders(),
-                      height: 200,
-                      fit: BoxFit.cover,
-                      errorWidget: Container(
-                        height: 200,
-                        color: const Color(0x11000000),
-                        alignment: Alignment.center,
-                        child: const Icon(Icons.image_not_supported_outlined),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  FilledButton(
-                    onPressed: () {
-                      Navigator.of(context).pop();
-                      _openRunDetailFromTimeline(run);
-                    },
-                    child: const Text('Open run'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
   Future<void> _showDayImageSheet(TimelineImageLocation img, String date) {
     return _showDayImageViewer([img], date: date);
   }
@@ -1100,19 +1118,91 @@ class _MapPageState extends ConsumerState<MapPage>
     );
   }
 
+  Widget _buildClusterMarker(
+    _ImageClusterOverlay overlay, {
+    required Color borderColor,
+  }) {
+    final countLabel = overlay.cluster.count > 99
+        ? '99+'
+        : overlay.cluster.count.toString();
+    const markerSize = 34.0;
+    final badge = Align(
+      alignment: Alignment.bottomRight,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.82),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: Colors.white, width: 1.2),
+        ),
+        child: Text(
+          countLabel,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Container(
+          width: markerSize,
+          height: markerSize,
+          decoration: BoxDecoration(
+            color: borderColor.withValues(alpha: 0.95),
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white, width: 2),
+            boxShadow: const [
+              BoxShadow(blurRadius: 10, color: Color(0x33000000)),
+            ],
+          ),
+          alignment: Alignment.center,
+          child: const Icon(Icons.photo_library, color: Colors.white, size: 16),
+        ),
+        badge,
+      ],
+    );
+  }
+
+  void _zoomToCluster(_ImageClusterOverlay cluster) {
+    final latMin = cluster.cluster.latMin;
+    final latMax = cluster.cluster.latMax;
+    final lonMin = cluster.cluster.lonMin;
+    final lonMax = cluster.cluster.lonMax;
+    if (latMin != null && latMax != null && lonMin != null && lonMax != null) {
+      final fitted = CameraFit.bounds(
+        bounds: LatLngBounds(LatLng(latMin, lonMin), LatLng(latMax, lonMax)),
+        padding: const EdgeInsets.all(56),
+        maxZoom: 9,
+      ).fit(_mapController.camera);
+      _mapController.move(fitted.center, fitted.zoom);
+      return;
+    }
+    _mapController.move(cluster.position, math.max(_currentZoom + 1.5, 7.0));
+  }
+
   LatLng _initialCenter() {
-    if (_imageCache.isNotEmpty) return _imageCache.values.first.position;
+    if (_imagePointCache.isNotEmpty) {
+      return _imagePointCache.values.first.position;
+    }
+    if (_imageClusterCache.isNotEmpty) {
+      return _imageClusterCache.values.first.position;
+    }
     if (_runs.isNotEmpty) return _runs.first.points.first;
     return const LatLng(20, 0);
   }
 
   double _imageMarkerSizeForZoom(double zoom) {
-    if (zoom <= 3) return 12;
-    if (zoom <= 4) return 16;
-    if (zoom <= 5) return 20;
-    if (zoom <= 6) return 24;
-    if (zoom <= 7) return 28;
-    return 34;
+    if (zoom <= 3) return 22;
+    if (zoom <= 4) return 24;
+    if (zoom <= 5) return 26;
+    if (zoom <= 6) return 28;
+    if (zoom <= 7) return 30;
+    return 32;
   }
 
   IconData _mapStyleIcon(_MapStyle style) {
@@ -1230,21 +1320,35 @@ class _MapPageState extends ConsumerState<MapPage>
                     ),
                   ),
                   const SizedBox(height: 10),
-                  SegmentedButton<_DisplayType>(
-                    segments: _DisplayType.values
-                        .map(
-                          (dt) => ButtonSegment<_DisplayType>(
-                            value: dt,
-                            label: Text(_displayTypeLabel(dt)),
-                          ),
-                        )
-                        .toList(),
-                    selected: {_displayType},
-                    onSelectionChanged: (selection) => update(() {
-                      _displayType = selection.first;
-                      _ensureImagesLoadedIfNeeded();
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    value: _showPhotos,
+                    onChanged: (value) => update(() {
+                      _showPhotos = value;
+                      _scheduleViewportRefresh();
                     }),
-                    showSelectedIcon: false,
+                    title: const Text('Photos'),
+                  ),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    value: _showRuns,
+                    onChanged: (value) => update(() {
+                      _showRuns = value;
+                    }),
+                    title: const Text('Runs'),
+                  ),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    value: _showTimelineHistory,
+                    onChanged: (value) {
+                      update(() {
+                        _showTimelineHistory = value;
+                      });
+                      if (value) {
+                        unawaited(_ensureTimelineOverviewLoaded());
+                      }
+                    },
+                    title: const Text('Timeline'),
                   ),
                 ],
               ),
@@ -1373,22 +1477,6 @@ class _MapPageState extends ConsumerState<MapPage>
     );
   }
 
-  Future<void> _openRunDetailFromTimeline(TimelineRun timelineRun) async {
-    final run = RunModel(
-      id: timelineRun.id,
-      name: timelineRun.name,
-      startDateLocal: timelineRun.startTime?.toIso8601String() ?? '',
-      distance: (timelineRun.distanceMeters ?? 0).toDouble(),
-      summaryPolyline: timelineRun.summaryPolyline,
-      movingTime: timelineRun.movingTimeSeconds ?? 0,
-      averageSpeed: 0,
-      startTime: timelineRun.startTime?.toIso8601String() ?? '',
-      source: 'strava',
-      sourceLabel: 'Strava',
-    );
-    await _openRunDetail(run);
-  }
-
   // ── Day-view ────────────────────────────────────────────────────────────────
 
   Future<void> _enterDayView(String date) async {
@@ -1440,7 +1528,7 @@ class _MapPageState extends ConsumerState<MapPage>
       _selectedVisitPlaceId = null;
       _selectedRunId = null;
     });
-    _ensureImagesLoadedIfNeeded();
+    _scheduleViewportRefresh();
   }
 
   Future<void> _loadDayView(String date) async {
@@ -1651,15 +1739,6 @@ class _MapPageState extends ConsumerState<MapPage>
     // Sheet padding is applied when the user taps a timeline item.
   }
 
-  void _onDaySliderChanged(double value) {
-    if (_dayViewDates.isEmpty) return;
-    if (!value.isFinite) return;
-    final idx = value.round().clamp(0, _dayViewDates.length - 1);
-    if (idx == _dayViewDateIndex) return;
-    setState(() => _dayViewDateIndex = idx);
-    _loadDayView(_dayViewDates[idx]);
-  }
-
   void _goToPreviousDay() {
     final current =
         DateTime.tryParse(_dayViewDate) ?? DateUtils.dateOnly(DateTime.now());
@@ -1785,9 +1864,10 @@ class _MapPageState extends ConsumerState<MapPage>
       targetContext = key.currentContext;
     }
     if (targetContext == null) return;
+    final visibleContext = targetContext;
 
     await Scrollable.ensureVisible(
-      targetContext,
+      visibleContext,
       duration: const Duration(milliseconds: 320),
       curve: Curves.easeOutCubic,
       alignment: 0.12,
@@ -2023,7 +2103,7 @@ class _MapPageState extends ConsumerState<MapPage>
                     if (isTravel) ...[
                       // Activity type picker
                       DropdownButtonFormField<(String, String, IconData)>(
-                        value: activityType,
+                        initialValue: activityType,
                         decoration: const InputDecoration(
                           labelText: 'Travel type',
                           border: OutlineInputBorder(),
@@ -2245,17 +2325,6 @@ class _MapPageState extends ConsumerState<MapPage>
         return 'Dark';
       case _MapStyle.normal:
         return 'Normal';
-    }
-  }
-
-  String _displayTypeLabel(_DisplayType displayType) {
-    switch (displayType) {
-      case _DisplayType.images:
-        return 'Images';
-      case _DisplayType.runs:
-        return 'Runs';
-      case _DisplayType.both:
-        return 'Both';
     }
   }
 
@@ -3771,110 +3840,6 @@ class _DayBottomSheet extends StatelessWidget {
               ),
             );
           },
-        ),
-      ),
-    );
-  }
-}
-
-class _StatusBanner extends StatelessWidget {
-  const _StatusBanner({
-    required this.loading,
-    required this.error,
-    required this.imagesLoaded,
-    required this.visibleImages,
-    required this.runsLoaded,
-    required this.hasData,
-    required this.waitingForImageZoom,
-  });
-
-  final bool loading;
-  final String error;
-  final int imagesLoaded;
-  final int visibleImages;
-  final int runsLoaded;
-  final bool hasData;
-  final bool waitingForImageZoom;
-
-  @override
-  Widget build(BuildContext context) {
-    if (error.isNotEmpty) {
-      return Material(
-        color: Colors.transparent,
-        child: Card(
-          color: Theme.of(context).colorScheme.errorContainer,
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Text(
-              error,
-              key: _MapPageState._errorTextKey,
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onErrorContainer,
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    if (loading) {
-      return Material(
-        color: Colors.transparent,
-        child: Card(
-          color: const Color(0xE01C1C1E),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-                const SizedBox(width: 10),
-                Text(
-                  'Loading viewport... $visibleImages shown, $imagesLoaded cached, $runsLoaded runs',
-                  key: _MapPageState._loadingTextKey,
-                  style: const TextStyle(color: Colors.white),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
-    if (waitingForImageZoom) {
-      return Material(
-        color: Colors.transparent,
-        child: Card(
-          color: const Color(0xE01C1C1E),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            child: Text(
-              'Zoom in to load image markers. Runs are already loaded.',
-              key: _MapPageState._loadedTextKey,
-              style: const TextStyle(color: Colors.white),
-            ),
-          ),
-        ),
-      );
-    }
-
-    if (!hasData) return const SizedBox.shrink();
-
-    return Material(
-      color: Colors.transparent,
-      child: Card(
-        color: const Color(0xE01C1C1E),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-          child: Text(
-            'Showing $visibleImages images from $imagesLoaded cached points, $runsLoaded runs',
-            key: _MapPageState._loadedTextKey,
-            style: const TextStyle(color: Colors.white),
-          ),
         ),
       ),
     );
