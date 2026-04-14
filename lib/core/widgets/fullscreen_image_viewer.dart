@@ -39,7 +39,8 @@ class ImageViewerItem {
 }
 
 typedef ImageInfoFetcher = Future<ImageInfoResult> Function(String path);
-typedef ImageFacesFetcher = Future<ImageFacesPayloadModel> Function(String path);
+typedef ImageFacesFetcher =
+    Future<ImageFacesPayloadModel> Function(String path);
 typedef ImageDeleter = Future<void> Function(String path);
 typedef ImageCoverSetter = Future<void> Function(String path);
 typedef FaceUnlabeler = Future<void> Function(int faceId);
@@ -90,28 +91,30 @@ class FullscreenImageViewer extends StatefulWidget {
     ImageCoverSetter? onSetCover,
     OpenPerson? onOpenPerson,
   }) {
-    return Navigator.of(context).push<Set<String>>(
-      PageRouteBuilder<Set<String>>(
-        opaque: true,
-        pageBuilder: (_, __, ___) => FullscreenImageViewer(
-          images: images,
-          initialIndex: initialIndex,
-          httpHeaders: httpHeaders,
-          fetchImageInfo: fetchImageInfo,
-          fetchImageFaces: fetchImageFaces,
-          unlabelFace: unlabelFace,
-          reassignFace: reassignFace,
-          personRepository: personRepository,
-          onDelete: onDelete,
-          onSetCover: onSetCover,
-          onOpenPerson: onOpenPerson,
-        ),
-        transitionsBuilder: (_, animation, __, child) =>
-            FadeTransition(opacity: animation, child: child),
-        transitionDuration: const Duration(milliseconds: 200),
-        reverseTransitionDuration: const Duration(milliseconds: 200),
-      ),
-    ).then((v) => v ?? const {});
+    return Navigator.of(context)
+        .push<Set<String>>(
+          PageRouteBuilder<Set<String>>(
+            opaque: true,
+            pageBuilder: (_, __, ___) => FullscreenImageViewer(
+              images: images,
+              initialIndex: initialIndex,
+              httpHeaders: httpHeaders,
+              fetchImageInfo: fetchImageInfo,
+              fetchImageFaces: fetchImageFaces,
+              unlabelFace: unlabelFace,
+              reassignFace: reassignFace,
+              personRepository: personRepository,
+              onDelete: onDelete,
+              onSetCover: onSetCover,
+              onOpenPerson: onOpenPerson,
+            ),
+            transitionsBuilder: (_, animation, __, child) =>
+                FadeTransition(opacity: animation, child: child),
+            transitionDuration: const Duration(milliseconds: 200),
+            reverseTransitionDuration: const Duration(milliseconds: 200),
+          ),
+        )
+        .then((v) => v ?? const {});
   }
 
   @override
@@ -181,9 +184,9 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer> {
       );
       if (response.statusCode != 200) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Failed to load image')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Failed to load image')));
         }
         return;
       }
@@ -193,9 +196,9 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer> {
       await Share.shareXFiles([XFile(file.path)]);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Share failed: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Share failed: $e')));
       }
     } finally {
       if (mounted) setState(() => _sharing = false);
@@ -216,23 +219,23 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer> {
       );
       if (response.statusCode != 200) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Failed to load image')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Failed to load image')));
         }
         return;
       }
       await Gal.putImageBytes(response.bodyBytes, name: _current.fileName);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Saved to gallery')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Saved to gallery')));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Download failed: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Download failed: $e')));
       }
     } finally {
       if (mounted) setState(() => _downloading = false);
@@ -244,15 +247,15 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer> {
     try {
       await widget.onSetCover!(_current.path);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Cover updated')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Cover updated')));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to set cover: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to set cover: $e')));
       }
     }
   }
@@ -296,14 +299,14 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer> {
         _currentIndex = newIndex;
         _pageController.jumpToPage(newIndex);
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Image deleted')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Image deleted')));
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Delete failed: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Delete failed: $e')));
       }
     } finally {
       if (mounted) setState(() => _deleting = false);
@@ -352,8 +355,9 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer> {
               return GestureDetector(
                 onTap: _toggleOverlay,
                 child: InteractiveViewer(
-                  transformationController:
-                      index == _currentIndex ? _transformController : null,
+                  transformationController: index == _currentIndex
+                      ? _transformController
+                      : null,
                   minScale: 1.0,
                   maxScale: 5.0,
                   child: Center(
@@ -402,8 +406,7 @@ class _FullscreenImageViewerState extends State<FullscreenImageViewer> {
                 child: Row(
                   children: [
                     IconButton(
-                      onPressed: () =>
-                          Navigator.of(context).pop(_deletedPaths),
+                      onPressed: () => Navigator.of(context).pop(_deletedPaths),
                       icon: const Icon(Icons.arrow_back, color: Colors.white),
                     ),
                     Expanded(
@@ -599,9 +602,17 @@ class _ImageMetadataSheetState extends State<_ImageMetadataSheet> {
   Future<void> _fetchInfo() async {
     try {
       final info = await widget.fetchImageInfo(widget.item.path);
-      if (mounted) setState(() { _info = info; _loading = false; });
+      if (mounted)
+        setState(() {
+          _info = info;
+          _loading = false;
+        });
     } catch (e) {
-      if (mounted) setState(() { _error = e.toString(); _loading = false; });
+      if (mounted)
+        setState(() {
+          _error = e.toString();
+          _loading = false;
+        });
     }
   }
 
@@ -645,9 +656,9 @@ class _ImageMetadataSheetState extends State<_ImageMetadataSheet> {
       await _fetchFaces();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to update face: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to update face: $e')));
     } finally {
       if (mounted) setState(() => _savingFace = false);
     }
@@ -660,9 +671,9 @@ class _ImageMetadataSheetState extends State<_ImageMetadataSheet> {
       await _fetchFaces();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to remove person: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to remove person: $e')));
     } finally {
       if (mounted) setState(() => _savingFace = false);
     }
@@ -748,34 +759,35 @@ class _ImageMetadataSheetState extends State<_ImageMetadataSheet> {
     final metadata = _info?.metadata ?? const {};
 
     // Date & time from EXIF
-    final rawDateTime =
-        _firstNonEmptyString([
-          exif['DateTimeOriginal'],
-          exif['DateTimeDigitized'],
-          exif['DateTime'],
-          metadata['capturedAt'],
-          file['captured_at'],
-          file['capturedAt'],
-        ]);
+    final rawDateTime = _firstNonEmptyString([
+      exif['DateTimeOriginal'],
+      exif['DateTimeDigitized'],
+      exif['DateTime'],
+      metadata['capturedAt'],
+      file['captured_at'],
+      file['capturedAt'],
+    ]);
     final dateDisplay = rawDateTime != null
         ? _formatExifDateTime(rawDateTime)
         : item.date;
 
     // Location
-    final gpsStr = _firstNonEmptyString([
-          metadata['gps'],
-          file['gps'],
-          item.gps,
-        ]) ??
-        '';
+    final gpsStr =
+        _firstNonEmptyString([metadata['gps'], file['gps'], item.gps]) ?? '';
     final gpsLatLng = gpsStr.isNotEmpty ? _parseGps(gpsStr) : null;
 
     // Image resolution
     final imgWidth = _asInt(
-      exif['ExifImageWidth'] ?? exif['ImageWidth'] ?? metadata['width'] ?? file['width'],
+      exif['ExifImageWidth'] ??
+          exif['ImageWidth'] ??
+          metadata['width'] ??
+          file['width'],
     );
     final imgHeight = _asInt(
-      exif['ExifImageHeight'] ?? exif['ImageLength'] ?? metadata['height'] ?? file['height'],
+      exif['ExifImageHeight'] ??
+          exif['ImageLength'] ??
+          metadata['height'] ??
+          file['height'],
     );
     final resolution = (imgWidth != null && imgHeight != null)
         ? '$imgWidth × $imgHeight'
@@ -791,7 +803,12 @@ class _ImageMetadataSheetState extends State<_ImageMetadataSheet> {
     final focalLength = _firstNonEmptyString([exif['FocalLength']]) ?? '';
     final fNumber = _firstNonEmptyString([exif['FNumber']]) ?? '';
     final exposure = _firstNonEmptyString([exif['ExposureTime']]) ?? '';
-    final iso = _firstNonEmptyString([exif['ISOSpeedRatings'], exif['PhotographicSensitivity']]) ?? '';
+    final iso =
+        _firstNonEmptyString([
+          exif['ISOSpeedRatings'],
+          exif['PhotographicSensitivity'],
+        ]) ??
+        '';
     final params = <String>[
       if (focalLength.isNotEmpty) '${focalLength}mm',
       if (fNumber.isNotEmpty) 'f/$fNumber',
@@ -828,8 +845,8 @@ class _ImageMetadataSheetState extends State<_ImageMetadataSheet> {
               onOpenPerson: widget.onOpenPerson == null
                   ? null
                   : (face) => widget.onOpenPerson!(
-                        _minimalPerson(face.personId!, face.personName),
-                      ),
+                      _minimalPerson(face.personId!, face.personName),
+                    ),
               onRetry: _fetchFaces,
             ),
             const SizedBox(height: 10),
@@ -861,8 +878,9 @@ class _ImageMetadataSheetState extends State<_ImageMetadataSheet> {
                       ),
                       children: [
                         TileLayer(
-                          urlTemplate: AppConfig.mapTileConfig('light')
-                              .urlTemplate,
+                          urlTemplate: AppConfig.mapTileConfig(
+                            'light',
+                          ).urlTemplate,
                           maxZoom: 18,
                           userAgentPackageName: 'blue_mobile',
                         ),
@@ -974,7 +992,6 @@ class _PeopleSection extends StatelessWidget {
       children: [
         Row(
           children: [
-            Text('People in this photo', style: theme.textTheme.titleMedium),
             if (saving) ...[
               const SizedBox(width: 10),
               const SizedBox(
@@ -985,7 +1002,7 @@ class _PeopleSection extends StatelessWidget {
             ],
           ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         if (loading)
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 8),
@@ -999,21 +1016,24 @@ class _PeopleSection extends StatelessWidget {
             onPressed: onRetry,
           )
         else if (faces.isNotEmpty)
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              for (final face in faces)
-                _FaceCard(
+          SizedBox(
+            height: 96,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: faces.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 16),
+              itemBuilder: (context, index) {
+                final face = faces[index];
+                return _FaceChip(
                   face: face,
                   headers: headers,
                   onTap: () => onTapFace(face),
-                  onRemove: face.isLabeled ? () => onRemoveFace(face) : null,
-                  onOpenPerson: face.personId != null && onOpenPerson != null
-                      ? () => onOpenPerson!(face)
+                  onLongPress: face.isLabeled
+                      ? () => _showFaceActions(context, face)
                       : null,
-                ),
-            ],
+                );
+              },
+            ),
           )
         else
           _SectionNotice(
@@ -1021,14 +1041,60 @@ class _PeopleSection extends StatelessWidget {
             message: payload?.message.isNotEmpty == true
                 ? payload!.message
                 : 'Face indexing has not finished for this image yet.',
-            actionLabel: (payload?.isPending ?? false) || (payload?.isFailed ?? false)
+            actionLabel:
+                (payload?.isPending ?? false) || (payload?.isFailed ?? false)
                 ? 'Refresh'
                 : null,
-            onPressed: (payload?.isPending ?? false) || (payload?.isFailed ?? false)
+            onPressed:
+                (payload?.isPending ?? false) || (payload?.isFailed ?? false)
                 ? onRetry
                 : null,
           ),
       ],
+    );
+  }
+
+  void _showFaceActions(BuildContext context, ImageFaceModel face) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (face.personId != null && onOpenPerson != null)
+              ListTile(
+                leading: const Icon(Icons.open_in_new_rounded),
+                title: Text('View ${face.personName}'),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  onOpenPerson!(face);
+                },
+              ),
+            ListTile(
+              leading: const Icon(Icons.swap_horiz_rounded),
+              title: const Text('Change person'),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                onTapFace(face);
+              },
+            ),
+            ListTile(
+              leading: Icon(
+                Icons.person_remove_outlined,
+                color: Theme.of(ctx).colorScheme.error,
+              ),
+              title: Text(
+                'Remove from photo',
+                style: TextStyle(color: Theme.of(ctx).colorScheme.error),
+              ),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                onRemoveFace(face);
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -1046,100 +1112,66 @@ class _PeopleSection extends StatelessWidget {
   }
 }
 
-class _FaceCard extends StatelessWidget {
-  const _FaceCard({
+class _FaceChip extends StatelessWidget {
+  const _FaceChip({
     required this.face,
     required this.headers,
     required this.onTap,
-    this.onRemove,
-    this.onOpenPerson,
+    this.onLongPress,
   });
 
   final ImageFaceModel face;
   final Map<String, String> headers;
   final VoidCallback onTap;
-  final VoidCallback? onRemove;
-  final VoidCallback? onOpenPerson;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
     final cropUrl = face.cropPath.trim().isEmpty
         ? null
         : AppConfig.faceCropUrlFromPath(face.cropPath.trim());
-    return Material(
-      color: colorScheme.surfaceContainerLow,
-      borderRadius: BorderRadius.circular(22),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(22),
-        child: Container(
-          width: 180,
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              _FaceAvatar(
-                cropUrl: cropUrl,
-                headers: headers,
-                initials: _initials(face.personName),
+    final label = face.isLabeled ? face.personName : 'Unknown';
+
+    return GestureDetector(
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: SizedBox(
+        width: 72,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _FaceAvatar(
+              cropUrl: cropUrl,
+              headers: headers,
+              initials: _initials(face.personName),
+              size: 56,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: theme.textTheme.labelSmall?.copyWith(
+                fontWeight: face.isLabeled ? FontWeight.w600 : FontWeight.w400,
+                color: face.isLabeled
+                    ? theme.colorScheme.onSurface
+                    : theme.colorScheme.onSurfaceVariant,
               ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      face.isLabeled ? face.personName : 'Unknown person',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      face.isLabeled ? 'Tap to change person' : 'Tap to assign',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (onOpenPerson != null)
-                    IconButton(
-                      visualDensity: VisualDensity.compact,
-                      tooltip: 'Open person',
-                      onPressed: onOpenPerson,
-                      icon: const Icon(Icons.open_in_new_rounded, size: 18),
-                    ),
-                  if (onRemove != null)
-                    IconButton(
-                      visualDensity: VisualDensity.compact,
-                      tooltip: 'Remove from photo',
-                      onPressed: onRemove,
-                      icon: Icon(
-                        Icons.person_remove_outlined,
-                        size: 18,
-                        color: colorScheme.error,
-                      ),
-                    ),
-                ],
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
   }
 
   String _initials(String name) {
-    final parts = name.trim().split(RegExp(r'\s+')).where((part) => part.isNotEmpty).toList();
+    final parts = name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .toList();
     if (parts.isEmpty) return '?';
     if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
     return '${parts.first.substring(0, 1)}${parts.last.substring(0, 1)}'
@@ -1152,20 +1184,22 @@ class _FaceAvatar extends StatelessWidget {
     required this.cropUrl,
     required this.headers,
     required this.initials,
+    this.size = 52,
   });
 
   final String? cropUrl;
   final Map<String, String> headers;
   final String initials;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return ClipRRect(
-      borderRadius: BorderRadius.circular(18),
+      borderRadius: BorderRadius.circular(size / 2),
       child: SizedBox(
-        width: 52,
-        height: 52,
+        width: size,
+        height: size,
         child: cropUrl == null
             ? ColoredBox(
                 color: theme.colorScheme.surfaceContainerHighest,
@@ -1238,12 +1272,7 @@ class _SectionNotice extends StatelessWidget {
         children: [
           Icon(icon, color: theme.colorScheme.primary),
           const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              message,
-              style: theme.textTheme.bodyMedium,
-            ),
-          ),
+          Expanded(child: Text(message, style: theme.textTheme.bodyMedium)),
           if (actionLabel != null && onPressed != null)
             TextButton(onPressed: onPressed, child: Text(actionLabel!)),
         ],
@@ -1279,8 +1308,8 @@ class _MetadataRow extends StatelessWidget {
                 Text(
                   label,
                   style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
                 ),
                 const SizedBox(height: 2),
                 Text(value, style: Theme.of(context).textTheme.bodyMedium),
