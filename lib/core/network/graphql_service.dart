@@ -9,6 +9,9 @@ import '../config/app_config.dart';
 import 'auth_token_store.dart';
 import 'http_client/http_client_factory.dart';
 
+/// Top-level function for [compute] — decodes JSON off the main isolate.
+dynamic _decodeJson(String source) => jsonDecode(source);
+
 class GraphqlService {
   GraphqlService(this._tokenStore, {this.onSessionExpired});
 
@@ -222,13 +225,21 @@ class GraphqlService {
     String document, {
     Map<String, dynamic> variables = const {},
   }) async {
+    final sw = Stopwatch()..start();
+    final queryName = RegExp(r'(?:query|mutation)\s+(\w+)')
+        .firstMatch(document)
+        ?.group(1) ?? 'unknown';
     try {
       await ensureFreshSession();
-      _log('graphql query ${AppConfig.graphqlHttpUrl}');
-      return await _postJsonGraphql(document, variables: variables);
+      debugPrint('[GQL_PERF] $queryName auth ${sw.elapsedMilliseconds}ms');
+      final result = await _postJsonGraphql(document, variables: variables);
+      debugPrint('[GQL_PERF] $queryName total ${sw.elapsedMilliseconds}ms');
+      return result;
     } on TimeoutException {
+      debugPrint('[GQL_PERF] $queryName TIMEOUT ${sw.elapsedMilliseconds}ms');
       throw Exception('Request timeout after ${requestTimeout.inSeconds}s.');
     } catch (error) {
+      debugPrint('[GQL_PERF] $queryName ERROR ${sw.elapsedMilliseconds}ms: $error');
       throw Exception(_humanizeError(error.toString()));
     }
   }
@@ -375,6 +386,7 @@ class GraphqlService {
     http.Client? client,
     bool isRetry = false,
   }) async {
+    final sw = Stopwatch()..start();
     final csrfToken = await _getCsrfToken();
     final response = await (client ?? _httpClient)
         .post(
@@ -389,8 +401,14 @@ class GraphqlService {
           body: jsonEncode({'query': document, 'variables': variables}),
         )
         .timeout(requestTimeout);
+    debugPrint('[GQL_PERF] network ${sw.elapsedMilliseconds}ms body=${response.body.length}B');
 
-    final decoded = jsonDecode(response.body);
+    // Decode large responses off the main isolate to avoid UI freezes.
+    final body = response.body;
+    final decoded = body.length > 50000
+        ? await compute(_decodeJson, body)
+        : jsonDecode(body);
+    debugPrint('[GQL_PERF] decode ${sw.elapsedMilliseconds}ms');
     if (decoded is! Map<String, dynamic>) {
       throw Exception('Invalid GraphQL response.');
     }

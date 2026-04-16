@@ -52,12 +52,16 @@ class StoryCacheStore {
     if (stories.isEmpty) return;
     final index = await _readIndex();
     final indexSet = index.toSet();
+    final existingDates = Set<String>.from(index);
 
     for (final story in stories) {
-      await _storage.write(
-        key: _storyKey(story.date),
-        value: jsonEncode(story.toJson()),
-      );
+      // Only write stories that are new (not already in index).
+      if (!existingDates.contains(story.date)) {
+        await _storage.write(
+          key: _storyKey(story.date),
+          value: jsonEncode(story.toJson()),
+        );
+      }
       indexSet.add(story.date);
     }
 
@@ -70,7 +74,10 @@ class StoryCacheStore {
       }
     }
 
-    await _writeIndex(retained);
+    if (retained.length != index.length ||
+        !Set<String>.from(retained).containsAll(index)) {
+      await _writeIndex(retained);
+    }
   }
 
   Future<DateTime?> readLastWarmAt() async {

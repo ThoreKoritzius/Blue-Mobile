@@ -46,10 +46,7 @@ class GraphqlDayRepository implements DayRepository {
     final story = await _storiesRepository.getCachedDay(day);
     List<RunModel> runs = const [];
     if (!_isFutureDay(day)) {
-      final cachedRuns = await _runsRepository.getCachedRuns();
-      runs = cachedRuns
-          .where((run) => run.startDateLocal.split('T').first == day)
-          .toList();
+      runs = await _runsRepository.getCachedRunsForDate(day);
     }
     if (story == null && runs.isEmpty) return null;
     return DayPayloadModel(

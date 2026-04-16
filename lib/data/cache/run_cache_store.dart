@@ -13,7 +13,12 @@ class RunCacheStore {
 
   final FlutterSecureStorage _storage;
 
+  /// In-memory cache to avoid repeated sequential platform-channel reads.
+  List<RunModel>? _memoryCache;
+
   Future<List<RunModel>> readAllRuns() async {
+    final cached = _memoryCache;
+    if (cached != null) return List.unmodifiable(cached);
     final ids = await _readIndex();
     final runs = <RunModel>[];
     for (final id in ids) {
@@ -23,22 +28,43 @@ class RunCacheStore {
       if (json is! Map<String, dynamic>) continue;
       runs.add(RunModel.fromJson(json));
     }
-    return runs;
+    _memoryCache = runs;
+    return List.unmodifiable(runs);
   }
 
   Future<List<RunModel>> readRunsForDate(String day) async {
-    final runs = await readAllRuns();
-    return runs.where((run) => _runDay(run) == day).toList();
+    // Fast path: use memory cache if available to avoid storage I/O.
+    final cached = _memoryCache;
+    if (cached != null) {
+      return cached.where((run) => _runDay(run) == day).toList();
+    }
+    // Slow path fallback — read index only and filter by matching keys.
+    final ids = await _readIndex();
+    final runs = <RunModel>[];
+    for (final id in ids) {
+      final raw = await _storage.read(key: _runKey(id));
+      if (raw == null || raw.isEmpty) continue;
+      final json = jsonDecode(raw);
+      if (json is! Map<String, dynamic>) continue;
+      final run = RunModel.fromJson(json);
+      if (_runDay(run) == day) runs.add(run);
+    }
+    return runs;
   }
 
   Future<void> upsertRuns(List<RunModel> runs) async {
     if (runs.isEmpty) return;
+    _memoryCache = null;
+    final previousIndex = Set<String>.from(await _readIndex());
     final merged = <String, RunModel>{};
     for (final item in await readAllRuns()) {
       merged[item.id] = item;
     }
+    // Track which IDs are actually new or changed.
+    final dirtyIds = <String>{};
     for (final item in runs) {
       if (item.id.isEmpty) continue;
+      if (!merged.containsKey(item.id)) dirtyIds.add(item.id);
       merged[item.id] = item;
     }
 
@@ -55,20 +81,26 @@ class RunCacheStore {
       }
       retainedDays.add(day);
       retainedIds.add(run.id);
-      await _storage.write(
-        key: _runKey(run.id),
-        value: jsonEncode(run.toJson()),
-      );
+      // Only write runs that are new or weren't previously cached.
+      if (dirtyIds.contains(run.id) || !previousIndex.contains(run.id)) {
+        await _storage.write(
+          key: _runKey(run.id),
+          value: jsonEncode(run.toJson()),
+        );
+      }
     }
 
-    final previousIndex = await _readIndex();
     for (final id in previousIndex) {
       if (!retainedIds.contains(id)) {
         await _storage.delete(key: _runKey(id));
       }
     }
 
-    await _writeIndex(retainedIds);
+    final retainedSet = Set<String>.from(retainedIds);
+    if (!retainedSet.containsAll(previousIndex) ||
+        !previousIndex.containsAll(retainedSet)) {
+      await _writeIndex(retainedIds);
+    }
   }
 
   Future<DateTime?> readLastWarmAt() async {
@@ -85,6 +117,7 @@ class RunCacheStore {
   }
 
   Future<void> clear() async {
+    _memoryCache = null;
     final ids = await _readIndex();
     for (final id in ids) {
       await _storage.delete(key: _runKey(id));

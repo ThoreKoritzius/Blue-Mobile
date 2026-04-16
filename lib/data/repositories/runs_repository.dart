@@ -7,6 +7,7 @@ import '../models/run_model.dart';
 abstract class RunsRepository {
   Future<void> cacheRuns(List<RunModel> runs);
   Future<List<RunModel>> getCachedRuns({int limit = 2000});
+  Future<List<RunModel>> getCachedRunsForDate(String day);
   Future<List<RunModel>> listRuns({int first = 2000});
   Future<List<RunModel>> runsForDate(String date, {int first = 50});
   Future<List<RunModel>> monthlyRuns({int first = 2000});
@@ -33,6 +34,11 @@ class GraphqlRunsRepository implements RunsRepository {
   Future<List<RunModel>> getCachedRuns({int limit = 2000}) async {
     final runs = await _cacheStore.readAllRuns();
     return runs.take(limit).toList();
+  }
+
+  @override
+  Future<List<RunModel>> getCachedRunsForDate(String day) {
+    return _cacheStore.readRunsForDate(day);
   }
 
   @override

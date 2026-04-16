@@ -12,6 +12,9 @@ class PersonCacheStore {
 
   final FlutterSecureStorage _storage;
 
+  /// In-memory cache to avoid repeated sequential platform-channel reads.
+  List<PersonModel>? _memoryCache;
+
   Future<PersonModel?> readPerson(int id) async {
     final raw = await _storage.read(key: _personKey(id));
     if (raw == null || raw.isEmpty) return null;
@@ -21,6 +24,8 @@ class PersonCacheStore {
   }
 
   Future<List<PersonModel>> readAllPersons() async {
+    final cached = _memoryCache;
+    if (cached != null) return List.unmodifiable(cached);
     final ids = await _readIndex();
     final people = <PersonModel>[];
     for (final id in ids) {
@@ -29,7 +34,8 @@ class PersonCacheStore {
         people.add(person);
       }
     }
-    return people;
+    _memoryCache = people;
+    return List.unmodifiable(people);
   }
 
   Future<List<PersonModel>> readPopular({int limit = 12}) async {
@@ -72,6 +78,7 @@ class PersonCacheStore {
 
   Future<void> upsertPeople(List<PersonModel> people) async {
     if (people.isEmpty) return;
+    _memoryCache = null;
     final index = await _readIndex();
     final knownIds = {...index};
     for (final person in people) {
@@ -95,6 +102,7 @@ class PersonCacheStore {
   }
 
   Future<void> clear() async {
+    _memoryCache = null;
     final ids = await _readIndex();
     for (final id in ids) {
       await _storage.delete(key: _personKey(id));

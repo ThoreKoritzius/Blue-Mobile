@@ -214,6 +214,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
   }
 
   Future<void> _loadDate(DateTime date) async {
+    final sw = Stopwatch()..start();
     final normalized = DateUtils.dateOnly(date);
     final day = formatYmd(normalized);
     final isFutureDay = _isFutureDate(normalized);
@@ -227,9 +228,11 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     ref.read(dayDraftControllerProvider.notifier).setCurrentDay(day);
     unawaited(_loadTimeline(day));
     unawaited(_loadCalendarEvents(day));
+    debugPrint('[DAY_PERF] $day setup ${sw.elapsedMilliseconds}ms');
 
     final cached = _cacheGet(day);
     if (cached != null) {
+      debugPrint('[DAY_PERF] $day cache hit ${sw.elapsedMilliseconds}ms');
       _applyVisiblePayload(
         cached,
         detailsLoaded: cached.detailsLoaded,
@@ -247,12 +250,15 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
         prefetchAdjacent: !_isRapidNavigation(),
       );
       unawaited(_refreshDate(normalized, requestId));
+      debugPrint('[DAY_PERF] $day cached path done ${sw.elapsedMilliseconds}ms');
       return;
     }
 
+    debugPrint('[DAY_PERF] $day cache miss, reading persisted ${sw.elapsedMilliseconds}ms');
     final persisted = await ref
         .read(dayRepositoryProvider)
         .getCachedDayCorePayload(day);
+    debugPrint('[DAY_PERF] $day getCachedDayCorePayload done ${sw.elapsedMilliseconds}ms');
     if (persisted != null) {
       _cachePut(day, persisted);
       if (_isActiveRequest(requestId, day)) {
@@ -264,9 +270,11 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
         );
       }
       unawaited(_refreshDate(normalized, requestId));
+      debugPrint('[DAY_PERF] $day persisted path done ${sw.elapsedMilliseconds}ms');
       return;
     }
 
+    debugPrint('[DAY_PERF] $day no cache, fetching from network ${sw.elapsedMilliseconds}ms');
     setState(() {
       _loading = _current == null;
       _transitioningDay = _current != null;
@@ -274,18 +282,22 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
       _status = '';
     });
     await _refreshDate(normalized, requestId);
+    debugPrint('[DAY_PERF] $day network path done ${sw.elapsedMilliseconds}ms');
   }
 
   Future<void> _refreshDate(DateTime date, int requestId) async {
+    final sw = Stopwatch()..start();
     final day = formatYmd(date);
     final isFutureDay = _isFutureDate(date);
 
     try {
       final cachedEvents =
           _dayCache[day]?.events ?? const <CalendarEventModel>[];
+      debugPrint('[DAY_PERF] _refreshDate $day calling getDayCorePayload');
       final basePayload = await ref
           .read(dayRepositoryProvider)
           .getDayCorePayload(day);
+      debugPrint('[DAY_PERF] _refreshDate $day getDayCorePayload done ${sw.elapsedMilliseconds}ms');
       final normalizedPayload = isFutureDay
           ? basePayload.copyWith(runs: const <RunModel>[], detailsLoaded: true)
           : basePayload;
@@ -351,7 +363,9 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
 
   Future<void> _loadTimeline(String day) async {
     try {
+      final sw = Stopwatch()..start();
       final data = await ref.read(mapRepositoryProvider).loadTimelineDay(day);
+      debugPrint('[DAY_PERF] _loadTimeline $day done ${sw.elapsedMilliseconds}ms walks=${data.walkPoints.length} imgs=${data.imageLocations.length}');
       if (!mounted || _activeDayKey != day) return;
       setState(() => _timelineDay = data);
     } catch (_) {}
@@ -581,9 +595,13 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
   }
 
   Future<void> _handleRequestedDateChange(DateTime next) async {
+    final sw = Stopwatch()..start();
     final normalized = DateUtils.dateOnly(next);
     if (await _prepareForDayNavigation(normalized)) {
+      debugPrint('[DAY_PERF] _handleRequestedDateChange prepare done ${sw.elapsedMilliseconds}ms');
       _scheduleLoadForDate(normalized);
+    } else {
+      debugPrint('[DAY_PERF] _handleRequestedDateChange blocked ${sw.elapsedMilliseconds}ms');
     }
   }
 
@@ -1328,15 +1346,22 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     }
 
     try {
+      final sw = Stopwatch()..start();
       final provider = await loadProtectedImageProvider(
         normalized,
         headers: _authHeaders(),
       );
+      debugPrint('[DAY_PERF] palette $day provider resolved ${sw.elapsedMilliseconds}ms');
+      // Yield a frame so the UI paints before the synchronous palette work
+      // (image decode + color quantization) runs on the main isolate.
+      await Future<void>.delayed(Duration.zero);
+      if (!mounted || !_isActiveRequest(requestId, day)) return;
       final palette = await PaletteGenerator.fromImageProvider(
         provider,
-        size: const Size(96, 96),
-        maximumColorCount: 12,
+        size: const Size(64, 64),
+        maximumColorCount: 8,
       );
+      debugPrint('[DAY_PERF] palette $day generated ${sw.elapsedMilliseconds}ms');
       if (!mounted || !_isActiveRequest(requestId, day)) return;
       if (_paletteSourceUrl != '$day|$normalized') return;
       final candidate =
@@ -2110,12 +2135,11 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     if (allPoints.isEmpty) return const SizedBox.shrink();
 
     final mapViewKey = ValueKey<String>(
-      [
-        _activeDayKey ?? '',
-        '${allPoints.length}',
-        for (final point in allPoints)
-          '${point.latitude.toStringAsFixed(5)},${point.longitude.toStringAsFixed(5)}',
-      ].join('|'),
+      '${_activeDayKey ?? ''}|${allPoints.length}|'
+      '${allPoints.first.latitude.toStringAsFixed(4)},'
+      '${allPoints.first.longitude.toStringAsFixed(4)}|'
+      '${allPoints.last.latitude.toStringAsFixed(4)},'
+      '${allPoints.last.longitude.toStringAsFixed(4)}',
     );
 
     final CameraFit cameraFit;
@@ -4445,6 +4469,7 @@ class _ProgressiveHeroImage extends StatefulWidget {
 class _ProgressiveHeroImageState extends State<_ProgressiveHeroImage> {
   bool _fullReady = false;
   String? _fullReadyUrl;
+  ImageProvider<Object>? _fullProvider;
 
   @override
   void initState() {
@@ -4470,6 +4495,7 @@ class _ProgressiveHeroImageState extends State<_ProgressiveHeroImage> {
       setState(() {
         _fullReady = false;
         _fullReadyUrl = asset?.fullUrl;
+        _fullProvider = null;
       });
       return;
     }
@@ -4477,6 +4503,7 @@ class _ProgressiveHeroImageState extends State<_ProgressiveHeroImage> {
     setState(() {
       _fullReady = false;
       _fullReadyUrl = asset.fullUrl;
+      _fullProvider = null;
     });
 
     try {
@@ -4488,6 +4515,7 @@ class _ProgressiveHeroImageState extends State<_ProgressiveHeroImage> {
       if (!mounted || _fullReadyUrl != asset.fullUrl) return;
       setState(() {
         _fullReady = true;
+        _fullProvider = provider;
       });
     } catch (_) {}
   }
@@ -4568,23 +4596,14 @@ class _ProgressiveHeroImageState extends State<_ProgressiveHeroImage> {
           AnimatedOpacity(
             duration: const Duration(milliseconds: 360),
             curve: Curves.easeOutCubic,
-            opacity: _fullReady ? 1 : 0,
-            child: FutureBuilder<ImageProvider<Object>>(
-              future: loadProtectedImageProvider(
-                asset.fullUrl,
-                headers: widget.headers,
-              ),
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) {
-                  return const SizedBox.shrink();
-                }
-                return Image(
-                  image: snapshot.data!,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                );
-              },
-            ),
+            opacity: _fullReady && _fullProvider != null ? 1 : 0,
+            child: _fullProvider != null
+                ? Image(
+                    image: _fullProvider!,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                  )
+                : const SizedBox.shrink(),
           ),
       ],
     );
