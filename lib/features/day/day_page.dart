@@ -2741,11 +2741,185 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     );
   }
 
+  static IconData _activityIcon(String type) {
+    switch (type) {
+      case 'Run':
+      case 'VirtualRun':
+      case 'TrailRun':
+        return Icons.directions_run_rounded;
+      case 'Ride':
+      case 'VirtualRide':
+      case 'GravelRide':
+      case 'MountainBikeRide':
+      case 'EBikeRide':
+      case 'EMountainBikeRide':
+      case 'Velomobile':
+      case 'Handcycle':
+        return Icons.directions_bike_rounded;
+      case 'Swim':
+        return Icons.pool_rounded;
+      case 'Walk':
+        return Icons.directions_walk_rounded;
+      case 'Hike':
+        return Icons.hiking_rounded;
+      case 'AlpineSki':
+      case 'BackcountrySki':
+      case 'NordicSki':
+      case 'Snowboard':
+        return Icons.downhill_skiing_rounded;
+      case 'IceSkate':
+      case 'InlineSkate':
+      case 'RollerSki':
+        return Icons.ice_skating_rounded;
+      case 'WeightTraining':
+      case 'Crossfit':
+      case 'Workout':
+      case 'Elliptical':
+      case 'StairStepper':
+        return Icons.fitness_center_rounded;
+      case 'Yoga':
+      case 'Pilates':
+        return Icons.self_improvement_rounded;
+      case 'Rowing':
+      case 'Kayaking':
+      case 'Canoeing':
+      case 'StandUpPaddling':
+      case 'Surfing':
+      case 'Kitesurf':
+      case 'Windsurf':
+      case 'Sail':
+        return Icons.rowing_rounded;
+      case 'Golf':
+        return Icons.golf_course_rounded;
+      case 'Skateboard':
+        return Icons.skateboarding_rounded;
+      case 'RockClimbing':
+      case 'Badminton':
+      case 'Tennis':
+      case 'Pickleball':
+      case 'Squash':
+      case 'TableTennis':
+      case 'Soccer':
+      case 'Football':
+      case 'Rugby':
+      case 'Basketball':
+      case 'Racquetball':
+      case 'Handball':
+      case 'HighIntensityIntervalTraining':
+        return Icons.sports_rounded;
+      case 'Snowshoe':
+        return Icons.ac_unit_rounded;
+      case 'Wheelchair':
+        return Icons.accessible_rounded;
+      default:
+        return Icons.directions_run_rounded;
+    }
+  }
+
+  static Color _activityColor(String type) {
+    switch (type) {
+      case 'Run':
+      case 'VirtualRun':
+      case 'TrailRun':
+        return const Color(0xFFE8733A);
+      case 'Ride':
+      case 'VirtualRide':
+      case 'GravelRide':
+      case 'MountainBikeRide':
+      case 'EBikeRide':
+      case 'EMountainBikeRide':
+      case 'Velomobile':
+      case 'Handcycle':
+        return const Color(0xFF3A8FE8);
+      case 'Swim':
+        return const Color(0xFF2CB5C9);
+      case 'Walk':
+      case 'Hike':
+        return const Color(0xFF5DAE5D);
+      case 'AlpineSki':
+      case 'BackcountrySki':
+      case 'NordicSki':
+      case 'Snowboard':
+      case 'Snowshoe':
+      case 'IceSkate':
+        return const Color(0xFF6BAFCF);
+      case 'WeightTraining':
+      case 'Crossfit':
+      case 'Workout':
+      case 'Elliptical':
+      case 'StairStepper':
+      case 'HighIntensityIntervalTraining':
+        return const Color(0xFFAA5DC9);
+      case 'Yoga':
+      case 'Pilates':
+        return const Color(0xFFC97BAA);
+      case 'Rowing':
+      case 'Kayaking':
+      case 'Canoeing':
+      case 'StandUpPaddling':
+      case 'Surfing':
+      case 'Kitesurf':
+      case 'Windsurf':
+      case 'Sail':
+        return const Color(0xFF3A7FD5);
+      default:
+        return const Color(0xFFE8733A);
+    }
+  }
+
+  static bool _activityHasDistance(String type) {
+    const noDistance = {
+      'WeightTraining', 'Crossfit', 'Workout', 'Elliptical', 'StairStepper',
+      'HighIntensityIntervalTraining', 'Yoga', 'Pilates', 'RockClimbing',
+      'Badminton', 'Tennis', 'Pickleball', 'Squash', 'TableTennis',
+      'Soccer', 'Football', 'Rugby', 'Basketball', 'Racquetball', 'Handball',
+    };
+    return !noDistance.contains(type);
+  }
+
+  static String _formatStartTime(String startTime) {
+    // Strip seconds: "12:30:45" → "12:30"
+    final parts = startTime.split(':');
+    if (parts.length >= 2) return '${parts[0]}:${parts[1]}';
+    return startTime;
+  }
+
+  static String _activityFallbackLabel(String type) {
+    switch (type) {
+      case 'Run': return 'Run';
+      case 'VirtualRun': return 'Virtual Run';
+      case 'TrailRun': return 'Trail Run';
+      case 'Ride': return 'Ride';
+      case 'VirtualRide': return 'Virtual Ride';
+      case 'GravelRide': return 'Gravel Ride';
+      case 'MountainBikeRide': return 'MTB Ride';
+      case 'EBikeRide': return 'E-Bike Ride';
+      case 'Swim': return 'Swim';
+      case 'Walk': return 'Walk';
+      case 'Hike': return 'Hike';
+      case 'AlpineSki': return 'Ski';
+      case 'BackcountrySki': return 'Backcountry Ski';
+      case 'NordicSki': return 'Nordic Ski';
+      case 'Snowboard': return 'Snowboard';
+      case 'WeightTraining': return 'Weight Training';
+      case 'Crossfit': return 'Crossfit';
+      case 'Workout': return 'Workout';
+      case 'Yoga': return 'Yoga';
+      case 'Rowing': return 'Row';
+      case 'Kayaking': return 'Kayak';
+      case 'Golf': return 'Golf';
+      case 'Skateboard': return 'Skateboard';
+      case 'RockClimbing': return 'Climb';
+      case 'Snowshoe': return 'Snowshoe';
+      default: return 'Activity';
+    }
+  }
+
   Widget _buildRunRow(BuildContext context, RunModel run) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final pace = run.averageSpeed > 0 ? _formatRunPace(run.averageSpeed) : null;
-    final runColor = const Color(0xFFE8733A);
+    final runColor = _activityColor(run.type);
 
     return InkWell(
       borderRadius: BorderRadius.circular(14),
@@ -2766,7 +2940,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                 borderRadius: BorderRadius.circular(11),
               ),
               child: Icon(
-                Icons.directions_run_rounded,
+                _activityIcon(run.type),
                 size: 18,
                 color: runColor,
               ),
@@ -2777,7 +2951,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    run.name.isEmpty ? 'Run' : run.name,
+                    run.name.isEmpty ? _activityFallbackLabel(run.type) : run.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.titleSmall?.copyWith(
@@ -2787,9 +2961,10 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                   const SizedBox(height: 2),
                   Text(
                     [
-                      '${run.distanceKm.toStringAsFixed(1)} km',
+                      if (_activityHasDistance(run.type))
+                        '${run.distanceKm.toStringAsFixed(1)} km',
                       if (run.movingMinutes > 0) '${run.movingMinutes} min',
-                      if (pace != null) pace,
+                      if (pace != null && _activityHasDistance(run.type)) pace,
                     ].join(' · '),
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: colorScheme.onSurfaceVariant,
@@ -2800,7 +2975,7 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
             ),
             if (run.startTime.isNotEmpty)
               Text(
-                run.startTime,
+                _formatStartTime(run.startTime),
                 style: theme.textTheme.labelMedium?.copyWith(
                   color: colorScheme.onSurfaceVariant,
                 ),
@@ -3408,12 +3583,12 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
                     color: colorScheme.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: Icon(Icons.directions_run, color: colorScheme.primary),
+                  child: Icon(_activityIcon(run.type), color: colorScheme.primary),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    run.name.isEmpty ? 'Run ${run.id}' : run.name,
+                    run.name.isEmpty ? _activityFallbackLabel(run.type) : run.name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
@@ -3425,7 +3600,9 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
             ),
             const Spacer(),
             Text(
-              '${run.distanceKm.toStringAsFixed(1)} km',
+              _activityHasDistance(run.type)
+                  ? '${run.distanceKm.toStringAsFixed(1)} km'
+                  : '${run.movingMinutes} min',
               style: Theme.of(
                 context,
               ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
@@ -3433,9 +3610,9 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
             const SizedBox(height: 4),
             Text(
               [
-                if (run.startTime.isNotEmpty) run.startTime,
-                if (run.movingMinutes > 0) '${run.movingMinutes} min',
-                if (pace != null) pace,
+                if (run.startTime.isNotEmpty) _formatStartTime(run.startTime),
+                if (_activityHasDistance(run.type) && run.movingMinutes > 0) '${run.movingMinutes} min',
+                if (pace != null && _activityHasDistance(run.type)) pace,
               ].join(' · '),
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: colorScheme.onSurfaceVariant,

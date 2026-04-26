@@ -226,77 +226,70 @@ class DayWeatherSection extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(14),
         onTap: onTap,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(22),
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    colorScheme.primaryContainer.withValues(alpha: 0.88),
-                    colorScheme.secondaryContainer.withValues(alpha: 0.78),
-                  ],
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                colorScheme.primaryContainer.withValues(alpha: 0.88),
+                colorScheme.secondaryContainer.withValues(alpha: 0.78),
+              ],
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: colorScheme.surface.withValues(alpha: 0.28),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: Icon(
+                  presentation.icon,
+                  color: presentation.iconColor,
+                  size: 18,
                 ),
               ),
-              child: Row(
+              const SizedBox(width: 12),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(
-                    width: 46,
-                    height: 46,
-                    decoration: BoxDecoration(
-                      color: colorScheme.surface.withValues(alpha: 0.28),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Icon(
-                      presentation.icon,
-                      color: presentation.iconColor,
-                      size: 24,
+                  Text(
+                    presentation.label,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: colorScheme.onPrimaryContainer,
                     ),
                   ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          presentation.label,
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w800,
-                            color: colorScheme.onPrimaryContainer,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          range,
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: colorScheme.onPrimaryContainer.withValues(
-                              alpha: 0.86,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (onTap != null) ...[
-                    const SizedBox(width: 8),
-                    Icon(
-                      Icons.chevron_right_rounded,
+                  Text(
+                    range,
+                    style: theme.textTheme.labelSmall?.copyWith(
                       color: colorScheme.onPrimaryContainer.withValues(
-                        alpha: 0.82,
+                        alpha: 0.86,
                       ),
                     ),
-                  ],
+                  ),
                 ],
               ),
-            ),
-          ],
+              const Spacer(),
+              if (onTap != null)
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 18,
+                  color: colorScheme.onPrimaryContainer.withValues(
+                    alpha: 0.82,
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );

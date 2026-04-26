@@ -2,6 +2,7 @@ class RunModel {
   const RunModel({
     required this.id,
     required this.name,
+    required this.type,
     required this.startDateLocal,
     required this.distance,
     required this.summaryPolyline,
@@ -14,6 +15,7 @@ class RunModel {
 
   final String id;
   final String name;
+  final String type;
   final String startDateLocal;
   final double distance;
   final String summaryPolyline;
@@ -30,6 +32,7 @@ class RunModel {
     return {
       'id': id,
       'name': name,
+      'type': type,
       'startDateLocal': startDateLocal,
       'distance': distance,
       'summaryPolyline': summaryPolyline,
@@ -45,9 +48,11 @@ class RunModel {
     final rawName = (json['name'] ?? '').toString();
     final rawId = (json['id'] ?? '').toString();
     final source = (json['source'] ?? '').toString();
+    final rawType = (json['type'] ?? '').toString();
     return RunModel(
       id: rawId,
       name: rawName,
+      type: rawType,
       startDateLocal: (json['startDateLocal'] ?? json['start_date_local'] ?? '')
           .toString(),
       distance: (json['distance'] as num?)?.toDouble() ?? 0,
