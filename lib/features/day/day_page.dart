@@ -3626,17 +3626,38 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
 
   Future<void> _openRunDetail(RunModel run) async {
     final repo = ref.read(runsRepositoryProvider);
-    final bundle = await repo.loadDetailBundle(run.id);
-    if (!mounted) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => RunDetailPage(
-          run: run,
-          summary: bundle.summary,
-          detail: bundle.detail,
-        ),
-      ),
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
     );
+    try {
+      final bundle = await repo.loadDetailBundle(run.id);
+      if (!mounted) return;
+      Navigator.of(context).pop(); // dismiss loading
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => RunDetailPage(
+            run: run,
+            summary: bundle.summary,
+            detail: bundle.detail,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop(); // dismiss loading
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Could not load activity details'),
+          behavior: SnackBarBehavior.floating,
+          action: SnackBarAction(
+            label: 'Retry',
+            onPressed: () => _openRunDetail(run),
+          ),
+        ),
+      );
+    }
   }
 
   Widget _buildEmptyState(
@@ -3796,11 +3817,11 @@ class _DayPageState extends ConsumerState<DayPage> with WidgetsBindingObserver {
     );
   }
 
-  String? _formatRunPace(double averageSpeedMetersPerSecond) {
-    if (averageSpeedMetersPerSecond <= 0) return null;
-    final secondsPerKm = 1000 / averageSpeedMetersPerSecond;
-    final minutes = secondsPerKm ~/ 60;
-    final seconds = (secondsPerKm.round() % 60).toString().padLeft(2, '0');
+  String? _formatRunPace(double averageSpeedKmh) {
+    if (averageSpeedKmh <= 0) return null;
+    final minutesPerKm = 60.0 / averageSpeedKmh;
+    final minutes = minutesPerKm.floor();
+    final seconds = ((minutesPerKm - minutes) * 60).round().toString().padLeft(2, '0');
     return '$minutes:$seconds /km';
   }
 
