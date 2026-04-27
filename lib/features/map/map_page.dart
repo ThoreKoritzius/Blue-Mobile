@@ -90,6 +90,7 @@ class _MapPageState extends ConsumerState<MapPage>
 
   Timer? _viewportDebounceTimer;
 
+  List<_RunOverlay> _allRuns = const [];
   List<_RunOverlay> _runs = const [];
   List<LatLng> _timelineOverviewPoints = const [];
   bool _runsLoading = true;
@@ -131,6 +132,11 @@ class _MapPageState extends ConsumerState<MapPage>
   AnimationController? _daySwitchMapAnimation;
   final Map<String, GlobalKey> _visitTimelineKeys = <String, GlobalKey>{};
   final Map<String, GlobalKey> _runTimelineKeys = <String, GlobalKey>{};
+
+  // Year range filter
+  int _dataYearMin = DateTime.now().year;
+  int _dataYearMax = DateTime.now().year;
+  RangeValues? _yearRange; // null = all years (default)
 
   @override
   void initState() {
@@ -217,6 +223,49 @@ class _MapPageState extends ConsumerState<MapPage>
     _scheduleViewportRefresh();
   }
 
+  List<_RunOverlay> _filterRunsByYear(List<_RunOverlay> overlays) {
+    final range = _yearRange;
+    if (range == null) return overlays;
+    final fromY = range.start.round();
+    final toY = range.end.round();
+    return overlays.where((o) {
+      final date = o.run.startDateLocal;
+      if (date.length < 4) return true;
+      final y = int.tryParse(date.substring(0, 4));
+      return y == null || (y >= fromY && y <= toY);
+    }).toList();
+  }
+
+  String? _yearRangeDateFrom() {
+    final range = _yearRange;
+    if (range == null) return null;
+    return '${range.start.round()}-01-01';
+  }
+
+  String? _yearRangeDateTo() {
+    final range = _yearRange;
+    if (range == null) return null;
+    return '${range.end.round()}-12-31';
+  }
+
+  void _onYearRangeChanged(RangeValues values) {
+    setState(() {
+      // If full range selected, treat as "all"
+      if (values.start.round() <= _dataYearMin && values.end.round() >= _dataYearMax) {
+        _yearRange = null;
+      } else {
+        _yearRange = values;
+      }
+      _runs = _filterRunsByYear(_allRuns);
+      // Reset so timeline reloads with new date range
+      if (_showTimelineHistory) _timelineOverviewLoadedOnce = false;
+    });
+    _scheduleViewportRefresh();
+    if (_showTimelineHistory) {
+      unawaited(_ensureTimelineOverviewLoaded(forceRefresh: true));
+    }
+  }
+
   Future<void> _loadRuns(MapRepository repo) async {
     try {
       final runs = await repo.loadRuns();
@@ -240,9 +289,25 @@ class _MapPageState extends ConsumerState<MapPage>
           // Skip invalid polylines without failing the entire page.
         }
       }
+      // Compute year range from run dates
+      int minY = DateTime.now().year;
+      int maxY = minY;
+      for (final o in overlays) {
+        final date = o.run.startDateLocal;
+        if (date.length >= 4) {
+          final y = int.tryParse(date.substring(0, 4));
+          if (y != null) {
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+          }
+        }
+      }
       if (!mounted) return;
       setState(() {
-        _runs = overlays;
+        _allRuns = overlays;
+        _dataYearMin = minY;
+        _dataYearMax = maxY;
+        _runs = _filterRunsByYear(overlays);
         _runsLoading = false;
       });
       _fitOverviewBoundsIfNeeded();
@@ -344,6 +409,8 @@ class _MapPageState extends ConsumerState<MapPage>
             bounds: bounds,
             zoom: _currentZoom,
             first: _mapMarkerPageSize,
+            dateFrom: _yearRangeDateFrom(),
+            dateTo: _yearRangeDateTo(),
           );
       if (!mounted || generation != _imageSearchGeneration) return;
 
@@ -484,8 +551,8 @@ class _MapPageState extends ConsumerState<MapPage>
     });
   }
 
-  Future<void> _ensureTimelineOverviewLoaded() async {
-    if (_timelineOverviewLoadedOnce || _timelineOverviewLoading) return;
+  Future<void> _ensureTimelineOverviewLoaded({bool forceRefresh = false}) async {
+    if (!forceRefresh && (_timelineOverviewLoadedOnce || _timelineOverviewLoading)) return;
     setState(() {
       _timelineOverviewLoading = true;
       _timelineOverviewError = '';
@@ -493,7 +560,11 @@ class _MapPageState extends ConsumerState<MapPage>
     try {
       final points = await ref
           .read(mapRepositoryProvider)
-          .loadTimelineOverview();
+          .loadTimelineOverview(
+            forceRefresh: forceRefresh,
+            dateFrom: _yearRangeDateFrom() ?? '1900-01-01',
+            dateTo: _yearRangeDateTo() ?? '2100-12-31',
+          );
       if (!mounted) return;
       setState(() {
         _timelineOverviewPoints = points;
@@ -715,28 +786,87 @@ class _MapPageState extends ConsumerState<MapPage>
             child: const Icon(Icons.tune),
           ),
         ),
-        // Day-view toggle at bottom-left
+        // Bottom bar: year range slider + day-view button
         if (!_runsLoading)
           Positioned(
-            right: 16,
-            bottom: 16,
-            child: FloatingActionButton.small(
-              heroTag: 'map_day_toggle',
-              tooltip: 'Day view',
-              onPressed: _runs.isNotEmpty
-                  ? () {
-                      final today = DateUtils.dateOnly(DateTime.now());
-                      final todayStr =
-                          '${today.year.toString().padLeft(4, '0')}-'
-                          '${today.month.toString().padLeft(2, '0')}-'
-                          '${today.day.toString().padLeft(2, '0')}';
-                      _enterDayView(todayStr);
-                    }
-                  : null,
-              child: const Icon(Icons.calendar_today),
-            ),
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: _buildBottomBar(context),
           ),
       ],
+    );
+  }
+
+  Widget _buildBottomBar(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final hasRange = _dataYearMin < _dataYearMax;
+    final minY = _dataYearMin.toDouble();
+    final maxY = _dataYearMax.toDouble();
+    final current = _yearRange ?? RangeValues(minY, maxY);
+    final startLabel = current.start.round().toString();
+    final endLabel = current.end.round().toString();
+    final canEnterDayView = _runs.isNotEmpty;
+
+    void enterDayView() {
+      final today = DateUtils.dateOnly(DateTime.now());
+      final todayStr =
+          '${today.year.toString().padLeft(4, '0')}-'
+          '${today.month.toString().padLeft(2, '0')}-'
+          '${today.day.toString().padLeft(2, '0')}';
+      _enterDayView(todayStr);
+    }
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
+      decoration: BoxDecoration(
+        color: colorScheme.surface.withValues(alpha: 0.92),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      child: Row(
+        children: [
+          if (hasRange) ...[
+            const SizedBox(width: 4),
+            Text(
+              startLabel,
+              style: theme.textTheme.labelMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: colorScheme.onSurface,
+              ),
+            ),
+            Expanded(
+              child: RangeSlider(
+                values: current,
+                min: minY,
+                max: maxY,
+                divisions: (maxY - minY).round(),
+                onChanged: _onYearRangeChanged,
+              ),
+            ),
+            Text(
+              endLabel,
+              style: theme.textTheme.labelMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+                color: colorScheme.onSurface,
+              ),
+            ),
+            const SizedBox(width: 8),
+          ] else
+            const Spacer(),
+          // Day-view button — icon only
+          IconButton(
+            onPressed: canEnterDayView ? enterDayView : null,
+            tooltip: 'Day view',
+            icon: Icon(
+              Icons.calendar_today_rounded,
+              color: canEnterDayView
+                  ? colorScheme.primary
+                  : colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
