@@ -851,20 +851,36 @@ class _MapPageState extends ConsumerState<MapPage>
                 color: colorScheme.onSurface,
               ),
             ),
-            const SizedBox(width: 8),
           ] else
             const Spacer(),
-          // Day-view button — icon only
-          IconButton(
-            onPressed: canEnterDayView ? enterDayView : null,
-            tooltip: 'Day view',
-            icon: Icon(
-              Icons.calendar_today_rounded,
+          const SizedBox(width: 8),
+          VerticalDivider(width: 1, thickness: 1, indent: 8, endIndent: 8, color: colorScheme.outlineVariant),
+          const SizedBox(width: 10),
+          // Day-view pill button
+          Tooltip(
+            message: 'Day view',
+            child: Material(
               color: canEnterDayView
-                  ? colorScheme.primary
-                  : colorScheme.onSurfaceVariant,
+                  ? colorScheme.primaryContainer
+                  : colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(12),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: canEnterDayView ? enterDayView : null,
+                child: Padding(
+                  padding: const EdgeInsets.all(10),
+                  child: Icon(
+                    Icons.calendar_view_day_rounded,
+                    size: 20,
+                    color: canEnterDayView
+                        ? colorScheme.onPrimaryContainer
+                        : colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
             ),
           ),
+          const SizedBox(width: 2),
         ],
       ),
     );
