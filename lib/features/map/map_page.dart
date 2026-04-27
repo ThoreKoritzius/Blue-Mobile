@@ -11,6 +11,7 @@ import 'package:google_polyline_algorithm/google_polyline_algorithm.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../core/config/app_config.dart';
+import '../../core/utils/activity_type.dart';
 import '../../core/widgets/calendar_event_detail_sheet.dart';
 import '../../core/widgets/fullscreen_image_viewer.dart';
 import '../../core/widgets/protected_network_image.dart';
@@ -652,7 +653,7 @@ class _MapPageState extends ConsumerState<MapPage>
                   Polyline(
                     points: _timelineOverviewPoints,
                     strokeWidth: _timelineStrokeWidth(),
-                    color: const Color(0xFF4A90D9).withValues(alpha: 0.55),
+                    color: const Color(0xFF2979FF).withValues(alpha: 0.72),
                   ),
                 ],
               ),
@@ -681,16 +682,13 @@ class _MapPageState extends ConsumerState<MapPage>
                           onTap: () => _showRunSheet(run),
                           child: DecoratedBox(
                             decoration: BoxDecoration(
-                              color:
-                                  (_differentRouteColors
-                                          ? run.color
-                                          : routeColor)
-                                      .withValues(alpha: 0.88),
+                              color: activityColor(run.run.type)
+                                  .withValues(alpha: 0.88),
                               shape: BoxShape.circle,
                               border: Border.all(color: Colors.white),
                             ),
-                            child: const Icon(
-                              Icons.directions_run,
+                            child: Icon(
+                              activityIcon(run.run.type),
                               size: 16,
                               color: Colors.white,
                             ),
@@ -908,7 +906,7 @@ class _MapPageState extends ConsumerState<MapPage>
       for (final run in data.runs) {
         final pts = _decodePolylinePoints(run.id, run.summaryPolyline);
         if (pts.length < 2) continue;
-        final color = const Color(0xFFFF9800);
+        final color = activityColor(run.type);
         runPolylines.add(Polyline(points: pts, strokeWidth: 3, color: color));
         runMarkers.add(
           Marker(
@@ -923,8 +921,8 @@ class _MapPageState extends ConsumerState<MapPage>
                   shape: BoxShape.circle,
                   border: Border.all(color: Colors.white),
                 ),
-                child: const Icon(
-                  Icons.directions_run,
+                child: Icon(
+                  activityIcon(run.type),
                   size: 16,
                   color: Colors.white,
                 ),
@@ -3931,7 +3929,7 @@ class _DayBottomSheet extends StatelessWidget {
   }
 
   Widget _buildRunEntryTile(BuildContext context, TimelineRun run) {
-    const color = Color(0xCCF79C70);
+    final color = activityColor(run.type);
     final resolvedRunColor = _timelineResolvedAccent(context, color);
     final timeLabel = run.startTime != null ? _formatTime(run.startTime!) : '';
     final isSelected = run.id == selectedRunId;
@@ -3977,7 +3975,7 @@ class _DayBottomSheet extends StatelessWidget {
                   selected: isSelected,
                 ),
                 child: Icon(
-                  Icons.directions_run,
+                  activityIcon(run.type),
                   size: 15,
                   color: _timelineMarkerIconColor(
                     context,
@@ -3992,7 +3990,7 @@ class _DayBottomSheet extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      run.name.isNotEmpty ? run.name : 'Run',
+                      run.name.isNotEmpty ? run.name : activityLabel(run.type),
                       style: _timelineTitleStyle(
                         context,
                       ).copyWith(color: resolvedRunColor),

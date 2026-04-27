@@ -105,9 +105,12 @@ class AppConfig {
         maxZoom: 20,
       );
     }
+    // CartoDB Voyager — muted, modern, great contrast for polyline overlays
     return const MapTileConfig(
-      urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-      maxZoom: 19,
+      urlTemplate:
+          'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+      subdomains: ['a', 'b', 'c', 'd'],
+      maxZoom: 20,
     );
   }
 

@@ -9,6 +9,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/config/app_config.dart';
+import '../../core/utils/activity_type.dart';
 import '../../core/widgets/section_card.dart';
 import '../../data/models/run_detail_model.dart';
 import '../../data/models/run_model.dart';
@@ -92,8 +93,9 @@ class _RunDetailPageState extends State<RunDetailPage> {
             SliverToBoxAdapter(
               child: _Body(
                 runTitle: widget.run.name.isEmpty
-                    ? 'Run ${widget.run.id}'
+                    ? activityLabel(widget.run.type)
                     : widget.run.name,
+                activityType: widget.run.type,
                 routePoints: routePoints,
                 bounds: bounds,
                 stats: stats,
@@ -577,6 +579,7 @@ class _ParsedTime {
 class _Body extends StatelessWidget {
   const _Body({
     required this.runTitle,
+    required this.activityType,
     required this.routePoints,
     required this.bounds,
     required this.stats,
@@ -592,6 +595,7 @@ class _Body extends StatelessWidget {
   });
 
   final String runTitle;
+  final String activityType;
   final List<LatLng> routePoints;
   final LatLngBounds? bounds;
   final List<(String, String)> stats;
@@ -619,6 +623,7 @@ class _Body extends StatelessWidget {
             children: [
               _RunOverviewSection(
                 title: runTitle,
+                activityType: activityType,
                 subtitle: heroSubtitle,
                 dateLabel: heroDate,
                 stravaUri: stravaUri,
@@ -659,6 +664,7 @@ class _Body extends StatelessWidget {
 class _RunOverviewSection extends StatelessWidget {
   const _RunOverviewSection({
     required this.title,
+    required this.activityType,
     required this.subtitle,
     required this.dateLabel,
     required this.stravaUri,
@@ -666,6 +672,7 @@ class _RunOverviewSection extends StatelessWidget {
   });
 
   final String title;
+  final String activityType;
   final String? subtitle;
   final String? dateLabel;
   final Uri? stravaUri;
@@ -695,16 +702,35 @@ class _RunOverviewSection extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (dateLabel != null && dateLabel!.isNotEmpty)
-                      Text(
-                        dateLabel!,
-                        style: theme.textTheme.labelLarge?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                          fontWeight: FontWeight.w700,
+                    Row(
+                      children: [
+                        Icon(
+                          activityIcon(activityType),
+                          size: 16,
+                          color: activityColor(activityType),
                         ),
-                      ),
-                    if (dateLabel != null && dateLabel!.isNotEmpty)
-                      const SizedBox(height: 8),
+                        const SizedBox(width: 6),
+                        Text(
+                          activityLabel(activityType),
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: activityColor(activityType),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        if (dateLabel != null && dateLabel!.isNotEmpty) ...[
+                          const SizedBox(width: 8),
+                          Text('·', style: theme.textTheme.labelMedium?.copyWith(color: colorScheme.onSurfaceVariant)),
+                          const SizedBox(width: 8),
+                          Text(
+                            dateLabel!,
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: colorScheme.onSurfaceVariant,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
                     Text(
                       title,
                       style: theme.textTheme.headlineSmall?.copyWith(
@@ -713,7 +739,7 @@ class _RunOverviewSection extends StatelessWidget {
                       ),
                     ),
                     if (subtitle != null && subtitle!.isNotEmpty)
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 6),
                     if (subtitle != null && subtitle!.isNotEmpty)
                       Text(
                         subtitle!,

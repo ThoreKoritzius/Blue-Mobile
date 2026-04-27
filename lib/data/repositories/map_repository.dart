@@ -88,6 +88,7 @@ class TimelineRun {
   const TimelineRun({
     required this.id,
     required this.name,
+    required this.type,
     required this.summaryPolyline,
     this.startTime,
     this.distanceMeters,
@@ -96,6 +97,7 @@ class TimelineRun {
 
   final String id;
   final String name;
+  final String type;
   final String summaryPolyline;
   final DateTime? startTime;
   final int? distanceMeters;
@@ -651,6 +653,7 @@ class MapRepository {
             TimelineRun(
               id: (r['id'] ?? '').toString(),
               name: (r['name'] ?? '').toString(),
+              type: (r['type'] ?? '').toString(),
               summaryPolyline: (r['summaryPolyline'] ?? '').toString(),
               startTime: startTime,
               distanceMeters: (r['distanceMeters'] as num?)?.toInt(),
