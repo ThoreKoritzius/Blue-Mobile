@@ -1493,7 +1493,7 @@ class _MapPageState extends ConsumerState<MapPage>
                     onChanged: (value) => update(() {
                       _showRuns = value;
                     }),
-                    title: const Text('Runs'),
+                    title: const Text('Activities'),
                   ),
                   SwitchListTile.adaptive(
                     contentPadding: EdgeInsets.zero,
