@@ -872,6 +872,21 @@ mutation DeleteManualVisit($segmentId: Int!) {
 }
 ''';
 
+  static const timelineTopPlaces = r'''
+query TimelineTopPlaces($first: Int!, $dateFrom: String, $dateTo: String) {
+  timeline {
+    topPlaces(first: $first, dateFrom: $dateFrom, dateTo: $dateTo) {
+      placeLat
+      placeLon
+      visitCount
+      totalDurationMinutes
+      placeName
+      placeAddress
+    }
+  }
+}
+''';
+
   static const dailyActivity = r'''
 query DailyActivity($date: String!) {
   health {

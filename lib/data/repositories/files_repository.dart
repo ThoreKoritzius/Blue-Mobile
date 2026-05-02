@@ -146,6 +146,7 @@ class GraphqlFilesRepository implements FilesRepository {
             GqlDocuments.filesUpload,
             variables: {'date': day},
             files: [descriptor],
+            timeout: const Duration(minutes: 5),
             onProgress: (sentBytes, totalBytes) {
               if (controller.isClosed) return;
               final perFileProgress = totalBytes <= 0

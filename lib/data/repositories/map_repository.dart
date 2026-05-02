@@ -261,6 +261,24 @@ class WhenWasINearResult {
   final double? lonMax;
 }
 
+class TopVisitedPlace {
+  const TopVisitedPlace({
+    required this.lat,
+    required this.lon,
+    required this.visitCount,
+    required this.totalDurationMinutes,
+    this.name,
+    this.address,
+  });
+
+  final double lat;
+  final double lon;
+  final int visitCount;
+  final int totalDurationMinutes;
+  final String? name;
+  final String? address;
+}
+
 class MapRepository {
   static const Duration timelineDayCacheTtl = Duration(minutes: 5);
   static const Duration mapMarkerCacheTtl = Duration(minutes: 2);
@@ -375,6 +393,42 @@ class MapRepository {
     } finally {
       _timelineOverviewInFlight = null;
     }
+  }
+
+  Future<List<TopVisitedPlace>> loadTopVisitedPlaces({
+    int first = 20,
+    String? dateFrom,
+    String? dateTo,
+  }) async {
+    final response = await _gql.query(
+      GqlDocuments.timelineTopPlaces,
+      variables: {
+        'first': first,
+        if (dateFrom != null) 'dateFrom': dateFrom,
+        if (dateTo != null) 'dateTo': dateTo,
+      },
+    );
+    final rawList =
+        ((response['timeline'] as Map<String, dynamic>?)?['topPlaces']
+            as List<dynamic>? ??
+        const []);
+    final result = <TopVisitedPlace>[];
+    for (final item in rawList) {
+      final m = _asMap(item);
+      if (m == null) continue;
+      final lat = (m['placeLat'] as num?)?.toDouble();
+      final lon = (m['placeLon'] as num?)?.toDouble();
+      if (lat == null || lon == null) continue;
+      result.add(TopVisitedPlace(
+        lat: lat,
+        lon: lon,
+        visitCount: (m['visitCount'] as num?)?.toInt() ?? 0,
+        totalDurationMinutes: (m['totalDurationMinutes'] as num?)?.toInt() ?? 0,
+        name: m['placeName'] as String?,
+        address: m['placeAddress'] as String?,
+      ));
+    }
+    return result;
   }
 
   Future<WhenWasINearResult> whenWasINear(String location) async {

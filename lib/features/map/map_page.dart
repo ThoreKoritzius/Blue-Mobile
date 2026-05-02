@@ -100,6 +100,12 @@ class _MapPageState extends ConsumerState<MapPage>
   bool _timelineOverviewLoadedOnce = false;
   String _error = '';
   String _timelineOverviewError = '';
+
+  // Overview bottom sheet + top places
+  final DraggableScrollableController _overviewSheetController =
+      DraggableScrollableController();
+  List<TopVisitedPlace> _topPlaces = const [];
+  bool _topPlacesLoading = false;
   int _imageSearchGeneration = 0;
   double _currentZoom = 2.2;
   LatLngBounds? _currentBounds;
@@ -201,6 +207,7 @@ class _MapPageState extends ConsumerState<MapPage>
     _selectedDateSubscription.close();
     _sheetController.removeListener(_onSheetChanged);
     _sheetController.dispose();
+    _overviewSheetController.dispose();
     super.dispose();
   }
 
@@ -251,19 +258,38 @@ class _MapPageState extends ConsumerState<MapPage>
 
   void _onYearRangeChanged(RangeValues values) {
     setState(() {
-      // If full range selected, treat as "all"
       if (values.start.round() <= _dataYearMin && values.end.round() >= _dataYearMax) {
         _yearRange = null;
       } else {
         _yearRange = values;
       }
       _runs = _filterRunsByYear(_allRuns);
-      // Reset so timeline reloads with new date range
       if (_showTimelineHistory) _timelineOverviewLoadedOnce = false;
     });
     _scheduleViewportRefresh();
     if (_showTimelineHistory) {
       unawaited(_ensureTimelineOverviewLoaded(forceRefresh: true));
+    }
+    unawaited(_loadTopPlaces());
+  }
+
+  Future<void> _loadTopPlaces() async {
+    if (!mounted) return;
+    setState(() => _topPlacesLoading = true);
+    try {
+      final places = await ref.read(mapRepositoryProvider).loadTopVisitedPlaces(
+        first: 20,
+        dateFrom: _yearRangeDateFrom(),
+        dateTo: _yearRangeDateTo(),
+      );
+      if (!mounted) return;
+      setState(() {
+        _topPlaces = places;
+        _topPlacesLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _topPlacesLoading = false);
     }
   }
 
@@ -312,6 +338,7 @@ class _MapPageState extends ConsumerState<MapPage>
         _runsLoading = false;
       });
       _fitOverviewBoundsIfNeeded();
+      unawaited(_loadTopPlaces());
       final pending = _pendingDayViewDate;
       if (pending != null) {
         _pendingDayViewDate = null;
@@ -657,6 +684,26 @@ class _MapPageState extends ConsumerState<MapPage>
                   ),
                 ],
               ),
+            if (showTimelineHistory && _topPlaces.isNotEmpty)
+              MarkerLayer(
+                markers: _topPlaces
+                    .where((p) => p.lat.abs() <= 90 && p.lon.abs() <= 180)
+                    .map(
+                      (place) => Marker(
+                        point: LatLng(place.lat, place.lon),
+                        width: 14,
+                        height: 14,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF2979FF).withValues(alpha: 0.85),
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 1.5),
+                          ),
+                        ),
+                      ),
+                    )
+                    .toList(),
+              ),
             if (showRuns)
               PolylineLayer(
                 polylines: _runs
@@ -784,19 +831,16 @@ class _MapPageState extends ConsumerState<MapPage>
             child: const Icon(Icons.tune),
           ),
         ),
-        // Bottom bar: year range slider + day-view button
+        // Overview bottom sheet: year slider + top visited places
         if (!_runsLoading)
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            child: _buildBottomBar(context),
+          Positioned.fill(
+            child: _buildOverviewSheet(context),
           ),
       ],
     );
   }
 
-  Widget _buildBottomBar(BuildContext context) {
+  Widget _buildOverviewSheet(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final hasRange = _dataYearMin < _dataYearMax;
@@ -816,71 +860,194 @@ class _MapPageState extends ConsumerState<MapPage>
       _enterDayView(todayStr);
     }
 
-    return Container(
-      padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
-      decoration: BoxDecoration(
-        color: colorScheme.surface.withValues(alpha: 0.92),
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      child: Row(
-        children: [
-          if (hasRange) ...[
-            const SizedBox(width: 4),
-            Text(
-              startLabel,
-              style: theme.textTheme.labelMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-                color: colorScheme.onSurface,
-              ),
-            ),
-            Expanded(
-              child: RangeSlider(
-                values: current,
-                min: minY,
-                max: maxY,
-                divisions: (maxY - minY).round(),
-                onChanged: _onYearRangeChanged,
-              ),
-            ),
-            Text(
-              endLabel,
-              style: theme.textTheme.labelMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-                color: colorScheme.onSurface,
-              ),
-            ),
-          ] else
-            const Spacer(),
-          const SizedBox(width: 8),
-          VerticalDivider(width: 1, thickness: 1, indent: 8, endIndent: 8, color: colorScheme.outlineVariant),
-          const SizedBox(width: 10),
-          // Day-view pill button
-          Tooltip(
-            message: 'Day view',
-            child: Material(
-              color: canEnterDayView
-                  ? colorScheme.primaryContainer
-                  : colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(12),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(12),
-                onTap: canEnterDayView ? enterDayView : null,
-                child: Padding(
-                  padding: const EdgeInsets.all(10),
-                  child: Icon(
-                    Icons.calendar_view_day_rounded,
-                    size: 20,
-                    color: canEnterDayView
-                        ? colorScheme.onPrimaryContainer
-                        : colorScheme.onSurfaceVariant,
+    return DraggableScrollableSheet(
+      controller: _overviewSheetController,
+      initialChildSize: 0.13,
+      minChildSize: 0.08,
+      maxChildSize: 0.55,
+      snap: true,
+      snapSizes: const [0.13, 0.35, 0.55],
+      builder: (context, scrollController) {
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            color: colorScheme.surface.withValues(alpha: 0.96),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            boxShadow: const [
+              BoxShadow(blurRadius: 12, color: Color(0x22000000), offset: Offset(0, -2)),
+            ],
+          ),
+          child: CustomScrollView(
+            controller: scrollController,
+            slivers: [
+              // Drag handle
+              SliverToBoxAdapter(
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 10, bottom: 4),
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: colorScheme.onSurface.withValues(alpha: 0.18),
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
+              // Year slider row + day-view button
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
+                  child: Row(
+                    children: [
+                      if (hasRange) ...[
+                        const SizedBox(width: 4),
+                        Text(
+                          startLabel,
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: colorScheme.onSurface,
+                          ),
+                        ),
+                        Expanded(
+                          child: RangeSlider(
+                            values: current,
+                            min: minY,
+                            max: maxY,
+                            divisions: (maxY - minY).round(),
+                            onChanged: _onYearRangeChanged,
+                          ),
+                        ),
+                        Text(
+                          endLabel,
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: colorScheme.onSurface,
+                          ),
+                        ),
+                      ] else
+                        const Spacer(),
+                      const SizedBox(width: 8),
+                      VerticalDivider(
+                        width: 1,
+                        thickness: 1,
+                        indent: 8,
+                        endIndent: 8,
+                        color: colorScheme.outlineVariant,
+                      ),
+                      const SizedBox(width: 10),
+                      Tooltip(
+                        message: 'Day view',
+                        child: Material(
+                          color: canEnterDayView
+                              ? colorScheme.primaryContainer
+                              : colorScheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(12),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(12),
+                            onTap: canEnterDayView ? enterDayView : null,
+                            child: Padding(
+                              padding: const EdgeInsets.all(10),
+                              child: Icon(
+                                Icons.calendar_view_day_rounded,
+                                size: 20,
+                                color: canEnterDayView
+                                    ? colorScheme.onPrimaryContainer
+                                    : colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                    ],
+                  ),
+                ),
+              ),
+              // Top visited places section
+              if (_topPlacesLoading)
+                const SliverToBoxAdapter(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
+                  ),
+                )
+              else if (_topPlaces.isNotEmpty) ...[
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 6),
+                    child: Text(
+                      'TOP VISITED',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        letterSpacing: 1.1,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ),
+                SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (context, index) {
+                      final place = _topPlaces[index];
+                      final name = place.name?.isNotEmpty == true
+                          ? place.name!
+                          : place.address ?? '${place.lat.toStringAsFixed(4)}, ${place.lon.toStringAsFixed(4)}';
+                      final hours = place.totalDurationMinutes ~/ 60;
+                      final mins = place.totalDurationMinutes % 60;
+                      final durationLabel = hours > 0
+                          ? '${hours}h ${mins}m'
+                          : '${mins}m';
+                      return ListTile(
+                        dense: true,
+                        leading: CircleAvatar(
+                          radius: 14,
+                          backgroundColor: colorScheme.primaryContainer,
+                          child: Text(
+                            '${index + 1}',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: colorScheme.onPrimaryContainer,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        title: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                        subtitle: place.address?.isNotEmpty == true && place.name?.isNotEmpty == true
+                            ? Text(place.address!, maxLines: 1, overflow: TextOverflow.ellipsis)
+                            : null,
+                        trailing: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              '${place.visitCount}×',
+                              style: theme.textTheme.labelMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                                color: colorScheme.primary,
+                              ),
+                            ),
+                            Text(
+                              durationLabel,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                        onTap: () {
+                          _mapController.move(LatLng(place.lat, place.lon), math.max(_currentZoom, 13.0));
+                        },
+                      );
+                    },
+                    childCount: _topPlaces.length,
+                  ),
+                ),
+                const SliverToBoxAdapter(child: SizedBox(height: 12)),
+              ],
+            ],
           ),
-          const SizedBox(width: 2),
-        ],
-      ),
+        );
+      },
     );
   }
 
